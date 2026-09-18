@@ -67,6 +67,11 @@ let package = Package(
             path: "experiments/StandaloneCursor/Sources/StandaloneCursor"
         ),
         .testTarget(
+            name: "OpenComputerUseTests",
+            dependencies: ["OpenComputerUse"],
+            path: "apps/OpenComputerUse/Tests/OpenComputerUseTests"
+        ),
+        .testTarget(
             name: "OpenComputerUseKitTests",
             dependencies: ["OpenComputerUseKit"],
             path: "packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests"

@@ -1,0 +1,119 @@
+name: sdk-check
+
+on:
+  pull_request:
+    paths:
+      - "packages/sdk/**"
+      - "protocol/**"
+      - "packages/runtime-go/**"
+      - "packages/OpenComputerUseKit/**"
+      - "apps/OpenComputerUse/**"
+      - "apps/OpenComputerUseWindows/**"
+      - "apps/OpenComputerUseLinux/**"
+      - "experiments/LinuxNativeProbe/**"
+      - "scripts/build-open-computer-use-*.sh"
+      - "Package.swift"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/sdk-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/sdk/**"
+      - "protocol/**"
+      - "packages/runtime-go/**"
+      - "packages/OpenComputerUseKit/**"
+      - "apps/OpenComputerUse/**"
+      - "apps/OpenComputerUseWindows/**"
+      - "apps/OpenComputerUseLinux/**"
+      - "experiments/LinuxNativeProbe/**"
+      - "scripts/build-open-computer-use-*.sh"
+      - "Package.swift"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/sdk-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run sdk:check
+      - run: npm run sdk:test
+
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: "1.23.4"
+          cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm run sdk:build
+      - run: go test ./...
+        working-directory: packages/runtime-go
+      - if: runner.os != 'Windows'
+        run: go test -race ./...
+        working-directory: packages/runtime-go
+      - if: runner.os == 'macOS'
+        run: |
+          swift test --filter 'SDKSessionTests|PermissionOnboardingTests'
+          OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc ./scripts/build-open-computer-use-app.sh debug
+      - if: runner.os == 'Linux'
+        working-directory: apps/OpenComputerUseLinux
+        run: |
+          go test ./...
+          go build -o ../../dist/native/open-computer-use .
+      - if: runner.os == 'Windows'
+        working-directory: apps/OpenComputerUseWindows
+        run: |
+          go test ./...
+          go build -o ../../dist/native/open-computer-use.exe .
+      - run: node --test protocol/native.test.mjs
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'CherrySDKFixture.exe'
+          & ./protocol/fixtures/windows.ps1 -OutputPath $fixture
+          $process = Start-Process $fixture -PassThru
+          try {
+            $env:COMPUTER_USE_RUNTIME_PATH = Join-Path $PWD 'dist/native/open-computer-use.exe'
+            $env:COMPUTER_USE_FIXTURE_APP = 'CherrySDKFixture'
+            $env:COMPUTER_USE_REQUIRE_SCREENSHOT = '1'
+            node --test protocol/desktop.test.mjs
+            $code = $LASTEXITCODE
+          } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+          exit $code
+      - if: runner.os == 'Linux'
+        run: |
+          ./scripts/build-open-computer-use-linux.sh --arch amd64
+          (cd experiments/LinuxNativeProbe && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../../dist/linux/amd64/native-probe .)
+          docker build -t cherry-native-probe experiments/LinuxNativeProbe
+          docker run --rm -e PROBE_ARCH=amd64 -v "$PWD:/workspace:ro" -w /workspace cherry-native-probe

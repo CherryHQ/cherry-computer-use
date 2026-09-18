@@ -10,6 +10,12 @@
 - `scripts/build-open-computer-use-windows.sh`：本地构建实验性 Windows `open-computer-use.exe`，支持 `arm64` / `amd64`；release package 会把这两个产物内置进既有 npm 包的 `dist/windows/`。
 - `.github/workflows/release.yml`：支持 push semver tag 自动发布，也支持手动触发；tag push 时会同时跑 npm release 打包逻辑与 `Cursor Motion` 的 DMG 打包，并把 `.dmg` 上传到对应的 GitHub Releases 页面。`Open Computer Use` 的 npm 产物默认走 ad-hoc signing；如果配置了 `OPEN_COMPUTER_USE_CODESIGN_*` secrets，则会先导入 `Developer ID Application` 证书，再按同一 identity 对 release `.app` 统一签名。`Cursor Motion` 的 DMG 也会复用同一张 `Developer ID Application` 证书签 app；若同时配置 `APPLE_NOTARY_*` secrets，则会在上传前对 `.dmg` 做 notarization 和 staple。
 
+## SDK 与原生桌面检查
+
+[sdk-check.yml](../.github/workflows/sdk-check.yml) 在 macOS、Windows、Linux 分别检查 Node 24 SDK 构建、类型和 tarball 消费，并构建本平台 runtime，运行 [native contract tests](../protocol/native.test.mjs)。macOS 另跑 Swift session 测试和 ad-hoc `.app` 构建，Windows/Linux 使用共用 Go session；Windows 增加 Job Object 取消/宿主退出单测，并启动 WinForms counter 执行 SDK 桌面测试；Linux 在隔离的 [Go AT-SPI/X11 容器](../experiments/LinuxNativeProbe/README.md)执行同一桌面测试及独立 probe。这条检查不发布包；macOS GUI、Wayland 与 Electron 制品另行验收。
+
+本机已验证三端生命周期，以及 Parallels Windows 11 ARM64 和 Docker Linux X11 的真实桌面闭环。远端矩阵尚未执行；托管 Windows runner 的交互桌面行为须由首次 CI 实跑确认。
+
 ## 设计原则
 
 这套默认流水线的目标，是在项目真正成形前先把交付链路搭起来，而不是假装已经知道未来项目该怎么 build 和 deploy。

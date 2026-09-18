@@ -11,6 +11,7 @@
 
 | 区域 | 评分 | 原因 | 下一步 |
 | --- | --- | --- | --- |
+| TypeScript SDK | C | 类型化客户端、协议校验、ESM/CJS tarball 与三端生命周期通过本机验证；Windows 11 ARM64/Linux X11 的真实 SDK 观察、截图和语义点击通过。 | macOS GUI 待授权；macOS 权限申请与 Cherry 本地入口已接通；其余动作、Wayland、远端 CI、平台包与 Electron 完整桌面验收仍未完成。 |
 | 产品面 | B | 已经有 Swift 本地 `computer-use` MCP server、默认 app 模式权限引导，以及一轮按官方 surface / result 行为收敛过的 9 个 tools。 | 继续收敛复杂 AX 场景下的 state rendering 细节、权限 UI 和更清晰的用户错误提示。 |
 | Windows runtime | C | 已新增独立 Go `.exe`，通过 Windows UI Automation + Win32 window message 暴露同样 9 个 tools、MCP server 和 `call --calls`；默认不再自动启动 app、执行 `SetFocus`，或让 `type_text` 走可能抢前台的 UIA text fallback，并已接入 npm bundled artifact 分发，但仍是功能性第一版。 | 补交互式桌面 smoke、Windows fixture、installer/signing，以及更原生的 Go UIA 实现或更稳定的 bridge。 |
 | Linux runtime | C | 已新增独立 Go binary，通过 Python GI / AT-SPI2 暴露同样 9 个 tools、MCP server 和 `call --calls`；Ubuntu GNOME VM 已跑通 `list_apps`、MCP tools list 和 Text Editor 8-tool sequence，并已接入 npm bundled artifact 分发，但截图在 GNOME Wayland 下仍只能 best-effort，coordinate input 也不是通用后台模型。 | 补 Linux fixture、可重复 smoke runner、portal/compositor screenshot 路径，以及更原生的 Go D-Bus/libatspi bridge。 |
