@@ -56,7 +56,7 @@ SDK、Swift 和共享 Go runtime 已实现协议 v2 的 `openAppSession`、`list
 
 现阶段只提供 runtime 内的隔离和停止，不代替 Cherry 的跨任务协调或用户停止状态。宿主仍须阻止工具通过显式重开/新建 runtime 绕过停止；Tray、普通工具接入和光标尚未实现。应用发现列表移除目标时回收上下文，执行时继续校验原生身份；持续窗口/退出监听随 overlay 接入。
 
-验证：SDK 类型/36 项测试（含干净 ESM/CJS tarball）、Swift 15 项会话测试、共享 Go race 测试通过；macOS 6 项原生协议测试及 Linux X11 真正 GUI 点击/停止通过。Windows ARM64 已构建，Parallels 命令通道无响应导致本轮 GUI 复测未完成。macOS 已换固定证书签名，系统重新授权及授权后 GUI 仍待用户完成。
+验证：SDK 类型/36 项测试（含 ESM/CJS tarball）、Swift 15 项会话测试、共享 Go race 测试通过；macOS 6 项原生协议测试及 Linux X11 真正 GUI 点击/停止通过。Windows x64 CI（`windows-2025`）已通过原生协议、worker/后代清理及真实计数窗口点击/停止；Windows ARM64 已构建，Parallels 问题导致本地 GUI 复测仍待完成。macOS 已换固定证书签名，系统重新授权及授权后 GUI 仍待用户完成。
 
 ### 两层会话与资源归属
 

@@ -70,7 +70,8 @@ test(
       [
         npmCli,
         'install',
-        '--offline',
+        '--cache',
+        join(consumer, 'npm-cache'),
         '--ignore-scripts',
         '--no-audit',
         '--no-fund',
