@@ -18,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 )
 
 var version = "0.3.5"
@@ -1311,6 +1313,17 @@ func runCLI(args []string, stdout io.Writer) error {
 		return nil
 	case "mcp":
 		return runMCP(os.Stdin, stdout)
+	case "serve":
+		sessionID, err := sdkruntime.ParseServeArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		if runtime.GOOS != "linux" {
+			return errors.New("Linux SDK runtime requires Linux")
+		}
+		return sdkruntime.Serve(os.Stdin, os.Stdout, sdkruntime.Config{
+			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(&linuxDesktop{}),
+		})
 	case "doctor":
 		fmt.Fprintln(stdout, "Linux runtime: AT-SPI2 and GDK run against the signed-in desktop user's accessibility session. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes.")
 		return nil

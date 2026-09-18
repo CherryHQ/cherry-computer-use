@@ -1,0 +1,927 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cherryhq.github.io/cherry-computer-use/protocol/v2",
+  "title": "Protocol",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "INVALID_ARGUMENT",
+        "APP_SESSION_NOT_FOUND",
+        "APP_SESSION_STOPPED",
+        "TARGET_UNAVAILABLE",
+        "STALE_SNAPSHOT",
+        "PERMISSION_REQUIRED",
+        "UNSUPPORTED_CAPABILITY",
+        "DEPENDENCY_MISSING",
+        "CAPTURE_FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "RUNTIME_EXITED",
+        "RUNTIME_START_FAILED",
+        "PROTOCOL_MISMATCH",
+        "PROTOCOL_ERROR",
+        "RUNTIME_NOT_FOUND",
+        "RUNTIME_VERSION_MISMATCH",
+        "UNSUPPORTED_PLATFORM",
+        "CLOSED",
+        "CLEANUP_FAILED"
+      ],
+      "title": "ErrorCode"
+    },
+    "Effect": {
+      "type": "string",
+      "enum": ["none", "possible", "applied"],
+      "title": "Effect"
+    },
+    "Failure": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/ErrorCode"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "title": "Failure"
+    },
+    "ErrorData": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/ErrorCode"
+        },
+        "effect": {
+          "$ref": "#/definitions/Effect"
+        }
+      },
+      "required": ["code", "effect"],
+      "additionalProperties": false,
+      "title": "ErrorData"
+    },
+    "InitializeInput": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "const": 2
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["protocolVersion", "sessionId"],
+      "additionalProperties": false,
+      "title": "InitializeInput"
+    },
+    "InitializeResult": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runtimeVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ownership": {
+          "const": "private"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "runtimeVersion",
+        "sessionId",
+        "ownership"
+      ],
+      "additionalProperties": false,
+      "title": "InitializeResult"
+    },
+    "ShutdownResult": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cleanup": {
+          "const": "complete"
+        }
+      },
+      "required": ["sessionId", "cleanup"],
+      "additionalProperties": false,
+      "title": "ShutdownResult"
+    },
+    "ActionKind": {
+      "type": "string",
+      "enum": [
+        "click",
+        "performSecondaryAction",
+        "scroll",
+        "drag",
+        "typeText",
+        "pressKey",
+        "setValue"
+      ],
+      "title": "ActionKind"
+    },
+    "Capability": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "accessibility",
+            "screenshot",
+            "click",
+            "performSecondaryAction",
+            "scroll",
+            "drag",
+            "typeText",
+            "pressKey",
+            "setValue"
+          ]
+        },
+        "availability": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "available"
+                }
+              },
+              "required": ["status"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unsupported"
+                },
+                "reason": {
+                  "$ref": "#/definitions/Failure"
+                }
+              },
+              "required": ["status", "reason"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "$ref": "#/definitions/Failure"
+                }
+              },
+              "required": ["status", "reason"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["name", "availability"],
+      "additionalProperties": false,
+      "title": "Capability"
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": ["darwin", "win32", "linux"]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Capability"
+          }
+        }
+      },
+      "required": ["platform", "capabilities"],
+      "additionalProperties": false,
+      "title": "Capabilities"
+    },
+    "Permission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "granted",
+            "denied",
+            "notDetermined",
+            "unknown",
+            "unavailable"
+          ]
+        },
+        "interaction": {
+          "type": "string",
+          "enum": ["none", "systemPrompt", "systemSettings"]
+        }
+      },
+      "required": ["id", "label", "status", "interaction"],
+      "additionalProperties": false,
+      "title": "Permission"
+    },
+    "PermissionStatus": {
+      "type": "object",
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Permission"
+          }
+        }
+      },
+      "required": ["permissions"],
+      "additionalProperties": false,
+      "title": "PermissionStatus"
+    },
+    "PermissionRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": ["ids"],
+      "additionalProperties": false,
+      "title": "PermissionRequest"
+    },
+    "AppInfo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "title": "AppInfo"
+    },
+    "AppList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AppInfo"
+      },
+      "title": "AppList"
+    },
+    "OpenAppSessionInput": {
+      "type": "object",
+      "properties": { "appId": { "type": "string", "minLength": 1 } },
+      "required": ["appId"],
+      "additionalProperties": false,
+      "title": "OpenAppSessionInput"
+    },
+    "AppSessionInput": {
+      "type": "object",
+      "properties": { "appSessionId": { "type": "string", "minLength": 1 } },
+      "required": ["appSessionId"],
+      "additionalProperties": false,
+      "title": "AppSessionInput"
+    },
+    "AppSession": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "app": { "$ref": "#/definitions/AppInfo" },
+        "status": { "enum": ["active", "stopping", "stopped"] }
+      },
+      "required": ["id", "app", "status"],
+      "additionalProperties": false,
+      "title": "AppSession"
+    },
+    "AppSessionList": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/AppSession" },
+      "title": "AppSessionList"
+    },
+    "StopAppSessionResult": {
+      "type": "object",
+      "properties": {
+        "appSessionId": { "type": "string", "minLength": 1 },
+        "status": { "const": "stopped" },
+        "cleanup": { "const": "complete" }
+      },
+      "required": ["appSessionId", "status", "cleanup"],
+      "additionalProperties": false,
+      "title": "StopAppSessionResult"
+    },
+    "WindowInfo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title"],
+      "additionalProperties": false,
+      "title": "WindowInfo"
+    },
+    "Point": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "title": "Point"
+    },
+    "Rect": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["x", "y", "width", "height"],
+      "additionalProperties": false,
+      "title": "Rect"
+    },
+    "Element": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "bounds": {
+          "$ref": "#/definitions/Rect"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActionKind"
+          }
+        },
+        "secondaryActions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["id", "label"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["id", "role", "name", "actions", "secondaryActions"],
+      "additionalProperties": false,
+      "title": "Element"
+    },
+    "Screenshot": {
+      "type": "object",
+      "properties": {
+        "mimeType": {
+          "const": "image/png"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dataBase64": {
+          "type": "string",
+          "minLength": 4,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": ["mimeType", "width", "height", "dataBase64"],
+      "additionalProperties": false,
+      "title": "Screenshot"
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appSessionId": { "type": "string", "minLength": 1 },
+        "app": {
+          "$ref": "#/definitions/AppInfo"
+        },
+        "window": {
+          "$ref": "#/definitions/WindowInfo"
+        },
+        "tree": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "available"
+                },
+                "elements": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/Element"
+                  }
+                },
+                "truncated": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": ["nodes", "depth", "text"]
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "required": ["status", "elements", "truncated"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "$ref": "#/definitions/Failure"
+                }
+              },
+              "required": ["status", "reason"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "screenshot": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "available"
+                },
+                "image": {
+                  "$ref": "#/definitions/Screenshot"
+                }
+              },
+              "required": ["status", "image"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "$ref": "#/definitions/Failure"
+                }
+              },
+              "required": ["status", "reason"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["id", "appSessionId", "app", "window", "tree", "screenshot"],
+      "additionalProperties": false,
+      "title": "Snapshot"
+    },
+    "ObserveInput": {
+      "type": "object",
+      "properties": {
+        "appSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activation": {
+          "type": "string",
+          "enum": ["never", "allow"]
+        },
+        "maxTreeNodes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxTreeDepth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "textLimit": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "max"
+            }
+          ]
+        }
+      },
+      "required": ["appSessionId"],
+      "additionalProperties": false,
+      "title": "ObserveInput"
+    },
+    "Action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "click"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "button": {
+              "type": "string",
+              "enum": ["left", "middle", "right"]
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "elementId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["type", "appSessionId", "snapshotId", "elementId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "click"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "button": {
+              "type": "string",
+              "enum": ["left", "middle", "right"]
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": ["type", "appSessionId", "snapshotId", "x", "y"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "performSecondaryAction"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "elementId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "actionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "appSessionId",
+            "snapshotId",
+            "elementId",
+            "actionId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "scroll"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "elementId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "direction": {
+              "type": "string",
+              "enum": ["up", "down", "left", "right"]
+            },
+            "pages": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "appSessionId",
+            "snapshotId",
+            "direction",
+            "pages"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "drag"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "from": {
+              "$ref": "#/definitions/Point"
+            },
+            "to": {
+              "$ref": "#/definitions/Point"
+            }
+          },
+          "required": ["type", "appSessionId", "snapshotId", "from", "to"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "typeText"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["type", "appSessionId", "snapshotId", "text"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "pressKey"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["type", "appSessionId", "snapshotId", "key"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "setValue"
+            },
+            "appSessionId": { "type": "string", "minLength": 1 },
+            "snapshotId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowGlobalInput": {
+              "type": "boolean"
+            },
+            "elementId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appSessionId",
+            "snapshotId",
+            "elementId",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "title": "Action"
+    },
+    "ActionResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "observation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "available"
+                },
+                "snapshot": {
+                  "$ref": "#/definitions/Snapshot"
+                }
+              },
+              "required": ["status", "snapshot"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "$ref": "#/definitions/Failure"
+                }
+              },
+              "required": ["status", "reason"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["status", "observation"],
+      "additionalProperties": false,
+      "title": "ActionResult"
+    },
+    "RpcResponse": {
+      "title": "RpcResponse",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {}
+          },
+          "required": ["jsonrpc", "id", "result"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "data": {}
+              },
+              "required": ["code", "message"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["jsonrpc", "id", "error"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

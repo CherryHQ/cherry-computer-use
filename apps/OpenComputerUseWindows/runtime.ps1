@@ -1,6 +1,6 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$OperationPath
+    [string]$OperationPath,
+    [switch]$DefinitionsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,11 +16,21 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
 
-Add-Type -TypeDefinition @"
+Add-Type -ReferencedAssemblies UIAutomationClient -TypeDefinition @"
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Windows.Automation;
 
 public static class OCUWin32 {
+    // UIA's default-provider stack walk cannot inspect PowerShell dynamic frames.
+    // Keep a managed frame present, including on ARM64 tail-call paths.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void InitializeUIAutomation() {
+        try { ClientSettings.RegisterClientSideProviders(new ClientSideProviderDescription[0]); }
+        finally { GC.KeepAlive(typeof(OCUWin32)); }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT {
         public int Left;
@@ -51,6 +61,8 @@ public static class OCUWin32 {
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
 }
 "@
+
+[OCUWin32]::InitializeUIAutomation()
 
 $WM_SETTEXT = 0x000C
 $WM_MOUSEMOVE = 0x0200
@@ -895,6 +907,7 @@ function Invoke-TypeText($process, [string]$text) {
 # Get-Content defaults to the system ANSI code page (e.g. GBK on Chinese
 # systems) for files without a BOM, which corrupts non-ASCII input such as
 # Chinese text passed to set_value/type_text.
+if ($DefinitionsOnly) { return }
 $operationJson = [System.IO.File]::ReadAllText($OperationPath, [System.Text.Encoding]::UTF8)
 $operation = $operationJson | ConvertFrom-Json
 

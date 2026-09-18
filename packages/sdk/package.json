@@ -1,0 +1,55 @@
+{
+  "name": "@cherrystudio/computer-use",
+  "version": "0.1.0-alpha.0",
+  "description": "Typed client for the Cherry Computer Use native runtime",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CherryHQ/cherry-computer-use.git",
+    "directory": "packages/sdk"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "build": "npm run generate && tsup",
+    "check": "npm run generate && tsc --noEmit",
+    "test": "npm run build && node --import tsx --test tests/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "json-rpc-2.0": "1.8.0",
+    "vscode-jsonrpc": "9.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "ajv": "8.20.0",
+    "json-schema-to-typescript": "16.0.0",
+    "tsup": "8.5.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

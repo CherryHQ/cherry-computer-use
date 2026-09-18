@@ -4,6 +4,11 @@
 
 ## 当前目录结构
 
+- `packages/sdk` / `protocol`
+  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期及首个结构化桌面切片（应用发现、观察、单次元素语义点击）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；其余动作、平台 npm 包、Agent 工具接入和 Electron 打包验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
+  协议 v2 已实现任务内每应用控制上下文、状态查询与原生停止；观察/动作必须绑定应用会话。Cherry 控制归属、用户停止状态、Tray 与软件光标尚未接入；资源归属及验收顺序见 [runtime 设计](design-docs/computer-use-runtime.md)。
+- `experiments/LinuxNativeProbe/`
+  Go 直接接入 AT-SPI D-Bus/X11 的隔离原型，已在无 Python 的 Linux 容器内完成 GTK 计数按钮操作与窗口截图；独立 probe 保留实验边界，同一容器另运行已接入的 Linux SDK 桌面测试；不证明 Wayland 支持。复现步骤见 [实验说明](../experiments/LinuxNativeProbe/README.md)。
 - `apps/OpenComputerUse`
   主入口，负责 `mcp`、`doctor`、`list-apps`、`snapshot`、`call`、`turn-ended` 等 CLI 命令，以及 `-h` / `--help` / `-v` / `--version` 这类全局参数；不带参数启动时会先检查权限，只有缺失时才进入无 Dock 图标的 app 模式权限引导窗口，`doctor` 也只会在检测到缺失权限时拉起这套 onboarding UI。
 - `apps/OpenComputerUseFixture`
@@ -43,7 +48,8 @@
 - CLI 与 MCP proxy 会把调用进程中 `OPEN_COMPUTER_USE_*` 前缀的环境变量随请求转发给 app agent，并只在该请求执行期间临时覆盖 agent 环境；这让 `click_method=global` 的进程级安全门和 debug 开关在 app-agent 架构下仍按调用方配置生效。
 - 主窗口负责渲染 `Accessibility` / `Screen & System Audio Recording` 两类权限卡片、`Allow` / `Done` 状态和 relaunch 后的状态收敛；当两项权限都已完成时会自动关闭，不再要求用户手动退出。
 - 辅助 drag panel 会跳转到对应的 `System Settings` 页面；点击 `Allow` 后，panel 会从主窗口里的按钮位置做一段 spring + curved frame 的入场，再落到 `System Settings` 内容区下沿。panel 默认保持在窗口右侧内容区下方居中并固定贴近窗口底边，不再依赖实时扫描权限页内部 `+ / -` 控件行；窗口层级上会显式排在当前 `System Settings` 窗口之上，避免被权限列表内容盖住，同时尽量减少对系统设置自身滚动区域的干扰。panel 内也补了显式返回按钮，允许用户中断当前 guidance、回到 onboarding 主窗口重新选择权限步骤。
-- 权限状态会合并 TCC 持久授权记录与当前 app 进程的 runtime preflight：TCC 中任一匹配 client 已授权即可视为 granted，避免 CLI 子进程与 GUI app 对授权状态看到不一致的结果；如果当前 `.app` 进程已经通过 `AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`，也会立即视为 granted，避免 stale 或不匹配的 TCC path 记录让 onboarding 浮层继续停留。正式 release 仍以 CI 打出来的 `Open Computer Use.app` 为准，而本地 debug/dev 打包现在显式命名为 `Open Computer Use (Dev).app`，并在 dev bundle 运行时优先认当前 dev 副本，避免系统设置里出现两个完全同名的条目。
+- SDK 复用同一套拖拽 UI，但保持请求存活至拖拽被接受、完成或关闭；成功 drop 立即收起浮层并结束 SDK 引导，取消 drop 保留面板。SDK 仅返回 runtime preflight 状态，不从拖拽结果推断授权；窗口不会自行退出/重启协议进程，宿主在结束后关闭会话并用新 helper 复查。
+- 旧 CLI/app 模式的权限状态会合并 TCC 持久授权记录与当前 app 进程的 runtime preflight：TCC 中任一匹配 client 已授权即可视为 granted，避免 CLI 子进程与 GUI app 对授权状态看到不一致的结果；如果当前 `.app` 进程已经通过 `AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`，也会立即视为 granted，避免 stale 或不匹配的 TCC path 记录让 onboarding 浮层继续停留。正式 release 仍以 CI 打出来的 `Open Computer Use.app` 为准，而本地 debug/dev 打包现在显式命名为 `Open Computer Use (Dev).app`，并在 dev bundle 运行时优先认当前 dev 副本，避免系统设置里出现两个完全同名的条目。
 
 ### 2. MCP 层
 
