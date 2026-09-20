@@ -109,25 +109,52 @@ func (d *linuxDesktop) Apps(ctx context.Context) ([]sdk.Target, error) {
 		return nil, err
 	}
 	targets := []sdk.Target{}
+	unreadable := []error{}
 	for _, ref := range refs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		// Unique bus names are lifetime identities; never accept a recyclable well-known name.
 		if !strings.HasPrefix(ref.Bus, ":") {
+			unreadable = append(unreadable, fmt.Errorf("%s: registry entry has no unique bus name", ref.Bus))
 			continue
 		}
 		var name string
-		if d.property(ctx, ref, "Name", &name) != nil || name == "" {
+		if err := d.property(ctx, ref, "Name", &name); err != nil {
+			unreadable = append(unreadable, fmt.Errorf("%s: %w", ref.Bus, err))
+			continue
+		}
+		if name == "" {
+			unreadable = append(unreadable, fmt.Errorf("%s: accessible name is empty", ref.Bus))
 			continue
 		}
 		var pid uint32
 		if err := d.bus.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetConnectionUnixProcessID", 0, ref.Bus).Store(&pid); err != nil {
+			unreadable = append(unreadable, fmt.Errorf("%s: %w", ref.Bus, err))
 			continue
 		}
 		targets = append(targets, sdk.Target{Key: ref.Bus + string(ref.Path), Name: name, Native: linuxTarget{ref, pid}})
 	}
+	if len(unreadable) > 0 {
+		fmt.Fprintf(os.Stderr, "open-computer-use: skipped %d of %d registered applications; first reason: %v\n", len(unreadable), len(refs), unreadable[0])
+	}
+	if err := emptyDesktopError(len(refs), len(targets), unreadable); err != nil {
+		return nil, err
+	}
 	return targets, nil
+}
+
+// A desktop that registers applications but yields none is a failed read, not an
+// empty desktop: an empty list would let a caller treat unreadable targets as absent.
+func emptyDesktopError(registered, readable int, reasons []error) error {
+	if registered == 0 || readable > 0 {
+		return nil
+	}
+	message := fmt.Sprintf("none of the %d registered applications could be read", registered)
+	if len(reasons) > 0 {
+		message += "; first reason: " + reasons[0].Error()
+	}
+	return sdk.Error("TARGET_UNAVAILABLE", message)
 }
 
 func (d *linuxDesktop) Observe(ctx context.Context, target sdk.Target, options sdk.ObserveOptions) (sdk.Observation, error) {

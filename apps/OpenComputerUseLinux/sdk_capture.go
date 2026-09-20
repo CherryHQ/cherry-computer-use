@@ -50,7 +50,7 @@ func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Captu
 		return failed("X11 window capture failed")
 	}
 	setup := xproto.Setup(connection)
-	if setup.ImageByteOrder != xproto.ImageOrderLSBFirst || geometry.Depth != 24 || len(pixels.Data) != int(geometry.Width)*int(geometry.Height)*4 {
+	if !decodablePixelFormat(setup.ImageByteOrder, geometry.Depth, geometry.Width, geometry.Height, pixels.Data) {
 		return failed("X11 pixel format is unsupported")
 	}
 	valid := false
@@ -81,6 +81,16 @@ func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Captu
 		return failed("PNG encoding failed")
 	}
 	return sdk.Capture{Status: "available", Image: &sdk.Image{MimeType: "image/png", Width: bitmap.Bounds().Dx(), Height: bitmap.Bounds().Dy(), DataBase64: base64.StdEncoding.EncodeToString(output.Bytes())}}
+}
+
+// Depth 24 carries plain windows and depth 32 carries the ARGB windows that
+// compositing clients such as Firefox map; both reply as one 32-bit BGRA pixel
+// per point. The alpha byte is dropped below, so translucent windows read opaque.
+func decodablePixelFormat(order, depth byte, width, height uint16, data []byte) bool {
+	if order != xproto.ImageOrderLSBFirst || (depth != 24 && depth != 32) {
+		return false
+	}
+	return len(data) == int(width)*int(height)*4
 }
 
 func findX11Window(connection *xgb.Conn, pid uint32, title string) (xproto.Window, error) {
