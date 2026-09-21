@@ -1,5 +1,5 @@
 import { setImmediate } from 'node:timers/promises'
-import { closeSync } from 'node:fs'
+import { Socket } from 'node:net'
 import { Transform } from 'node:stream'
 import { createMessageConnection, ResponseError } from 'vscode-jsonrpc/node'
 
@@ -7,6 +7,10 @@ const sessionId = process.argv.includes('--session-id')
   ? process.argv[process.argv.indexOf('--session-id') + 1]
   : process.argv[2]
 const mode = process.argv[3] ?? 'normal'
+// Extra pipes are closable on Windows, unlike Node's process-wide standard handles.
+const testPipes = process.argv.includes('--test-pipes')
+const inputStream = testPipes ? new Socket({ fd: 4, readable: true, writable: false }) : process.stdin
+const outputStream = testPipes ? new Socket({ fd: 5, readable: false, writable: true }) : process.stdout
 const writer = new Transform({
   transform(chunk, _, callback) {
     void (async () => {
@@ -17,8 +21,8 @@ const writer = new Transform({
     })().then(() => callback(), callback)
   }
 })
-writer.pipe(process.stdout)
-const rpc = createMessageConnection(process.stdin, writer)
+writer.pipe(outputStream)
+const rpc = createMessageConnection(inputStream, writer)
 let clicks = 0
 let generation = 0
 const id = () => `${sessionId}:${generation}`
@@ -110,7 +114,7 @@ rpc.onRequest('getAppState', (input) => {
   if (mode === 'malformed') return { id: 'missing-fields' }
   if (mode === 'exit') process.exit(3)
   if (mode === 'eof') {
-    process.stdout.end()
+    outputStream.end()
     return new Promise(() => {})
   }
   if (mode === 'null-envelope' || mode === 'ambiguous-envelope') {
@@ -132,13 +136,13 @@ rpc.onRequest('getAppState', (input) => {
   if (mode === 'write-failure' || mode === 'backpressure') {
     process.once('message', () => {
       if (mode === 'write-failure') {
-        process.stdin.destroy()
-        closeSync(0)
+        inputStream.once('close', () => process.send?.('input-closed'))
+        inputStream.destroy()
       } else {
-        process.stdin.pause()
+        inputStream.pause()
+        process.send?.('input-closed')
       }
       setInterval(() => {}, 1_000)
-      process.send?.('input-closed')
     })
   }
   return snapshot()
@@ -197,5 +201,5 @@ rpc.onRequest('shutdown', () => {
     cleanup: 'complete'
   }
 })
-process.stdin.on('end', () => process.exit(0))
+inputStream.on('end', () => process.exit(0))
 rpc.listen()

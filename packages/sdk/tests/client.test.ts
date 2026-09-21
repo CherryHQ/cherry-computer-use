@@ -17,13 +17,19 @@ const fixture = new URL('./fixtures/runtime.mjs', import.meta.url)
 
 function launch(t: TestContext, mode = 'normal') {
   const sessionId = randomUUID()
-  const child = spawn(
+  const testPipes = mode === 'eof' || mode === 'write-failure'
+  const spawned = spawn(
     process.execPath,
-    [fileURLToPath(fixture), sessionId, mode],
+    [fileURLToPath(fixture), sessionId, mode, ...(testPipes ? ['--test-pipes'] : [])],
     {
-      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+      stdio: testPipes
+        ? ['ignore', 'ignore', 'pipe', 'ipc', 'pipe', 'pipe']
+        : ['pipe', 'pipe', 'pipe', 'ipc']
     }
-  ) as ChildProcessWithoutNullStreams
+  )
+  const child = (testPipes
+    ? Object.assign(spawned, { stdin: spawned.stdio.at(4), stdout: spawned.stdio.at(5) })
+    : spawned) as ChildProcessWithoutNullStreams
   const connection = new RuntimeConnection(child, sessionId)
   t.after(async () => {
     await connection.close().catch(() => {})

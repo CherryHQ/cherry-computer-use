@@ -21,7 +21,7 @@ SDK 与 native 原来的六个 job 合并为三个平台 job，每个平台共�
 
 npm 与 Go 使用 Actions 缓存；Go 缓存键覆盖 Windows、Linux 和 probe 的依赖锁文件。同一 PR 或分支的新运行取消旧运行，三个平台保留 `fail-fast: false`。PR 与 main push 保留路径过滤，另外支持手动运行。检查名称改为 `SDK and native (<runner>)`，使用旧 `sdk` / `native` job 名称的分支保护需相应更新。
 
-Windows x64 本机真实桌面、原生协议、类型检查已通过；SDK 的 EOF 和 broken-input 用例在 Windows 仍有两项已知失败。本次只调整 CI 编排，保留失败门禁；不能将优化后的配置视作全绿结果。三平台合并矩阵仍需推送后由 Actions 验证。
+Windows x64 本机真实桌面、原生协议、类型检查已通过。SDK 的 EOF 和 broken-input 故障注入使用独立管道，避免 Windows 上 Node 标准流的句柄生命周期阻止真实断连；测试仍检查原有错误码及进程清理，不跳过 Windows 用例。三平台合并矩阵由 Actions 验证。
 
 ## 设计原则
 
