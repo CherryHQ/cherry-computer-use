@@ -15,6 +15,8 @@ npm run sdk:test
 npm run sdk:build
 ```
 
+CI can reuse a completed build with `npm run test:built --workspace @cherrystudio/computer-use`. Run this through npm so the tarball consumer test receives `npm_execpath`; it does not rebuild `dist/`.
+
 `protocol/schema.json` generates TypeScript wire types and standalone validators during the build. Generated files are ignored; edit the schema and rebuild. `dist/` contains ESM, CJS and their type declarations. The tarball test installs the built package into an isolated consumer and checks both module formats and TypeScript resolution.
 
 ## API

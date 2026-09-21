@@ -37,7 +37,8 @@
     "generate": "node scripts/generate.mjs",
     "build": "npm run generate && tsup",
     "check": "npm run generate && tsc --noEmit",
-    "test": "npm run build && node --import tsx --test tests/*.test.ts",
+    "test": "npm run build && npm run test:built",
+    "test:built": "node --import tsx --test tests/*.test.ts",
     "prepack": "npm run build"
   },
   "dependencies": {
