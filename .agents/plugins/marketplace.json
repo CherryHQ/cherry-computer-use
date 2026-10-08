@@ -1,7 +1,7 @@
 {
   "name": "open-computer-use-local",
   "interface": {
-    "displayName": "Open Computer Use Local"
+    "displayName": "Cherry Computer Use Local"
   },
   "plugins": [
     {

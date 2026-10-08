@@ -108,17 +108,15 @@ public struct PermissionDiagnostics: Sendable {
 }
 
 public enum PermissionSupport {
-    public static let bundleDisplayName = "Open Computer Use"
-    public static let bundleIdentifier = "com.ifuryst.opencomputeruse"
-    public static let developmentBundleDisplayName = "Open Computer Use (Dev)"
-    public static let developmentBundleIdentifier = "com.ifuryst.opencomputeruse.dev"
+    public static let bundleDisplayName = "Cherry Computer Use"
+    public static let bundleIdentifier = "com.cherryai.ComputerUse"
+    public static let developmentBundleDisplayName = "Cherry Computer Use (Dev)"
+    public static let developmentBundleIdentifier = "com.cherryai.ComputerUse.dev"
     private static let releaseAppBundleName = "\(bundleDisplayName).app"
     private static let developmentAppBundleName = "\(developmentBundleDisplayName).app"
     private static let appVariantInfoKey = "OpenComputerUseAppVariant"
     private static let npmPackageNames = [
-        "open-computer-use",
-        "open-computer-use-mcp",
-        "open-codex-computer-use-mcp",
+        "@cherrystudio/computer-use-cli",
     ]
 
     public static func currentBundleDisplayName(bundle: Bundle = .main) -> String {

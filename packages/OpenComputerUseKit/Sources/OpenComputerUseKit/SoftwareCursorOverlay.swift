@@ -132,7 +132,7 @@ public func visualCursorObservationFileURL(environment: [String: String]) -> URL
     return URL(fileURLWithPath: rawPath)
 }
 
-public let openComputerUseTurnEndedNotificationName = Notification.Name("com.ifuryst.opencomputeruse.turn-ended")
+public let openComputerUseTurnEndedNotificationName = Notification.Name("com.cherryai.ComputerUse.turn-ended")
 
 public func postOpenComputerUseTurnEndedNotification() {
     DistributedNotificationCenter.default().postNotificationName(

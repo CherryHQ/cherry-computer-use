@@ -1,4 +1,4 @@
-# Open Computer Use Usage
+# Cherry Computer Use Usage
 
 Read this reference when the task requires direct Computer Use tool calls, MCP configuration, or platform-specific behavior.
 
@@ -154,7 +154,7 @@ When the gate is not enabled, treat window-server drags as unavailable and reach
 
 ### macOS
 
-The macOS runtime uses Accessibility, ScreenCaptureKit, app-posted input events, and an explicit private-SkyLight `sky_click` route. It normally avoids moving the user's real pointer. The visual cursor overlay is part of the Open Computer Use experience and can be disabled by the surrounding runtime only when needed. Private SkyLight symbols and raw event fields are not API-stable; re-validate `sky_click` after macOS upgrades.
+The macOS runtime uses Accessibility, ScreenCaptureKit, app-posted input events, and an explicit private-SkyLight `sky_click` route. It normally avoids moving the user's real pointer. The visual cursor overlay is part of the Cherry Computer Use experience and can be disabled by the surrounding runtime only when needed. Private SkyLight symbols and raw event fields are not API-stable; re-validate `sky_click` after macOS upgrades.
 
 ### Windows
 

@@ -99,10 +99,14 @@ An explicit `runtimePath` is a complete `.app` bundle on macOS, or an executable
 
 Without an explicit path, the resolver expects `@cherrystudio/computer-use-{darwin|win32|linux}-{arm64|x64}` at the exact SDK package version. Each package must expose `package.json` and contain:
 
-- macOS: `runtime/Open Computer Use.app/Contents/MacOS/OpenComputerUse` within its complete app bundle.
+- macOS: `runtime/Cherry Computer Use.app/Contents/MacOS/OpenComputerUse` within its complete app bundle.
 - Windows: `runtime/open-computer-use.exe`.
 - Linux: `runtime/open-computer-use`.
 
 These platform packages and `optionalDependencies` will be added in the distribution stage. Missing packages raise `RUNTIME_NOT_FOUND`; there is no PATH lookup or network installation at runtime. Electron hosts will need to provide the executable resource path outside ASAR.
 
 Code Mode is optional and deferred. Ordinary tools and a future script facade can consume the same client; the SDK contains no interpreter, model SDK or Agent session storage.
+
+## Cherry 发布身份
+
+SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.ComputerUse`），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native 完整制品通过 `@cherrystudio/computer-use-cli` 发布；独立 SDK 平台包尚未交付，当前仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。

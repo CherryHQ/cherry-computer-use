@@ -50,5 +50,8 @@
     "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vscode-jsonrpc": "9.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

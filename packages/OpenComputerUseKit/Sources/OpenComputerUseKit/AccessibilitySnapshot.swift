@@ -170,7 +170,7 @@ enum SnapshotBuilder {
 
         let permissions = PermissionDiagnostics.current()
         guard permissions.accessibilityTrusted else {
-            throw ComputerUseError.permissionDenied("Accessibility permission is required. Run `open-computer-use doctor` and grant access to Open Computer Use.")
+            throw ComputerUseError.permissionDenied("Accessibility permission is required. Run `open-computer-use doctor` and grant access to Cherry Computer Use.")
         }
 
         let appElement = AXUIElementCreateApplication(app.pid)

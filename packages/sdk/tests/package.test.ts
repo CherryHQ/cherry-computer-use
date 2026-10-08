@@ -175,7 +175,7 @@ void [pending, use, invalid, ComputerUseError]
       process.platform === 'darwin'
         ? join(
             nativePackage,
-            'runtime/Open Computer Use.app/Contents/MacOS/OpenComputerUse'
+            'runtime/Cherry Computer Use.app/Contents/MacOS/OpenComputerUse'
           )
         : join(nativePackage, 'runtime/open-computer-use')
     await mkdir(dirname(executable), { recursive: true })

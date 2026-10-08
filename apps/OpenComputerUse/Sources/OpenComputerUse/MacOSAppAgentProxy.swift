@@ -79,7 +79,7 @@ enum MacOSAppAgentProxy {
     @MainActor
     private static func connectOrLaunchAgent(socketPath: String) throws -> AppAgentSocketClient {
         guard let appURL = PermissionSupport.currentAppBundleURL() else {
-            throw OpenComputerUseCLIError(message: "Unable to locate Open Computer Use.app for app-scoped macOS permissions.")
+            throw OpenComputerUseCLIError(message: "Unable to locate Cherry Computer Use.app for app-scoped macOS permissions.")
         }
 
         if let client = AppAgentSocketClient.connect(path: socketPath) {
@@ -108,7 +108,7 @@ enum MacOSAppAgentProxy {
             Thread.sleep(forTimeInterval: 0.05)
         }
 
-        throw OpenComputerUseCLIError(message: "Timed out waiting for Open Computer Use.app agent to start.")
+        throw OpenComputerUseCLIError(message: "Timed out waiting for Cherry Computer Use.app agent to start.")
     }
 
     private static func proxyMCP(client: AppAgentSocketClient) throws {
@@ -513,7 +513,7 @@ private final class AppAgentSocketClient: @unchecked Sendable {
         guard let responseLine = readAgentLine(file),
               let response = try JSONSerialization.jsonObject(with: Data(responseLine.utf8)) as? [String: Any]
         else {
-            throw ComputerUseError.message("Open Computer Use.app agent closed the connection.")
+            throw ComputerUseError.message("Cherry Computer Use.app agent closed the connection.")
         }
 
         if let error = response["error"] as? String {

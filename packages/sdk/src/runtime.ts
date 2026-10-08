@@ -45,7 +45,7 @@ export async function resolveRuntimePath(
       dirname(manifestPath),
       'runtime',
       platform === 'darwin'
-        ? 'Open Computer Use.app'
+        ? 'Cherry Computer Use.app'
         : platform === 'win32'
           ? 'open-computer-use.exe'
           : 'open-computer-use'

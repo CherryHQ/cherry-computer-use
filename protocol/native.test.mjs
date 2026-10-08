@@ -11,7 +11,7 @@ import Ajv from 'ajv'
 import { ComputerUse } from '../packages/sdk/dist/index.js'
 
 const runtimePath = resolve(process.env.COMPUTER_USE_RUNTIME_PATH ?? (
-  process.platform === 'darwin' ? 'dist/Open Computer Use (Dev).app'
+  process.platform === 'darwin' ? 'dist/Cherry Computer Use (Dev).app'
     : process.platform === 'win32' ? 'dist/native/open-computer-use.exe' : 'dist/native/open-computer-use'
 ))
 const executable = process.platform === 'darwin' ? join(runtimePath, 'Contents/MacOS/OpenComputerUse') : runtimePath

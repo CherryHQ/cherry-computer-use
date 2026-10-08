@@ -5,6 +5,13 @@ on:
   pull_request:
     paths:
       - "packages/sdk/**"
+      - "packages/cli/**"
+      - ".changeset/**"
+      - "scripts/npm/**"
+      - "scripts/*release*.sh"
+      - "assets/app-icons/**"
+      - "plugins/**"
+      - ".github/workflows/release.yml"
       - "protocol/**"
       - "packages/runtime-go/**"
       - "packages/OpenComputerUseKit/**"
@@ -21,6 +28,13 @@ on:
     branches: [main]
     paths:
       - "packages/sdk/**"
+      - "packages/cli/**"
+      - ".changeset/**"
+      - "scripts/npm/**"
+      - "scripts/*release*.sh"
+      - "assets/app-icons/**"
+      - "plugins/**"
+      - ".github/workflows/release.yml"
       - "protocol/**"
       - "packages/runtime-go/**"
       - "packages/OpenComputerUseKit/**"
@@ -67,6 +81,7 @@ jobs:
             apps/OpenComputerUseLinux/go.sum
             experiments/LinuxNativeProbe/go.sum
       - run: npm ci --ignore-scripts
+      - run: npm run release:versions:check && npm run release:check
       - name: Build SDK once for native and client tests
         id: sdk-build
         run: npm run sdk:build

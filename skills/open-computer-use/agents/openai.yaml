@@ -1,4 +1,4 @@
 interface:
-  display_name: "Open Computer Use(OCU)"
-  short_description: "Guide agents using Open Computer Use"
-  default_prompt: "Use $open-computer-use to operate desktop apps through Open Computer Use."
+  display_name: "Cherry Computer Use(OCU)"
+  short_description: "Guide agents using Cherry Computer Use"
+  default_prompt: "Use $open-computer-use to operate desktop apps through Cherry Computer Use."

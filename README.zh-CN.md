@@ -1,21 +1,12 @@
-# open-computer-use
+# Cherry Computer Use
 
-[![English](https://img.shields.io/badge/English-Click-yellow)](./README.md)
-[![简体中文](https://img.shields.io/badge/简体中文-点击查看-orange)](./README.zh-CN.md)
-[![Release](https://img.shields.io/github/v/release/iFurySt/open-codex-computer-use)](https://github.com/iFurySt/open-codex-computer-use/releases)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/iFurySt/open-codex-computer-use)
-<a href="https://llmapis.com?source=https%3A%2F%2Fgithub.com%2FiFurySt%2Fopen-codex-computer-use" target="_blank"><img src="https://llmapis.com/api/badge/iFurySt/open-codex-computer-use" alt="LLMAPIS" width="20" /></a>
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-> [!TIP]
-> 对 Browser Use 感兴趣的话，可以看看 [open-browser-use](https://github.com/iFurySt/open-codex-browser-use)。
+Cherry Studio 的本地桌面自动化 runtime、MCP CLI 和 TypeScript SDK，支持 macOS、Linux 和 Windows。
 
----
+项目 fork 自 [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)，保留上游署名、MIT license 和第三方声明。下方演示为上游 runtime 的演示，Cherry 版本使用独立品牌和发布身份。
 
-`open-computer-use` 是一个开源的 `Computer Use` 服务，已经包装成 `MCP` 协议，支持所有的 AI Agent 或 MCP Client 快速调用，实现 macOS、Linux 和 Windows 上的 `Computer Use` 能力。
-
-项目的背后是 OpenAI 刚发布的 [Codex Computer Use](https://openai.com/index/codex-for-almost-everything/)，让我看到了基于 Accessibility 可以实现非抢占式 CUA 能力，因此决定复刻一个开源版本
-
-在这期间我利用了之前写的 [harness 模版](https://github.com/iFurySt/harness-template) 开启了这个新项目。这是一个可以快速拉起面向 AI 仓库的 template，非常适合 100% AI-Generated 的项目，也是这一个月来我们最大的实践和收获。现在我们可以基于这套方法论快速实现很多东西；如果你有兴趣，我也写了一篇[文章](https://www.ifuryst.com/blog/2026/speedrunning-the-ai-era/)专门介绍这套方法论
+发布目标为 `@cherrystudio/computer-use`（SDK）和 `@cherrystudio/computer-use-cli`（原生 CLI）；首次 Cherry 发布完成后才可从 registry 安装。参见 [SDK 使用说明](packages/sdk/README.md)和[发布指南](docs/releases/RELEASE_GUIDE.md)。
 
 ## 演示
 
@@ -40,7 +31,7 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 ## Quick Start
 
 ```bash
-npm i -g open-computer-use
+npm i -g @cherrystudio/computer-use-cli
 ```
 
 通过 npm 安装后也会同时提供短命令 `ocu`。
@@ -82,13 +73,13 @@ ocu install-codex-mcp
 
 ```bash
 # 安装到 Codex
-npx skills add iFurySt/open-codex-computer-use -g -a codex --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a codex --skill open-computer-use -y
 npx skills ls -g -a codex | rg 'open-computer-use'
 ```
 
 安装到 Claude Code
 ```
-npx skills add iFurySt/open-codex-computer-use -g -a claude-code --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a claude-code --skill open-computer-use -y
 ```
 
 更新已有的全局安装，包括上面安装到 Codex 的那份：

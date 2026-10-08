@@ -5,8 +5,8 @@ import XCTest
 
 final class OpenComputerUseKitTests: XCTestCase {
     func testAppAgentSocketFileNamePreservesLegacyDefault() {
-        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: nil), "open-computer-use-agent.sock")
-        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: "   "), "open-computer-use-agent.sock")
+        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: nil), "cherry-computer-use-agent.sock")
+        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: "   "), "cherry-computer-use-agent.sock")
     }
 
     func testAppAgentSocketFileNameIsDeterministicAndNamespaced() {
@@ -15,7 +15,7 @@ final class OpenComputerUseKitTests: XCTestCase {
 
         XCTAssertEqual(first, openComputerUseAppAgentSocketFileName(namespace: "boss-resume:profile-a"))
         XCTAssertNotEqual(first, second)
-        XCTAssertTrue(first.hasPrefix("open-computer-use-agent-"))
+        XCTAssertTrue(first.hasPrefix("cherry-computer-use-agent-"))
         XCTAssertTrue(first.hasSuffix(".sock"))
         XCTAssertLessThan(first.count, 80)
     }
@@ -480,9 +480,9 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPreferredPermissionAppBundleURLPrefersInstalledCopyOverTransientRunningCopy() {
-        let installed = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Open Computer Use.app")
-        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Open Computer Use.app")
-        let fallback = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use-debug/dist/Open Computer Use.app")
+        let installed = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Cherry Computer Use.app")
+        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Cherry Computer Use.app")
+        let fallback = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use-debug/dist/Cherry Computer Use.app")
 
         let resolved = PermissionSupport.preferredPermissionAppBundleURL(
             preferredInstalledBundleURL: installed,
@@ -494,9 +494,9 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPreferredPermissionAppBundleURLPrefersRunningDevelopmentCopy() {
-        let installed = URL(fileURLWithPath: "/Applications/Open Computer Use.app")
-        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Open Computer Use (Dev).app")
-        let fallback = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use-debug/dist/Open Computer Use (Dev).app")
+        let installed = URL(fileURLWithPath: "/Applications/Cherry Computer Use.app")
+        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Cherry Computer Use (Dev).app")
+        let fallback = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use-debug/dist/Cherry Computer Use (Dev).app")
 
         let resolved = PermissionSupport.preferredPermissionAppBundleURL(
             preferredInstalledBundleURL: installed,
@@ -509,8 +509,8 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPreferredPermissionAppBundleURLCanPreferRunningReleaseCopyOverStaleInstalledCopy() {
-        let staleInstalled = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/npm/open-computer-use/dist/Open Computer Use.app")
-        let running = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Open Computer Use.app")
+        let staleInstalled = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/npm/open-computer-use/dist/Cherry Computer Use.app")
+        let running = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Cherry Computer Use.app")
 
         let resolved = PermissionSupport.preferredPermissionAppBundleURL(
             preferredInstalledBundleURL: staleInstalled,
@@ -523,9 +523,9 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPreferredInstalledAppBundleURLUsesFirstDiscoveredInstalledCopy() {
-        let applications = URL(fileURLWithPath: "/Applications/Open Computer Use.app")
-        let npm = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Open Computer Use.app")
-        let duplicateApplications = URL(fileURLWithPath: "/Applications/Open Computer Use.app")
+        let applications = URL(fileURLWithPath: "/Applications/Cherry Computer Use.app")
+        let npm = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Cherry Computer Use.app")
+        let duplicateApplications = URL(fileURLWithPath: "/Applications/Cherry Computer Use.app")
 
         let resolved = PermissionSupport.preferredInstalledAppBundleURL(
             candidates: [applications, npm, duplicateApplications]
@@ -535,8 +535,8 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPermissionClientsKeepStableBundleIdentityAheadOfTransientAppPath() {
-        let installed = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Open Computer Use.app")
-        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Open Computer Use.app")
+        let installed = URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/open-computer-use/dist/Cherry Computer Use.app")
+        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Cherry Computer Use.app")
 
         let clients = PermissionSupport.permissionClients(
             primaryBundleURL: installed,
@@ -555,7 +555,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testPermissionClientsKeepDevelopmentBundleIdentitySeparateFromRelease() {
-        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Open Computer Use (Dev).app")
+        let running = URL(fileURLWithPath: "/Users/example/projects/open-codex-computer-use/dist/Cherry Computer Use (Dev).app")
 
         let clients = PermissionSupport.permissionClients(
             primaryBundleURL: running,

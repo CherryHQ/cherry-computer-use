@@ -1,5 +1,11 @@
 # Third-Party Notices
 
+## Open Computer Use and Cherry Studio branding
+
+This project is derived from [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use). The upstream MIT copyright notice is preserved in LICENSE.
+
+The Cherry app icon is copied unchanged from CherryHQ/cherry-studio (`build/icons/1024x1024.png`) for use by the Cherry Studio project. Branding ownership is distinct from the upstream runtime license.
+
 ## Cua Driver
 
 The macOS `sky_click` event recipe and private SkyLight bridge are derived from Cua Driver:
