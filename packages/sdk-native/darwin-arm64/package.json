@@ -1,0 +1,7 @@
+{
+  "name": "@cherrystudio/computer-use-darwin-arm64",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private development placeholder for the generated darwin-arm64 SDK runtime package",
+  "license": "MIT"
+}

@@ -53,5 +53,13 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "optionalDependencies": {
+    "@cherrystudio/computer-use-darwin-arm64": "0.1.0",
+    "@cherrystudio/computer-use-darwin-x64": "0.1.0",
+    "@cherrystudio/computer-use-win32-arm64": "0.1.0",
+    "@cherrystudio/computer-use-win32-x64": "0.1.0",
+    "@cherrystudio/computer-use-linux-arm64": "0.1.0",
+    "@cherrystudio/computer-use-linux-x64": "0.1.0"
   }
 }

@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "packages/sdk",
-    "packages/cli"
+    "packages/cli",
+    "packages/sdk-native/*"
   ],
   "scripts": {
     "sdk:build": "npm run build --workspace @cherrystudio/computer-use",
@@ -19,8 +20,11 @@
     "changeset:status": "changeset status",
     "changeset:version": "changeset version && node scripts/npm/sync-versions.mjs && npm install --package-lock-only --ignore-scripts",
     "changeset:publish": "bash scripts/publish-release.sh",
-    "release:check": "node --test scripts/npm/release.test.mjs",
-    "release:versions:check": "node scripts/npm/sync-versions.mjs --check"
+    "release:check": "node --test scripts/npm/*.test.mjs",
+    "release:versions:check": "node scripts/npm/sync-versions.mjs --check",
+    "sdk:runtime:build": "node scripts/npm/build-sdk-runtime.mjs",
+    "sdk:package:verify": "node scripts/npm/verify-sdk-package.mjs",
+    "sdk:release:validate": "node scripts/npm/publish-sdk.mjs --check"
   },
   "devDependencies": {
     "@changesets/changelog-github": "0.5.2",

@@ -69,6 +69,7 @@ test(
       [
         npmCli,
         'install',
+        '--omit=optional',
         '--cache',
         join(consumer, 'npm-cache'),
         '--ignore-scripts',

@@ -6,7 +6,7 @@ Cherry Studio 的本地桌面自动化 runtime、MCP CLI 和 TypeScript SDK，�
 
 项目 fork 自 [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)，保留上游署名、MIT license 和第三方声明。下方演示为上游 runtime 的演示，Cherry 版本使用独立品牌和发布身份。
 
-当前仅发布 `@cherrystudio/computer-use`（SDK）；首次 Cherry SDK 发布完成后才可从 registry 安装。原生 CLI workspace 为 private，暂不公开发布。参见 [SDK 使用说明](packages/sdk/README.md)和[发布指南](docs/releases/RELEASE_GUIDE.md)。
+`@cherrystudio/computer-use`（SDK）已发布；0.1.0 需要显式指定原生 `runtimePath`，后端分发补丁通过六个 OS/CPU 平台包支持自动安装与发现。CLI workspace 保持 private，不公开发布。参见 [SDK 使用说明](packages/sdk/README.md)和[发布指南](docs/releases/RELEASE_GUIDE.md)。
 
 ## 演示
 

@@ -7,12 +7,26 @@
     }
   ],
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@cherrystudio/computer-use",
+      "@cherrystudio/computer-use-darwin-arm64",
+      "@cherrystudio/computer-use-darwin-x64",
+      "@cherrystudio/computer-use-linux-arm64",
+      "@cherrystudio/computer-use-linux-x64",
+      "@cherrystudio/computer-use-win32-arm64",
+      "@cherrystudio/computer-use-win32-x64"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
     "@cherrystudio/computer-use-cli"
-  ]
+  ],
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  }
 }
