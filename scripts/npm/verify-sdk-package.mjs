@@ -75,13 +75,15 @@ try {
       : "const { ComputerUse } = require('@cherrystudio/computer-use')";
     const entry = path.join(consumer, `smoke.${extension}`);
     await writeFile(entry, `${header}\n;(async () => {
-      const client = await ComputerUse.start()
-      try {
-        const capabilities = await client.getCapabilities()
-        if (capabilities.platform !== process.platform) throw new Error('Wrong runtime platform')
-        if ((await client.listAppSessions()).length !== 0) throw new Error('Unexpected app ownership')
-        await client.getPermissionStatus()
-      } finally { await client.close() }
+      for (let attempt = 0; attempt < (process.platform === 'darwin' ? 10 : 1); attempt++) {
+        const client = await ComputerUse.start()
+        try {
+          const capabilities = await client.getCapabilities()
+          if (capabilities.platform !== process.platform) throw new Error('Wrong runtime platform')
+          if ((await client.listAppSessions()).length !== 0) throw new Error('Unexpected app ownership')
+          await client.getPermissionStatus()
+        } finally { await client.close() }
+      }
     })().catch(error => { console.error(error); process.exitCode = 1 })\n`);
     await exec(process.execPath, [entry], { cwd: consumer, timeout: 45000 });
   }

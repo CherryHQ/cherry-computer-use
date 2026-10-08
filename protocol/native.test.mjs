@@ -89,6 +89,16 @@ function agentPIDs(sessionId) {
     .map(line => Number(line.trim().split(/\s+/)[0]))
 }
 
+test('macOS shutdown acknowledgement is followed by a clean proxy exit across repeated sessions', { skip: process.platform !== 'darwin', timeout: 60000 }, async t => {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const runtime = connection(t)
+    await runtime.initialize()
+    runtime.send('close', 'shutdown', { sessionId: runtime.sessionId })
+    assert.deepEqual((await runtime.receive()).result, { sessionId: runtime.sessionId, cleanup: 'complete' })
+    assert.deepEqual(await runtime.exit, [0, null], `Session ${attempt}: ${runtime.stderr()}`)
+  }
+})
+
 async function expectAgentExit(sessionId) {
   for (let attempt = 0; attempt < 40; attempt++) {
     if (agentPIDs(sessionId).length === 0) return
