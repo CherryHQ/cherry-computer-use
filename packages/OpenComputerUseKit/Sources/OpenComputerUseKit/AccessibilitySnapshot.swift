@@ -13,6 +13,9 @@ final class ElementRecord {
     let rawActions: [String]
     let prettyActions: [String]
     let isSyntheticText: Bool
+    let parentIndex: Int?
+    let name: String?
+    let value: String?
 
     init(
         index: Int,
@@ -22,7 +25,10 @@ final class ElementRecord {
         role: String? = nil,
         rawActions: [String],
         prettyActions: [String],
-        isSyntheticText: Bool = false
+        isSyntheticText: Bool = false,
+        parentIndex: Int? = nil,
+        name: String? = nil,
+        value: String? = nil
     ) {
         self.index = index
         self.identifier = identifier
@@ -32,6 +38,9 @@ final class ElementRecord {
         self.rawActions = rawActions
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
+        self.parentIndex = parentIndex
+        self.name = name
+        self.value = value
     }
 }
 
@@ -116,6 +125,7 @@ public struct AppSnapshot {
     let selectedText: String?
 
     let elements: [Int: ElementRecord]
+    var treeTruncation: Set<String> = []
 
     public var renderedText: String {
         renderedText(style: .fullState)
@@ -253,7 +263,8 @@ enum SnapshotBuilder {
             focusedSummary: renderer.focusedSummary,
             focusedElement: focusedElement,
             selectedText: selectedText,
-            elements: renderer.records
+            elements: renderer.records,
+            treeTruncation: renderer.truncated
         )
     }
 
@@ -388,7 +399,10 @@ enum SnapshotBuilder {
                 localFrame: element.frame.cgRect,
                 role: element.role,
                 rawActions: element.actions,
-                prettyActions: element.actions
+                prettyActions: element.actions,
+                parentIndex: element.index == 0 ? nil : 0,
+                name: element.title,
+                value: element.value
             )
             records[element.index] = record
 
@@ -674,13 +688,15 @@ private struct TreeRenderer {
     var records: [Int: ElementRecord] = [:]
     var identifierIndex: [String: String] = [:]
     var focusedSummary: String?
+    var truncated: Set<String> = []
 
     init(context: RenderContext) {
         self.context = context
     }
 
-    mutating func render(_ root: AXUIElement, depth: Int = 0, ancestors: [AXUIElement] = []) {
+    mutating func render(_ root: AXUIElement, depth: Int = 0, ancestors: [AXUIElement] = [], parent: Int? = nil) {
         guard shouldContinueRendering(nextIndex: nextIndex, depth: depth, limits: context.treeLimits) else {
+            truncated.insert(nextIndex < context.treeLimits.maxNodeCount ? "depth" : "nodes")
             return
         }
 
@@ -786,7 +802,7 @@ private struct TreeRenderer {
             preservesCompactGenericActionTarget: rendersCompactGenericActionTarget
         ) {
             for child in childElements {
-                render(child, depth: depth, ancestors: nextAncestors)
+                render(child, depth: depth, ancestors: nextAncestors, parent: parent)
             }
             return
         }
@@ -844,7 +860,10 @@ private struct TreeRenderer {
             localFrame: localFrame,
             role: role,
             rawActions: actions,
-            prettyActions: prettyActions
+            prettyActions: prettyActions,
+            parentIndex: parent,
+            name: displayTitle ?? label,
+            value: value
         )
         records[index] = record
 
@@ -864,9 +883,9 @@ private struct TreeRenderer {
         }
 
         if rendersSummaryAsChildren, let genericTextSummary {
-            renderSyntheticText(genericTextSummary, representedBy: root, depth: depth + 1)
+            renderSyntheticText(genericTextSummary, representedBy: root, depth: depth + 1, parent: index)
             for image in summaryImageChildren {
-                render(image, depth: depth + 1, ancestors: nextAncestors)
+                render(image, depth: depth + 1, ancestors: nextAncestors, parent: index)
             }
             return
         }
@@ -876,12 +895,13 @@ private struct TreeRenderer {
         }
 
         for child in childElements {
-            render(child, depth: depth + 1, ancestors: nextAncestors)
+            render(child, depth: depth + 1, ancestors: nextAncestors, parent: index)
         }
     }
 
-    private mutating func renderSyntheticText(_ text: String, representedBy element: AXUIElement, depth: Int) {
+    private mutating func renderSyntheticText(_ text: String, representedBy element: AXUIElement, depth: Int, parent: Int?) {
         guard shouldContinueRendering(nextIndex: nextIndex, depth: depth, limits: context.treeLimits) else {
+            truncated.insert(nextIndex < context.treeLimits.maxNodeCount ? "depth" : "nodes")
             return
         }
 
@@ -896,7 +916,9 @@ private struct TreeRenderer {
             localFrame: resolveLocalFrame(of: element, windowBounds: context.windowBounds),
             rawActions: [],
             prettyActions: [],
-            isSyntheticText: true
+            isSyntheticText: true,
+            parentIndex: parent,
+            name: text
         )
     }
 

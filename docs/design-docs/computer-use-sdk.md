@@ -192,7 +192,7 @@ interface ActionResult {
 
 ## 原生协议与取消
 
-三端已增加独立的 `serve --stdio` SDK 入口，JSON-RPC 2.0 仅作为传输协议。已接通生命周期、`listApps`、`getAppState` 和单次左键元素语义 `click`；macOS 显式权限申请已接通；Windows/Linux 的 `requestPermissions`、坐标/多次/非左键点击及其余六种动作暂报 unsupported。现有 MCP `tools/list` 与 `tools/call` 仍由 MCP adapter 提供。
+三端已增加独立的 `serve --stdio` SDK 入口，JSON-RPC 2.0 仅作为传输协议。已接通生命周期、`listApps`、`getAppState` 和 `act`；macOS 七种动作与坐标/多次/非左键点击都由上游引擎执行，显式权限申请已接通；Windows/Linux 仅支持单次左键元素语义 `click`，`requestPermissions` 与其余动作暂报 unsupported。现有 MCP `tools/list` 与 `tools/call` 仍由 MCP adapter 提供。
 
 JS 端已采用 [vscode-jsonrpc](https://github.com/microsoft/vscode-languageserver-node/blob/main/jsonrpc/README.md)的流读写与 Content-Length framing，并使用 `json-rpc-2.0` 管理请求关联；取消通知与所属进程生命周期由 SDK 绑定。子进程写入失败测试暴露了 `vscode-jsonrpc` 9.0.2 connection wrapper 的未处理 rejection，因此没有使用该 wrapper，也没有添加全局异常吞错。选择依据与完整 wire 契约见 [协议说明](../../protocol/README.md)。`dist` 通过 tsup `noExternal` 内联 `ajv`、`json-rpc-2.0` 与 `vscode-jsonrpc`，发布包没有运行时依赖：以 `link:` 方式消费时，宿主的打包器只收集自身依赖图，外置依赖会被丢掉（Cherry 打包后曾因缺少 `vscode-jsonrpc` 无法启动）。Swift/Go SDK 入口使用相同 framing；现有 MCP 的逐行 JSON 协议保持兼容。
 
@@ -220,7 +220,7 @@ JSON Schema 是 wire 数据的单一来源，TS wire 类型与校验器在构建
 | [MacOSAppAgentProxy.swift](../../apps/OpenComputerUse/Sources/OpenComputerUse/MacOSAppAgentProxy.swift)代理与 socket 请求同步，真实 agent 通过 LaunchServices 启动 | 增加所属实例握手、异步消息转发、断连清理；操作参数通过请求传递，不借全局环境变量切换 |
 | [Windows main.go](../../apps/OpenComputerUseWindows/main.go)与 [Linux main.go](../../apps/OpenComputerUseLinux/main.go)缓存 snapshot，再把结果转为 MCP 内容；bridge 使用独立超时 context | 复用结构化数据，传递请求取消，分离动作执行与后续采集结果 |
 
-生命周期与首个桌面切片已独立接通：SDK backend 直接读取平台 API，Windows 复用 bridge 定义，结果不经过旧 CLI/MCP 展示文本。上表保留完整迁移目标，当前尚未把旧 CLI/MCP 全部改成领域核心的 adapter。
+macOS 已完成上表迁移：SDK backend 与 MCP 共用引擎，结果不经过 MCP 展示文本。Windows/Linux 的 SDK backend 仍直接读取平台 API，是待替换的并行实现。
 
 ## 包与验证
 

@@ -120,9 +120,12 @@ test('public SDK starts two isolated native sessions and closes them independent
   await assert.rejects(first.stopAppSession({ appSessionId: 'foreign' }), error => error.code === 'APP_SESSION_NOT_FOUND')
   assert.deepEqual(await first.listAppSessions(), [])
   assert.equal(capabilities.capabilities.length, 9)
-  assert.ok(capabilities.capabilities.filter(item => !['accessibility', 'screenshot', 'click'].includes(item.name)).every(item => item.availability.status === 'unsupported'))
+  const engineBacked = process.platform === 'darwin'
+  assert.ok(capabilities.capabilities.every(item => engineBacked
+    ? item.availability.status !== 'unsupported'
+    : ['accessibility', 'screenshot', 'click'].includes(item.name) || item.availability.status === 'unsupported'))
   await assert.rejects(first.act({ type: 'click', appSessionId: 'missing', snapshotId: 'not-a-snapshot', x: 0, y: 0 }), error =>
-    error.code === 'UNSUPPORTED_CAPABILITY' && error.effect === 'none')
+    error.code === (engineBacked ? 'APP_SESSION_NOT_FOUND' : 'UNSUPPORTED_CAPABILITY') && error.effect === 'none')
   await first.close()
   const permissions = await second.getPermissionStatus()
   assert.ok(Array.isArray(permissions.permissions))

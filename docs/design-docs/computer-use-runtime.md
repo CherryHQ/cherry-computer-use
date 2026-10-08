@@ -6,9 +6,10 @@
 
 - 三端 `serve --stdio --session-id` 保留私有生命周期，接入 `listApps → getAppState → act(click)`。Windows/Linux 复用 [Go session 与 Desktop](../../packages/runtime-go/README.md)，macOS 使用 [Swift desktop](../../packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SDKDesktop.swift)及 [私有 app agent](../../apps/OpenComputerUse/Sources/OpenComputerUse/MacOSSDKRuntime.swift)。控制读取、串行执行和响应写入分离。
 - 原生端持有应用进程身份和元素引用，只向 SDK 发会话私有 ID、树层级、动作、截断标记和 PNG。重新观察、尝试执行动作都会使目标的旧快照失效；执行前再校验原生身份、名称、角色及动作，拒绝跨会话和过期引用。
-- 本切片只执行一个元素的左键语义动作：macOS AXPress/AXConfirm/AXOpen、Windows Invoke/SelectionItem/Toggle、Linux AT-SPI click/press/activate。没有坐标输入、按住键鼠、窗口激活或全屏截图兜底；其余六种动作、非左键/多次点击明确不支持。macOS 已接通显式 `requestPermissions`；Windows/Linux 尚无对应系统授权流程。
-- 动作与观察分开：确认原生调用成功后，采集失败或取消仍返回 `completed`。调用结果未知时保留 `effect: possible`，禁用本会话后续桌面操作；不重试动作。单次原生调用无法收敛时，取消/关闭失败不能伪装清理完成。
-- 截图独立报告可用性。macOS 用 PID、标题和窗口几何匹配 ScreenCaptureKit；Windows 对所属 HWND 调用 PrintWindow；Linux 仅在 X11 中按 PID、标题匹配唯一可见窗口，并限制像素格式和尺寸。无法可靠映射时返回 unavailable。当前不返回元素坐标边界，也不接入 Wayland capture。
+- macOS 的 SDK desktop 是上游引擎（`ComputerUseService` + `AccessibilitySnapshot`）的适配层：观察用引擎的窗口选择、Chromium/Electron 辅助功能模式、树渲染与 CGWindow 截图，七种动作都调用引擎的 `perform*`，`tree.text` 返回引擎渲染的大纲（行号即元素 ID）。观察默认 `.readOnly`，`activation: allow` 才允许激活恢复；不设置全局指针环境变量，所以不会走全局 HID。Windows/Linux 仍只执行一个元素的左键语义动作（Invoke/SelectionItem/Toggle、AT-SPI click/press/activate），其余动作明确不支持，待同样改为引擎适配层。macOS 已接通显式 `requestPermissions`；Windows/Linux 尚无对应系统授权流程。
+- 2026-10-08 实测（打包 helper，飞书在后台）：观察拿到主窗口、615 个节点和截图，约 4 秒，与 CLI `snapshot` 相当；TextEdit 在后台完成 setValue、点击、按键与输入，前台应用不变。引擎对后台 Chromium 窗口的 `postToPid` 滚轮事件不生效，MCP 路径同样如此。
+- 动作与观察分开：确认原生调用成功后，采集失败或取消仍返回 `completed`。调用结果未知时保留 `effect: possible`，不重试动作；Windows/Linux 还会禁用本会话后续桌面操作，macOS 引擎错误只报告 `possible`，由调用方重新观察。单次原生调用无法收敛时，取消/关闭失败不能伪装清理完成。
+- 截图独立报告可用性。macOS 用引擎按窗口 ID 截取；Windows 对所属 HWND 调用 PrintWindow；Linux 仅在 X11 中按 PID、标题匹配唯一可见窗口，并限制像素格式和尺寸。无法可靠映射时返回 unavailable。macOS 返回截图像素坐标的元素边界；尚未接入 Wayland capture。
 - macOS 权限查询仅调用 app agent 身份的非交互 preflight，未授予返回 unknown。显式申请先验证完整权限 ID 列表，再复用 app 层已有拖拽授权窗口，打开相应系统设置。请求在拖拽被接受、用户完成、关闭或实际获授权前保持 pending；拖拽成功立即收起浮层并结束 SDK 引导，但不推断授权成功，宿主随后用新 helper 检查权限；关闭/取消会清理窗口、浮层和监视器，返回实际 preflight 结果，不把请求成功当成 granted。SDK 模式不走旧窗口的退出/重启 app 流程。默认交互超时为 5 分钟，可由调用方覆盖。Cherry 保持 helper 存活至引导结束，再用新 helper 重新检查；Agent 控制任务仍须持有自己的长会话。Windows/Linux 的空权限列表表示没有接入 OS 授权流程，不能代替宿主授权。macOS GUI 待用户在系统设置授予辅助功能和屏幕录制；没有绕过 TCC。
 - [原生契约测试](../../protocol/native.test.mjs)：macOS 5 项通过，Windows ARM64 与 Linux ARM64 各 4 项通过、macOS 专用项跳过。Swift 9 项、共享 Go 12 项（含 race detector）通过；两端既有 Go 单测通过。
 - [真实桌面测试](../../protocol/desktop.test.mjs)：Parallels Windows 11 ARM64 与无 Python 的 Linux Xvfb/GTK 容器均完成 `Count: 0 → 1 → 2`、PNG、层级/截断、跨会话与过期快照拒绝、独立关闭。Windows 另验 Job Object 在请求取消和 Go owner 强杀时终止 worker/子进程。操作仅针对自建 fixture。
@@ -133,7 +134,7 @@ flowchart TD
 | [PowerShell](../../apps/OpenComputerUseWindows/runtime.ps1)和 [Python](../../apps/OpenComputerUseLinux/runtime.py)在动作后直接采集快照 | 采集失败可能掩盖已经执行的动作 | 后端拆成执行动作、采集状态两个操作，由原生会话组合结果 |
 | [Linux Go bridge](../../apps/OpenComputerUseLinux/main.go)每次调用重启 Python，使用后台 context | 不适合承载跨工具调用的 portal/采集会话 | 后端会话按任务存活；优先验证 Go 直接接入，若保留 Python 则采用任务私有 worker；owner 断开触发清理 |
 
-上表保留基线的迁移边界。当前 SDK 直接读取平台 API，Windows 复用 bridge 定义；没有解析 MCP 文本，也尚未把旧 CLI/MCP 全部迁到 SDK 核心。后续动作继续按相同领域契约接入，避免现在扩大重构范围。
+上表保留基线的迁移边界。macOS 已按此完成：引擎动作拆成执行与 MCP 包装两层，快照由调用方持有，SDK 与 MCP 共用同一引擎。首个切片曾让三端 SDK 直接读取平台 API，Windows/Linux 仍是这种并行实现，需按 macOS 方式改为调用各自引擎，不再扩展并行实现。
 
 ## 控制消息始终可达
 

@@ -499,6 +499,10 @@
                     "$ref": "#/definitions/Element"
                   }
                 },
+                "text": {
+                  "type": "string",
+                  "description": "Runtime-rendered outline of the same tree; line prefixes are element IDs."
+                },
                 "truncated": {
                   "type": "array",
                   "items": {

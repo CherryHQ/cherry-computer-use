@@ -476,18 +476,22 @@ public final class ComputerUseService {
         mouseButton: String,
         clickMethod: ClickMethod = .auto
     ) throws -> ToolCallResult {
-        try validateClickMethod(
-            clickMethod,
-            hasElementIndex: elementIndex != nil,
-            environment: ProcessInfo.processInfo.environment
-        )
-        try validateSkyClickArguments(
-            method: clickMethod,
-            mouseButton: mouseButton,
-            clickCount: clickCount
-        )
+        try validateClickArguments(clickMethod: clickMethod, elementIndex: elementIndex, mouseButton: mouseButton, clickCount: clickCount)
+        try performClick(on: try currentSnapshot(for: query), elementIndex: elementIndex, x: x, y: y, clickCount: clickCount, mouseButton: mouseButton, clickMethod: clickMethod)
+        return snapshotResult(for: try refreshSnapshot(for: query, recoveryPolicy: clickActionSnapshotRecoveryPolicy(for: clickMethod)), style: .actionResult)
+    }
 
-        let snapshot = try currentSnapshot(for: query)
+    func performClick(
+        on snapshot: AppSnapshot,
+        elementIndex: String?,
+        x: Double?,
+        y: Double?,
+        clickCount: Int,
+        mouseButton: String,
+        clickMethod: ClickMethod = .auto
+    ) throws {
+        try validateClickArguments(clickMethod: clickMethod, elementIndex: elementIndex, mouseButton: mouseButton, clickCount: clickCount)
+
         let button = MouseButtonKind(rawValue: mouseButton.lowercased()) ?? .left
         if snapshot.mode == .fixture {
             guard clickMethod == .auto else {
@@ -516,7 +520,7 @@ public final class ComputerUseService {
 
             Thread.sleep(forTimeInterval: 0.15)
             pulseVisualCursor(at: cursorTarget, clickCount: clickCount, mouseButton: button)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         if let elementIndex {
@@ -644,18 +648,27 @@ public final class ComputerUseService {
         } else {
             throw ComputerUseError.invalidArguments("click requires either element_index or x/y")
         }
+    }
 
-        return snapshotResult(
-            for: try refreshSnapshot(
-                for: query,
-                recoveryPolicy: clickActionSnapshotRecoveryPolicy(for: clickMethod)
-            ),
-            style: .actionResult
+    private func validateClickArguments(clickMethod: ClickMethod, elementIndex: String?, mouseButton: String, clickCount: Int) throws {
+        try validateClickMethod(
+            clickMethod,
+            hasElementIndex: elementIndex != nil,
+            environment: ProcessInfo.processInfo.environment
+        )
+        try validateSkyClickArguments(
+            method: clickMethod,
+            mouseButton: mouseButton,
+            clickCount: clickCount
         )
     }
 
     public func performSecondaryAction(app query: String, elementIndex: String, action: String) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
+        try performSecondaryAction(on: try currentSnapshot(for: query), elementIndex: elementIndex, action: action)
+        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+    }
+
+    func performSecondaryAction(on snapshot: AppSnapshot, elementIndex: String, action: String) throws {
         let record = try lookupElement(snapshot: snapshot, index: elementIndex)
 
         if snapshot.mode == .fixture {
@@ -663,7 +676,7 @@ public final class ComputerUseService {
                 throw ComputerUseError.message(invalidSecondaryActionMessage(action: action, record: record))
             }
 
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         guard let rawAction = matchingAction(requested: action, record: record) else {
@@ -680,10 +693,15 @@ public final class ComputerUseService {
         }
 
         Thread.sleep(forTimeInterval: 0.15)
-        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
     }
 
     public func scroll(app query: String, direction: String, elementIndex: String, pages: Double) throws -> ToolCallResult {
+        _ = try validatedScrollDirection(direction, pages: pages)
+        try performScroll(on: try currentSnapshot(for: query), direction: direction, elementIndex: elementIndex, pages: pages)
+        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+    }
+
+    private func validatedScrollDirection(_ direction: String, pages: Double) throws -> String {
         let normalized = direction.lowercased()
         guard ["up", "down", "left", "right"].contains(normalized) else {
             throw ComputerUseError.message("Invalid scroll direction: \(direction)")
@@ -691,8 +709,12 @@ public final class ComputerUseService {
         guard pages.isFinite, pages > 0 else {
             throw ComputerUseError.message("pages must be > 0")
         }
+        return normalized
+    }
 
-        let snapshot = try currentSnapshot(for: query)
+    func performScroll(on snapshot: AppSnapshot, direction: String, elementIndex: String, pages: Double) throws {
+        let normalized = try validatedScrollDirection(direction, pages: pages)
+
         let record = try lookupElement(snapshot: snapshot, index: elementIndex)
 
         if snapshot.mode == .fixture {
@@ -701,7 +723,7 @@ public final class ComputerUseService {
             }
             try FixtureBridge.post(FixtureCommand(kind: "scroll", identifier: identifier, direction: normalized, pages: pages))
             Thread.sleep(forTimeInterval: 0.15)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         if let repeatCount = integralScrollPageCount(pages),
@@ -722,16 +744,20 @@ public final class ComputerUseService {
         } else {
             throw ComputerUseError.stateUnavailable("element \(elementIndex) has no scrollable frame")
         }
-
-        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
     }
 
     public func drag(app query: String, fromX: Double, fromY: Double, toX: Double, toY: Double) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
+        let path = try performDrag(on: try currentSnapshot(for: query), fromX: fromX, fromY: fromY, toX: toX, toY: toY)
+        let result = snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+        return path.map { appendingDragDeliveryNote(to: result, path: $0) } ?? result
+    }
+
+    @discardableResult
+    func performDrag(on snapshot: AppSnapshot, fromX: Double, fromY: Double, toX: Double, toY: Double) throws -> DragDeliveryPath? {
         if snapshot.mode == .fixture {
             try FixtureBridge.post(FixtureCommand(kind: "drag", identifier: "fixture-drag-pad", x: fromX, y: fromY, toX: toX, toY: toY))
             Thread.sleep(forTimeInterval: 0.15)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return nil
         }
 
         let start = try screenshotToGlobalPoint(snapshot: snapshot, x: fromX, y: fromY)
@@ -742,23 +768,24 @@ public final class ComputerUseService {
             targetDescription: "from=(\(Int(fromX)), \(Int(fromY))) to=(\(Int(toX)), \(Int(toY)))",
             snapshot: snapshot
         )
-        return appendingDragDeliveryNote(
-            to: snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult),
-            path: path
-        )
+        return path
     }
 
     public func typeText(app query: String, text: String) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
+        try performTypeText(on: try currentSnapshot(for: query), text: text)
+        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+    }
+
+    func performTypeText(on snapshot: AppSnapshot, text: String) throws {
         if snapshot.mode == .fixture {
             try FixtureBridge.post(FixtureCommand(kind: "type_text", identifier: "fixture-input", value: text))
             Thread.sleep(forTimeInterval: 0.15)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         if try typeTextBySettingFocusedValueIfAvailable(text, in: snapshot) {
             Thread.sleep(forTimeInterval: 0.1)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         guard try canTypeTextUsingKeyboardFallback(in: snapshot) else {
@@ -766,23 +793,29 @@ public final class ComputerUseService {
         }
 
         try InputSimulation.typeText(text, pid: snapshot.app.pid)
-        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
     }
 
     public func pressKey(app query: String, key: String) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
-        if snapshot.mode == .fixture {
-            try FixtureBridge.post(FixtureCommand(kind: "press_key", identifier: "fixture-key-capture", value: key))
-            Thread.sleep(forTimeInterval: 0.15)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
-        }
-
-        try InputSimulation.pressKey(key, pid: snapshot.app.pid)
+        try performPressKey(on: try currentSnapshot(for: query), key: key)
         return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
     }
 
+    func performPressKey(on snapshot: AppSnapshot, key: String) throws {
+        if snapshot.mode == .fixture {
+            try FixtureBridge.post(FixtureCommand(kind: "press_key", identifier: "fixture-key-capture", value: key))
+            Thread.sleep(forTimeInterval: 0.15)
+            return
+        }
+
+        try InputSimulation.pressKey(key, pid: snapshot.app.pid)
+    }
+
     public func setValue(app query: String, elementIndex: String, value: String) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
+        try performSetValue(on: try currentSnapshot(for: query), elementIndex: elementIndex, value: value)
+        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+    }
+
+    func performSetValue(on snapshot: AppSnapshot, elementIndex: String, value: String) throws {
         let record = try lookupElement(snapshot: snapshot, index: elementIndex)
 
         if snapshot.mode == .fixture {
@@ -795,7 +828,7 @@ public final class ComputerUseService {
             try FixtureBridge.post(FixtureCommand(kind: "set_value", identifier: identifier, value: value))
             Thread.sleep(forTimeInterval: 0.15)
             settleVisualCursor(at: cursorTarget)
-            return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
+            return
         }
 
         guard let element = record.element else {
@@ -822,7 +855,6 @@ public final class ComputerUseService {
         }
 
         settleVisualCursor(at: cursorTarget)
-        return snapshotResult(for: try refreshSnapshot(for: query), style: .actionResult)
     }
 
     private func currentSnapshot(for query: String) throws -> AppSnapshot {
