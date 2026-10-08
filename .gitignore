@@ -8,3 +8,5 @@ artifacts/codex-dumps/
 research/
 __pycache__/
 *.pyc
+node_modules/
+packages/sdk/src/generated/

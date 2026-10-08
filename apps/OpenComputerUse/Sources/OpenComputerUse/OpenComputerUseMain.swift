@@ -26,6 +26,8 @@ enum OpenComputerUseMain {
     private static func run() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
 
+        if try MacOSSDKRuntime.run(arguments: arguments) { return }
+
         if MacOSAppAgentProxy.isAgentInvocation(arguments: arguments) {
             try MacOSAppAgentProxy.runAgent(arguments: arguments)
             return

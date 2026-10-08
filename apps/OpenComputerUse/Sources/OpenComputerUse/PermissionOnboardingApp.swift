@@ -54,15 +54,24 @@ final class PermissionOnboardingAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class PermissionWindowController: NSWindowController {
-    private let contentController = PermissionContentController()
-    private lazy var accessoryPanelController = PermissionAccessoryPanelController { [weak self] in
-        self?.handleAccessoryPanelBack()
-    }
+final class PermissionWindowController: NSWindowController, NSWindowDelegate {
+    private let contentController: PermissionContentController
+    private lazy var accessoryPanelController = PermissionAccessoryPanelController(
+        onBack: { [weak self] in self?.handleAccessoryPanelBack() },
+        onDropAccepted: { [weak self] in self?.handleAcceptedDrop() }
+    )
     private let terminateOnCompletion: Bool
 
-    init(terminateOnCompletion: Bool = true) {
+    private var onDismiss: (() -> Void)?
+
+    init(
+        terminateOnCompletion: Bool = true,
+        permissions: [SystemPermissionKind] = SystemPermissionKind.allCases,
+        onDismiss: (() -> Void)? = nil
+    ) {
         self.terminateOnCompletion = terminateOnCompletion
+        self.onDismiss = onDismiss
+        contentController = PermissionContentController(permissions: permissions, sdkSession: onDismiss != nil)
 
         let window = NSWindow(
             contentRect: NSRect(
@@ -86,6 +95,28 @@ final class PermissionWindowController: NSWindowController {
 
         contentViewController = contentController
         contentController.delegate = self
+        window.delegate = self
+    }
+
+    func beginGuidance() {
+        contentController.beginGuidance()
+    }
+
+    override func close() {
+        finishGuidance()
+        super.close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        finishGuidance()
+    }
+
+    private func finishGuidance() {
+        accessoryPanelController.hide()
+        contentController.stopRefreshing()
+        let completion = onDismiss
+        onDismiss = nil
+        completion?()
     }
 
     @available(*, unavailable)
@@ -124,6 +155,13 @@ extension PermissionWindowController: PermissionContentControllerDelegate {
         close()
         if terminateOnCompletion {
             NSApp.terminate(nil)
+        }
+    }
+
+    private func handleAcceptedDrop() {
+        contentController.setActiveGuidance(nil)
+        if onDismiss != nil {
+            close()
         }
     }
 
@@ -193,9 +231,23 @@ final class PermissionContentController: NSViewController {
 
     private var activeGuidance: SystemPermissionKind?
     private var refreshTimer: Timer?
-    private var diagnostics = PermissionDiagnostics.current()
+    private var diagnostics: PermissionDiagnostics
+    private let permissions: [SystemPermissionKind]
+    private let sdkSession: Bool
     private var hasReportedCompletion = false
     private var requestedPermissions: [SystemPermissionKind: Date] = [:]
+
+    init(permissions: [SystemPermissionKind], sdkSession: Bool) {
+        self.permissions = permissions
+        self.sdkSession = sdkSession
+        diagnostics = sdkSession ? SDKPermissions.diagnostics() : PermissionDiagnostics.current()
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
 
     override func loadView() {
         view = NSView()
@@ -214,7 +266,26 @@ final class PermissionContentController: NSViewController {
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
+        stopRefreshing()
+    }
+
+    func stopRefreshing() {
         refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    func beginGuidance() {
+        guard let permission = permissions.first(where: { !diagnostics.isGranted($0) }) else { return }
+        requestPermission(permission, sourceFrameInScreen: nil)
+    }
+
+    private func requestPermission(_ permission: SystemPermissionKind, sourceFrameInScreen: CGRect?) {
+        requestedPermissions[permission] = Date()
+        delegate?.permissionContentController(self, didRequestPermission: permission, sourceFrameInScreen: sourceFrameInScreen)
+    }
+
+    @objc private func handleDone() {
+        delegate?.permissionContentControllerDidCompleteAllPermissions(self)
     }
 
     func setActiveGuidance(_ permission: SystemPermissionKind?) {
@@ -223,16 +294,16 @@ final class PermissionContentController: NSViewController {
     }
 
     private func refreshState() {
-        let updated = PermissionDiagnostics.current()
+        let updated = sdkSession ? SDKPermissions.diagnostics() : PermissionDiagnostics.current()
         let previousGuidance = activeGuidance
-        let wasAllGranted = diagnostics.allGranted
+        let wasAllGranted = permissions.allSatisfy { diagnostics.isGranted($0) }
         diagnostics = updated
 
         if let activeGuidance, updated.isGranted(activeGuidance) {
             self.activeGuidance = nil
         }
 
-        for permission in SystemPermissionKind.allCases where updated.isGranted(permission) {
+        for permission in permissions where updated.isGranted(permission) {
             requestedPermissions[permission] = nil
         }
 
@@ -242,7 +313,7 @@ final class PermissionContentController: NSViewController {
             delegate?.permissionContentControllerDidResolveGuidance(self)
         }
 
-        if updated.allGranted, !wasAllGranted, !hasReportedCompletion {
+        if permissions.allSatisfy({ updated.isGranted($0) }), !wasAllGranted, !hasReportedCompletion {
             hasReportedCompletion = true
             delegate?.permissionContentControllerDidCompleteAllPermissions(self)
         }
@@ -283,6 +354,12 @@ final class PermissionContentController: NSViewController {
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(cardsContainer)
         stackView.addArrangedSubview(completionLabel)
+        if sdkSession {
+            let doneButton = PrimaryActionButton(title: "Done", target: self, action: #selector(handleDone))
+            stackView.addArrangedSubview(doneButton)
+            doneButton.widthAnchor.constraint(equalToConstant: PermissionOnboardingLayout.actionButtonWidth).isActive = true
+            doneButton.heightAnchor.constraint(equalToConstant: PermissionOnboardingLayout.actionButtonHeight).isActive = true
+        }
         stackView.setCustomSpacing(16, after: iconView)
         stackView.setCustomSpacing(8, after: titleLabel)
         stackView.setCustomSpacing(24, after: subtitleLabel)
@@ -311,8 +388,7 @@ final class PermissionContentController: NSViewController {
             subview.removeFromSuperview()
         }
 
-        let orderedPermissions = SystemPermissionKind.allCases
-        for permission in orderedPermissions {
+        for permission in permissions {
             let restartRequired = restartRequired(for: permission)
             if activeGuidance == permission, !diagnostics.isGranted(permission), !restartRequired {
                 let placeholder = GuidancePlaceholderView()
@@ -332,22 +408,17 @@ final class PermissionContentController: NSViewController {
                     return
                 }
 
-                self.requestedPermissions[requestedPermission] = Date()
-                self.delegate?.permissionContentController(
-                    self,
-                    didRequestPermission: requestedPermission,
-                    sourceFrameInScreen: sourceFrameInScreen
-                )
+                self.requestPermission(requestedPermission, sourceFrameInScreen: sourceFrameInScreen)
             }
             cardsContainer.addArrangedSubview(card)
             card.widthAnchor.constraint(equalToConstant: PermissionOnboardingLayout.cardWidth).isActive = true
         }
 
-        completionLabel.isHidden = !diagnostics.allGranted
+        completionLabel.isHidden = !permissions.allSatisfy { diagnostics.isGranted($0) }
     }
 
     private func restartRequired(for permission: SystemPermissionKind) -> Bool {
-        guard !diagnostics.isGranted(permission), let requestedAt = requestedPermissions[permission] else {
+        guard !sdkSession, !diagnostics.isGranted(permission), let requestedAt = requestedPermissions[permission] else {
             return false
         }
 
@@ -524,6 +595,7 @@ final class GuidancePlaceholderView: NSView {
 @MainActor
 final class PermissionAccessoryPanelController {
     private let onBack: () -> Void
+    private let onDropAccepted: () -> Void
     private let trackingInterval: TimeInterval = 0.15
     private let launchAnimationDuration: TimeInterval = 0.72
     private let launchAnimationResponse = 0.72
@@ -568,8 +640,9 @@ final class PermissionAccessoryPanelController {
         let windowNumber: Int
     }
 
-    init(onBack: @escaping () -> Void) {
+    init(onBack: @escaping () -> Void, onDropAccepted: @escaping () -> Void) {
         self.onBack = onBack
+        self.onDropAccepted = onDropAccepted
     }
 
     func show(for permission: SystemPermissionKind, sourceFrameInScreen: CGRect?) {
@@ -614,7 +687,10 @@ final class PermissionAccessoryPanelController {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
         panel.animationBehavior = .none
-        panel.contentView = PermissionAccessoryPanelView(onBack: onBack)
+        panel.contentView = PermissionAccessoryPanelView(onBack: onBack, onDropAccepted: { [weak self] in
+            self?.hide()
+            self?.onDropAccepted()
+        })
         return panel
     }
 
@@ -1021,9 +1097,10 @@ final class PermissionAccessoryPanelView: NSView {
     private let instructionLabel = NSTextField(labelWithString: "")
     private let dragTileView = DraggableAppTileView()
 
-    init(onBack: @escaping () -> Void) {
+    init(onBack: @escaping () -> Void, onDropAccepted: @escaping () -> Void) {
         self.onBack = onBack
         super.init(frame: .zero)
+        dragTileView.onDropAccepted = onDropAccepted
         translatesAutoresizingMaskIntoConstraints = false
         setup()
     }
@@ -1130,6 +1207,8 @@ final class PermissionAccessoryPanelView: NSView {
 
 @MainActor
 final class DraggableAppTileView: NSView, NSDraggingSource {
+    var onDropAccepted: (() -> Void)?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -1173,6 +1252,11 @@ final class DraggableAppTileView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        guard operation.contains(.copy) else { return }
+        onDropAccepted?()
     }
 
     private func currentIcon() -> NSImage {

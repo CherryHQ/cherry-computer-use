@@ -2,7 +2,13 @@
   "name": "open-computer-use-repo-tools",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/sdk"
+  ],
   "scripts": {
+    "sdk:build": "npm run build --workspace @cherrystudio/computer-use",
+    "sdk:check": "npm run check --workspace @cherrystudio/computer-use",
+    "sdk:test": "npm run test --workspace @cherrystudio/computer-use",
     "npm:build": "node ./scripts/npm/build-packages.mjs",
     "npm:pack": "./scripts/release-package.sh",
     "npm:publish": "node ./scripts/npm/publish-packages.mjs",

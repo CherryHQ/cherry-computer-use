@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 )
 
 var version = "0.3.5"
@@ -882,6 +884,17 @@ func runCLI(args []string, stdout io.Writer) error {
 		return nil
 	case "mcp":
 		return runMCP(os.Stdin, stdout)
+	case "serve":
+		sessionID, err := sdkruntime.ParseServeArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		if runtime.GOOS != "windows" {
+			return errors.New("Windows SDK runtime requires Windows")
+		}
+		return sdkruntime.Serve(os.Stdin, os.Stdout, sdkruntime.Config{
+			SessionID: sessionID, Version: version, Platform: "win32", Backend: sdkruntime.NewDesktop(&windowsDesktop{}),
+		})
 	case "doctor":
 		fmt.Fprintln(stdout, "Windows runtime: UI Automation and Win32 window-message bridge are available when this process runs in the signed-in desktop session.")
 		return nil

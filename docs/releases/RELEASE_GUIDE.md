@@ -24,6 +24,7 @@
 - 本地 stage npm 包目录：`node ./scripts/npm/build-packages.mjs`
 - 本地 publish：`node ./scripts/npm/publish-packages.mjs`
 - CI workflow：`.github/workflows/release.yml`
+- fork 默认禁用继承的 release workflow；确认包名、权限及签名配置后，设置仓库 Actions variable `ENABLE_LEGACY_RELEASE=true` 才能运行自动或手动发布。
 - 用户可见发布记录：`docs/releases/feature-release-notes.md`
 - GitHub Release 正文：`docs/releases/github/vX.Y.Z.md`
 - GitHub Release 页面：workflow 使用审核过的英文 notes 文件创建或更新，不直接引用 PR 标题自动生成正文。
