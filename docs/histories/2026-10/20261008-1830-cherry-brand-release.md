@@ -34,3 +34,7 @@
 ### Boundaries
 
 没有实际 npm publish、Apple Developer ID 签名、公证或 GitHub Release；本机产物为 ad-hoc。查询时仓库级 secrets 列表为空，CI 仍需确认组织或仓库 secrets 配置及发布权限。Cherry Studio 宿主当前引用旧 app 路径，本轮仅把链接仓库作为参考，消费方路径迁移需在宿主完成。SDK 独立平台包和 Windows 签名未在本轮新增。
+
+### Delivery
+
+[PR #2](https://github.com/CherryHQ/cherry-computer-use/pull/2) 叠在 #1 上，base `ankara-v3`，原生 stack #3。提交使用 SSH 签名及 DCO sign-off。本地验证完成，远端三平台 CI 排队中；不将排队状态视为通过。

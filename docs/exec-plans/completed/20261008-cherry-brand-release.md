@@ -12,7 +12,7 @@
 - [x] 接入 Changesets 版本 PR / npm 发布，复用 `NPM_TOKEN`、`CSC_LINK` / `CSC_KEY_PASSWORD`、`APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`。
 - [x] 正式 macOS 制品签名、公证、staple 后打包；本地和 PR 验证允许显式 ad-hoc，不冒充正式签名。
 - [x] 同步发布文档和 history，完成本地构建、包内容/安装、签名脚本失败路径验证。
-- [ ] 签名并 sign off 提交，创建以上一层为 base 的 stack PR，核对远端 SHA。
+- [x] 签名并 sign off 提交，创建以上一层为 base 的 stack PR，核对远端 SHA。
 
 ## 约束与风险
 
@@ -29,3 +29,7 @@ Swift / Go / SDK 回归通过；本地 app 的 Info.plist、签名、图标一�
 ## 本地验证结果
 
 Swift 195 tests（1 skipped）、SDK 36 tests、发布脚本 3 tests、两端 Go tests 均通过。完成 dev / universal app 构建、Bundle ID 与 ad-hoc 签名检查、两个 scoped tarball 内容审计和隔离安装。Changesets 版本及 lockfile/native 同步的隔离验证通过。Apple 正式签名、公证和 npm 发布保留为 CI 凭据验收，未在本轮触发。
+
+## 交付
+
+已创建 [PR #2](https://github.com/CherryHQ/cherry-computer-use/pull/2)，base 为 `ankara-v3`，与 #1 建立原生 stack #3（#1 → #2）。代码提交已签名并 sign off；远端三平台 CI 排队中，正式发布依赖凭据与后续版本 PR，不在本轮执行。
