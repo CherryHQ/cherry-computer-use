@@ -194,7 +194,7 @@ interface ActionResult {
 
 三端已增加独立的 `serve --stdio` SDK 入口，JSON-RPC 2.0 仅作为传输协议。已接通生命周期、`listApps`、`getAppState` 和单次左键元素语义 `click`；macOS 显式权限申请已接通；Windows/Linux 的 `requestPermissions`、坐标/多次/非左键点击及其余六种动作暂报 unsupported。现有 MCP `tools/list` 与 `tools/call` 仍由 MCP adapter 提供。
 
-JS 端已采用 [vscode-jsonrpc](https://github.com/microsoft/vscode-languageserver-node/blob/main/jsonrpc/README.md)的流读写与 Content-Length framing，并使用 `json-rpc-2.0` 管理请求关联；取消通知与所属进程生命周期由 SDK 绑定。子进程写入失败测试暴露了 `vscode-jsonrpc` 9.0.2 connection wrapper 的未处理 rejection，因此没有使用该 wrapper，也没有添加全局异常吞错。选择依据与完整 wire 契约见 [协议说明](../../protocol/README.md)。Swift/Go SDK 入口使用相同 framing；现有 MCP 的逐行 JSON 协议保持兼容。
+JS 端已采用 [vscode-jsonrpc](https://github.com/microsoft/vscode-languageserver-node/blob/main/jsonrpc/README.md)的流读写与 Content-Length framing，并使用 `json-rpc-2.0` 管理请求关联；取消通知与所属进程生命周期由 SDK 绑定。子进程写入失败测试暴露了 `vscode-jsonrpc` 9.0.2 connection wrapper 的未处理 rejection，因此没有使用该 wrapper，也没有添加全局异常吞错。选择依据与完整 wire 契约见 [协议说明](../../protocol/README.md)。`dist` 通过 tsup `noExternal` 内联 `ajv`、`json-rpc-2.0` 与 `vscode-jsonrpc`，发布包没有运行时依赖：以 `link:` 方式消费时，宿主的打包器只收集自身依赖图，外置依赖会被丢掉（Cherry 打包后曾因缺少 `vscode-jsonrpc` 无法启动）。Swift/Go SDK 入口使用相同 framing；现有 MCP 的逐行 JSON 协议保持兼容。
 
 JSON Schema 是 wire 数据的单一来源，TS wire 类型与校验器在构建时生成；可用 [Ajv standalone](https://ajv.js.org/standalone.html)生成运行时校验代码。公共 `Uint8Array`、`AbortSignal` 等 Node 调用类型只在 SDK 转换层出现。原生请求也必须验证，不能把 TS 类型当成接收边界校验。
 

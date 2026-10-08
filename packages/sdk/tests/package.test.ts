@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import {
   chmod,
-  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -180,8 +179,8 @@ void [pending, use, invalid, ComputerUseError]
           )
         : join(nativePackage, 'runtime/open-computer-use')
     await mkdir(dirname(executable), { recursive: true })
-    const fixture = join(consumer, 'runtime.mjs')
-    await copyFile(new URL('./fixtures/runtime.mjs', import.meta.url), fixture)
+    // Run the fixture in place: it imports vscode-jsonrpc, which the bundled tarball no longer installs.
+    const fixture = fileURLToPath(new URL('./fixtures/runtime.mjs', import.meta.url))
     await writeFile(
       executable,
       `#!${process.execPath}\nimport(${JSON.stringify(pathToFileURL(fixture).href)})\n`
