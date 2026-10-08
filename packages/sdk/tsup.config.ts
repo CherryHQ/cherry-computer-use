@@ -1,6 +1,7 @@
 import { defineConfig } from 'tsup'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { findPackageRoot } from './scripts/package-root.js'
 
 export default defineConfig({
   entry: ['src/index.ts'],
@@ -22,12 +23,6 @@ export default defineConfig({
     const { copyFile, readFile, writeFile } = await import('node:fs/promises')
     await copyFile('../../LICENSE', 'LICENSE')
     const require = createRequire(import.meta.url)
-    // Walk up from the resolved entry: exports maps (vscode-jsonrpc) hide package.json.
-    const packageRoot = (name: string) => {
-      let dir = dirname(require.resolve(name))
-      while (!dir.endsWith(`/node_modules/${name}`)) dir = dirname(dir)
-      return dir
-    }
     const licenses = [
       ['ajv', 'LICENSE'],
       ['json-rpc-2.0', 'LICENSE'],
@@ -36,7 +31,7 @@ export default defineConfig({
     ] as const
     const notices = await Promise.all(
       licenses.map(async ([name, file]) => {
-        const license = await readFile(join(packageRoot(name), file), 'utf8')
+        const license = await readFile(join(findPackageRoot(require.resolve(name), name), file), 'utf8')
         return `${name}\n\n${license}`
       })
     )

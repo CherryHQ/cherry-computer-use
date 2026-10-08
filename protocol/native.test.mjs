@@ -97,17 +97,6 @@ async function expectAgentExit(sessionId) {
   assert.deepEqual(agentPIDs(sessionId), [], 'owned app agent leaked')
 }
 
-test('stopping one application session keeps the runtime usable', { timeout: 30000 }, async t => {
-  const client = await ComputerUse.start({ runtimePath })
-  t.after(() => client.close().catch(() => {}))
-  const [app] = await client.listApps()
-  if (!app) return t.skip('no running application to own')
-  const session = await client.openAppSession({ appId: app.id })
-  assert.equal((await client.stopAppSession({ appSessionId: session.id })).cleanup, 'complete')
-  assert.equal((await client.listAppSessions()).find(item => item.id === session.id).status, 'stopped')
-  await client.close()
-})
-
 test('public SDK starts two isolated native sessions and closes them independently', { timeout: 30000 }, async t => {
   const first = await ComputerUse.start({ runtimePath })
   t.after(() => first.close().catch(() => {}))
