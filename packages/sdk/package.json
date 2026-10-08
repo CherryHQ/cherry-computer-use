@@ -1,6 +1,6 @@
 {
   "name": "@cherrystudio/computer-use",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "Typed client for the Cherry Computer Use native runtime",
   "type": "module",
   "license": "MIT",
