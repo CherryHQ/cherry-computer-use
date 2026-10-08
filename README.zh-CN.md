@@ -6,7 +6,7 @@ Cherry Studio 的本地桌面自动化 runtime、MCP CLI 和 TypeScript SDK，�
 
 项目 fork 自 [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)，保留上游署名、MIT license 和第三方声明。下方演示为上游 runtime 的演示，Cherry 版本使用独立品牌和发布身份。
 
-发布目标为 `@cherrystudio/computer-use`（SDK）和 `@cherrystudio/computer-use-cli`（原生 CLI）；首次 Cherry 发布完成后才可从 registry 安装。参见 [SDK 使用说明](packages/sdk/README.md)和[发布指南](docs/releases/RELEASE_GUIDE.md)。
+当前仅发布 `@cherrystudio/computer-use`（SDK）；首次 Cherry SDK 发布完成后才可从 registry 安装。原生 CLI workspace 为 private，暂不公开发布。参见 [SDK 使用说明](packages/sdk/README.md)和[发布指南](docs/releases/RELEASE_GUIDE.md)。
 
 ## 演示
 
@@ -30,8 +30,10 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 ## Quick Start
 
+CLI 暂不发布。可在 macOS 执行 `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack` 生成本地 tarball，再安装生成的文件：
+
 ```bash
-npm i -g @cherrystudio/computer-use-cli
+npm i -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 通过 npm 安装后也会同时提供短命令 `ocu`。

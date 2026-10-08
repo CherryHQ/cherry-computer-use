@@ -322,7 +322,7 @@ function resolveNativeExecutable() {
     fail(\`Missing bundled native runtime for \${platformKey} at \${executablePath}.
 
 Reinstall with:
-  npm install -g @cherrystudio/computer-use-cli\`);
+  npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz\`);
   }
 
   return executablePath;
@@ -370,7 +370,7 @@ if (installCommands.has(command)) {
 function renderReadme(packageName, version) {
   return `# ${packageName}
 
-Cross-platform npm distribution for the open-source **Cherry Computer Use** MCP server.
+Local-only package for the open-source **Cherry Computer Use** MCP server. CLI registry publication is paused.
 
 This package bundles native runtimes for these supported platforms and lets the Node launcher choose the current \`process.platform\` / \`process.arch\` pair:
 
@@ -386,7 +386,7 @@ Global command aliases:
 ## Install
 
 \`\`\`bash
-npm install -g ${packageName}
+npm install -g /path/to/cherrystudio-computer-use-cli-${version}.tgz
 \`\`\`
 
 The root launcher resolves the current \`process.platform\` / \`process.arch\` pair and runs the matching bundled native runtime.
@@ -406,7 +406,7 @@ If your MCP client accepts a stdio-style \`mcpServers\` JSON config, this is the
 }
 \`\`\`
 
-Package page: https://www.npmjs.com/package/${packageName}
+This package is private and is not published to the npm registry.
 
 ## Use
 

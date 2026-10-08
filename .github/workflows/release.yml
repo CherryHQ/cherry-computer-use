@@ -15,7 +15,7 @@ permissions:
 jobs:
   release:
     if: github.repository == 'CherryHQ/cherry-computer-use' && github.ref == 'refs/heads/main'
-    runs-on: macos-26
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Check out repository
@@ -28,13 +28,6 @@ jobs:
           node-version: "24"
           registry-url: https://registry.npmjs.org
           cache: npm
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
-        with:
-          go-version: "1.23.4"
-          cache-dependency-path: |
-            apps/OpenComputerUseLinux/go.sum
-            apps/OpenComputerUseWindows/go.sum
       - run: npm ci --ignore-scripts
       - run: npm run release:versions:check && npm run release:check
       - name: Create version PR or publish packages
@@ -51,11 +44,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - name: Publish summary
         if: steps.changesets.outputs.published == 'true'
         env:

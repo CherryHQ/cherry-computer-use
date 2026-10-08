@@ -1,6 +1,5 @@
 ---
 "@cherrystudio/computer-use": patch
-"@cherrystudio/computer-use-cli": patch
 ---
 
-Adopt Cherry Computer Use branding and a dedicated macOS permission identity. Publish the SDK and native CLI under the Cherry Studio scope, with signed and notarized macOS release bundles.
+Adopt Cherry Computer Use branding and the dedicated macOS helper identity. Publish the TypeScript SDK under the Cherry Studio scope; native CLI distribution remains local only.

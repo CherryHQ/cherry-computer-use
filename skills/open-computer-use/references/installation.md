@@ -16,10 +16,10 @@ On macOS versions earlier than 14.0, npm installation may succeed but the bundle
 
 ## Install The CLI
 
-Use npm:
+CLI registry publication is paused. On macOS, build a local tarball with `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack`, then install the resulting file:
 
 ```sh
-npm install -g @cherrystudio/computer-use-cli
+npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 Verify:
@@ -32,10 +32,10 @@ open-computer-use call list_apps
 
 Supported npm packages expose `ocu` as the short alias. If it is unavailable, use `open-computer-use`.
 
-If the package is already installed and the user asks to update it:
+If the user asks to update a local install, rebuild and install the new tarball:
 
 ```sh
-npm update -g @cherrystudio/computer-use-cli
+npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 ## macOS Permissions

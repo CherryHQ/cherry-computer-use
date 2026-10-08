@@ -109,4 +109,4 @@ Code Mode is optional and deferred. Ordinary tools and a future script facade ca
 
 ## Cherry 发布身份
 
-SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.ComputerUse`），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native 完整制品通过 `@cherrystudio/computer-use-cli` 发布；独立 SDK 平台包尚未交付，当前仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。
+SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.ComputerUse`），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native workspace `@cherrystudio/computer-use-cli` 暂不发布，可在本地构建制品；独立 SDK 平台包尚未交付，当前仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。

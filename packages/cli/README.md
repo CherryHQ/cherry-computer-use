@@ -1,9 +1,9 @@
 # Cherry Computer Use CLI
 
-The native runtime and MCP launcher for Cherry Studio.
+The native runtime and MCP launcher for Cherry Studio. This private workspace is currently for local packaging only; it is not published to npm.
 
 ```sh
-npm install -g @cherrystudio/computer-use-cli
+npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 cherry-computer-use doctor
 cherry-computer-use mcp
 ```

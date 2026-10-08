@@ -4,9 +4,9 @@
 
 ## Cherry 发布入口
 
-发布采用与 Cherry Studio 一致的 Changesets 版本 PR / npm 模型，仅在本仓库 main 上运行。SDK 和 CLI 分别发布到 `@cherrystudio/computer-use`、`@cherrystudio/computer-use-cli`，不再向上游未 scoped 包发布，也不自动发布 Cursor Motion DMG 或创建 GitHub Release。
+发布采用与 Cherry Studio 一致的 Changesets 版本 PR / npm 模型，仅在本仓库 main 上运行。当前只发布 SDK `@cherrystudio/computer-use`；CLI `@cherrystudio/computer-use-cli` 为 private workspace 且被 Changesets ignore，暂不发布，不再向上游未 scoped 包发布，也不自动发布 Cursor Motion DMG 或创建 GitHub Release。
 
-`npm run changeset:version` 同步 package、plugin 与原生版本；`npm run changeset:publish` 验证 SDK，导入 `CSC_LINK` / `CSC_KEY_PASSWORD`，用 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` 完成签名与公证，staple 后打包，再以 `NPM_TOKEN` 发布。版本 PR 阶段不需要 Apple 凭据；正式发布缺少凭据就失败。
+`npm run changeset:version` 更新 SDK 版本与 lockfile，并校验既有 CLI/native 版本同步；`npm run changeset:publish` 验证并以 `NPM_TOKEN` 发布 SDK。发布 runner 使用 Ubuntu，不构建 CLI/native，也不要求 Apple 凭据。`build-signed-release.sh` 保留为独立的 native 签名 / 公证构建入口，配置见发布指南。
 
 本地 `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack` 仅构建两个 scoped tarball 和 manifest；不发布，也不宣称正式签名。细节与 secrets 见 [发版指南](releases/RELEASE_GUIDE.md)。
 

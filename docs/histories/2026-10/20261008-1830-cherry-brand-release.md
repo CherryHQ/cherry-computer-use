@@ -38,3 +38,9 @@
 ### Delivery
 
 [PR #2](https://github.com/CherryHQ/cherry-computer-use/pull/2) 叠在 #1 上，base `ankara-v3`，原生 stack #3。提交使用 SSH 签名及 DCO sign-off。本地验证完成，远端三平台 CI 排队中；不将排队状态视为通过。
+
+### Follow-up: 暂停 CLI 发布
+
+用户要求“先不发布 cli，暂时用不上”。CLI workspace 与生成的 staging 包保留 `private: true`，Changesets ignore CLI 并移除 CLI changeset，仅 SDK 进入发布计划。发布 job 改用 Ubuntu，移除 Go 构建与 Apple secrets 注入，SDK publish 不再调用 native 签名脚本。native 品牌、Bundle ID、本地打包及独立签名能力保留。同步 README、安装说明、发布指南和 PR 描述，避免引导用户从 registry 安装尚未发布的 CLI。
+
+后续验证：发布脚本 3 tests、版本同步、actionlint、diff 检查通过。实际 Changesets release plan 仅包含 SDK；隔离版本周期确认 SDK 更新到 0.1.0，而 CLI/native/plugin 文件保持不变。未执行真实 publish。

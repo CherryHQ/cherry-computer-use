@@ -7,5 +7,4 @@ export NODE_AUTH_TOKEN="${NODE_AUTH_TOKEN:-${NPM_TOKEN}}"
 npm run release:versions:check
 npm run sdk:check
 npm run sdk:test
-bash scripts/build-signed-release.sh
 npm exec -- changeset publish

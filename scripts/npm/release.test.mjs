@@ -43,7 +43,7 @@ test('CLI staging refuses incomplete native artifacts and never creates upstream
   const packageRoot = path.join(dir, 'dist/npm/computer-use-cli');
   const manifest = JSON.parse(readFileSync(path.join(packageRoot, 'package.json')));
   assert.equal(manifest.name, '@cherrystudio/computer-use-cli');
-  assert.equal(manifest.publishConfig.access, 'public');
+  assert.equal(manifest.private, true, 'local CLI tarballs must not become registry-publishable');
   assert.ok(existsSync(path.join(packageRoot, 'THIRD_PARTY_NOTICES.md')));
   for (const command of ['cherry-computer-use', 'open-computer-use', 'ocu']) {
     const help = run(dir, path.join(packageRoot, manifest.bin[command]), '--help');

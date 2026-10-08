@@ -6,7 +6,7 @@ Cherry Studio's local desktop automation runtime, MCP CLI and TypeScript SDK for
 
 Forked from [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use). Upstream attribution, MIT license and third-party notices are preserved. The demos below document the upstream runtime; Cherry uses its own branding and release identity.
 
-Packages: `@cherrystudio/computer-use` (SDK) and `@cherrystudio/computer-use-cli` (native CLI). See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md). These names describe the new release targets; availability depends on completing the first Cherry release.
+Only `@cherrystudio/computer-use` (SDK) is scheduled for npm publication. The native CLI workspace is private and remains local only. See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md). SDK registry availability depends on completing the first Cherry release.
 
 ## Demos
 
@@ -30,8 +30,10 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 ## Quick Start
 
+CLI publication is paused. Build a local tarball with `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack` on macOS, then install the resulting file:
+
 ```bash
-npm i -g @cherrystudio/computer-use-cli
+npm i -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 The npm package also exposes `ocu` as the short CLI alias.
