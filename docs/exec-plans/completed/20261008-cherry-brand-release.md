@@ -3,7 +3,7 @@
 ## 目标与范围
 
 在 SDK PR #1 上新增一层 PR，将产品身份和正式 npm 发布迁移到 Cherry Studio 的约定。
-默认名称为 Cherry Computer Use；独立 helper 使用 `com.cherryai.ComputerUse`，开发版加 `.dev`，不复用宿主的 Bundle ID。
+默认名称为 Cherry Computer Use；独立 helper 使用 `com.cherryai.cherrystudio.computer-use `，开发版加 `.dev`，不复用宿主的 Bundle ID。
 
 ## 实施
 

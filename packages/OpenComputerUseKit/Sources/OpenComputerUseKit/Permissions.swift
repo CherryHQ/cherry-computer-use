@@ -109,9 +109,9 @@ public struct PermissionDiagnostics: Sendable {
 
 public enum PermissionSupport {
     public static let bundleDisplayName = "Cherry Computer Use"
-    public static let bundleIdentifier = "com.cherryai.ComputerUse"
+    public static let bundleIdentifier = "com.cherryai.cherrystudio.computer-use "
     public static let developmentBundleDisplayName = "Cherry Computer Use (Dev)"
-    public static let developmentBundleIdentifier = "com.cherryai.ComputerUse.dev"
+    public static let developmentBundleIdentifier = "com.cherryai.cherrystudio.computer-use .dev"
     private static let releaseAppBundleName = "\(bundleDisplayName).app"
     private static let developmentAppBundleName = "\(developmentBundleDisplayName).app"
     private static let appVariantInfoKey = "OpenComputerUseAppVariant"

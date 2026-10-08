@@ -15,8 +15,8 @@
 
 ## 品牌与 macOS 身份
 
-- 正式 app：`Cherry Computer Use.app`，Bundle ID `com.cherryai.ComputerUse`。
-- 开发 app：`Cherry Computer Use (Dev).app`，Bundle ID `com.cherryai.ComputerUse.dev`。
+- 正式 app：`Cherry Computer Use.app`，Bundle ID `com.cherryai.cherrystudio.computer-use `。
+- 开发 app：`Cherry Computer Use (Dev).app`，Bundle ID `com.cherryai.cherrystudio.computer-use .dev`。
 - 图标来自 Cherry Studio 的 `build/icons/1024x1024.png`，来源见 `assets/app-icons/README.md`。
 - 可执行文件仍叫 `OpenComputerUse`；Swift target、CLI 参数和 `OPEN_COMPUTER_USE_*` 运行时配置不改名。
 - Bundle ID 是独立 helper 的身份，不复用 Cherry Studio 主程序身份。旧上游 TCC 权限不会自动迁移，需要向新 app 授予辅助功能和屏幕录制权限。

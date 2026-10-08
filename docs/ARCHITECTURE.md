@@ -2,7 +2,7 @@
 
 这个仓库当前已经从模板收敛成一个本地 `computer-use` 项目。主线仍是 Swift 实现的 macOS automation MCP server，同时新增了实验性的 Windows 和 Linux runtime，用独立 Go 二进制暴露同一组 9 个 Computer Use tools。
 
-正式产品身份为 **Cherry Computer Use**：macOS Bundle ID `com.cherryai.ComputerUse`，开发版为 `.dev`。当前仅 SDK 由 Changesets 发布到 Cherry scope，CLI workspace 为 private，暂不公开发布，见 [发布指南](releases/RELEASE_GUIDE.md)。
+正式产品身份为 **Cherry Computer Use**：macOS Bundle ID `com.cherryai.cherrystudio.computer-use `，开发版为 `.dev`。当前仅 SDK 由 Changesets 发布到 Cherry scope，CLI workspace 为 private，暂不公开发布，见 [发布指南](releases/RELEASE_GUIDE.md)。
 
 ## 当前目录结构
 
