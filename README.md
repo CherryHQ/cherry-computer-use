@@ -6,7 +6,7 @@ Cherry Studio's local desktop automation runtime, MCP CLI and TypeScript SDK for
 
 Forked from [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use). Upstream attribution, MIT license and third-party notices are preserved. The demos below document the upstream runtime; Cherry uses its own branding and release identity.
 
-Only `@cherrystudio/computer-use` (SDK) is scheduled for npm publication. The native CLI workspace is private and remains local only. See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md). SDK registry availability depends on completing the first Cherry release.
+`@cherrystudio/computer-use` is the public SDK. Version 0.1.0 requires an explicit native `runtimePath`; the native-distribution patch adds six automatically selected OS/CPU runtime packages. The CLI workspace stays private. See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md).
 
 ## Demos
 

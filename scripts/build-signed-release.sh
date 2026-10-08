@@ -52,7 +52,7 @@ fi
 export OPEN_COMPUTER_USE_CODESIGN_MODE=identity
 export OPEN_COMPUTER_USE_CODESIGN_IDENTITY="${identity}"
 export OPEN_COMPUTER_USE_CODESIGN_KEYCHAIN="${keychain_path}"
-npm run npm:build
+./scripts/build-open-computer-use-app.sh release --arch "${1:-native}"
 app_path="${repo_root}/dist/Cherry Computer Use.app"
 codesign --verify --deep --strict "${app_path}"
 ditto -c -k --keepParent "${app_path}" "${signing_dir}/app.zip"
@@ -63,5 +63,3 @@ node -e 'if (JSON.parse(require("node:fs").readFileSync(process.argv[1])).status
 xcrun stapler staple "${app_path}"
 xcrun stapler validate "${app_path}"
 spctl --assess --type execute --verbose "${app_path}"
-# Stage only after stapling, so the npm tarball includes the notarization ticket.
-node scripts/npm/prepare-cli.mjs

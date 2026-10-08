@@ -8,44 +8,81 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
+  prepare:
     if: github.repository == 'CherryHQ/cherry-computer-use' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release: ${{ steps.registry.outputs.needed }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: "24"
-          registry-url: https://registry.npmjs.org
+          node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run release:versions:check && npm run release:check
-      - name: Create version PR or publish packages
+      - name: Create or update the version PR
         id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           create-github-releases: false
-          publish-script: npm run changeset:publish
           version-script: npm run changeset:version
-          commit-message: "chore: version packages"
-          pr-title: "chore: version packages"
+          commit-message: 'chore: version packages'
+          pr-title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check whether the approved SDK version is unpublished
+        id: registry
+        if: steps.changesets.outputs.has-changesets == 'false'
+        run: node scripts/npm/release-needed.mjs
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    uses: ./.github/workflows/sdk-distribution.yml
+    with:
+      signed: true
+    secrets:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: dist/sdk-artifacts
+      - name: Validate all tested artifacts before any registry writes
+        run: npm run sdk:release:validate
+      - name: Publish native packages first, then the verified SDK tarball
+        run: npm run changeset:publish
+        env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish summary
-        if: steps.changesets.outputs.published == 'true'
-        env:
-          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
-        run: printf '%s\n' "${PUBLISHED_PACKAGES}" >> "${GITHUB_STEP_SUMMARY}"

@@ -5,6 +5,4 @@ cd "${repo_root}"
 : "${NPM_TOKEN:?NPM_TOKEN is required to publish Cherry Studio packages}"
 export NODE_AUTH_TOKEN="${NODE_AUTH_TOKEN:-${NPM_TOKEN}}"
 npm run release:versions:check
-npm run sdk:check
-npm run sdk:test
-npm exec -- changeset publish
+node scripts/npm/publish-sdk.mjs

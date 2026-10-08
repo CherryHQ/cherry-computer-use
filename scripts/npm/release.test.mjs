@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'cherry-release-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const entry of ['scripts', 'packages/cli', 'plugins', '.agents/plugins', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+  for (const entry of ['scripts', 'packages/cli', 'packages/sdk/package.json', 'packages/sdk-native', 'plugins', '.agents/plugins', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) {
     const target = path.join(dir, entry);
     mkdirSync(path.dirname(target), { recursive: true });
     cpSync(path.join(root, entry), target, {
@@ -55,20 +55,27 @@ test('CLI staging refuses incomplete native artifacts and never creates upstream
   assert.match(rejected.stderr, /Unsupported package name/);
 });
 
-test('CLI version changes propagate to native fallbacks and the plugin before publishing', t => {
+test('SDK versions pin native packages and fallbacks while the CLI owns the plugin version', t => {
   const dir = fixture(t);
   const cliPath = path.join(dir, 'packages/cli/package.json');
   const cli = JSON.parse(readFileSync(cliPath));
   cli.version = '4.5.6';
   writeFileSync(cliPath, JSON.stringify(cli));
+  const sdkPath = path.join(dir, 'packages/sdk/package.json');
+  const sdk = JSON.parse(readFileSync(sdkPath));
+  sdk.version = '1.2.3';
+  writeFileSync(sdkPath, JSON.stringify(sdk));
   write(dir, 'packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseVersion.swift', 'public let openComputerUseVersion = "0.0.1"\n');
   for (const platform of ['Linux', 'Windows']) write(dir, `apps/OpenComputerUse${platform}/main.go`, 'var version = "0.0.1"\n');
   assert.notEqual(run(dir, 'scripts/npm/sync-versions.mjs', '--check').status, 0);
   assert.equal(run(dir, 'scripts/npm/sync-versions.mjs').status, 0);
   assert.equal(JSON.parse(readFileSync(path.join(dir, 'plugins/open-computer-use/.codex-plugin/plugin.json'))).version, '4.5.6');
-  assert.match(readFileSync(path.join(dir, 'apps/OpenComputerUseLinux/main.go'), 'utf8'), /var version = "4\.5\.6"/);
-  assert.match(readFileSync(path.join(dir, 'packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseVersion.swift'), 'utf8'), /Version = "4\.5\.6"/);
+  assert.match(readFileSync(path.join(dir, 'apps/OpenComputerUseLinux/main.go'), 'utf8'), /var version = "1\.2\.3"/);
+  assert.match(readFileSync(path.join(dir, 'packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseVersion.swift'), 'utf8'), /Version = "1\.2\.3"/);
   assert.equal(run(dir, 'scripts/npm/sync-versions.mjs', '--check').status, 0);
+  const dependencies = JSON.parse(readFileSync(sdkPath)).optionalDependencies;
+  assert.equal(Object.keys(dependencies).length, 6);
+  assert.ok(Object.values(dependencies).every(version => version === '1.2.3'));
   const pluginPath = path.join(dir, 'plugins/open-computer-use/.codex-plugin/plugin.json');
   const crlf = readFileSync(pluginPath, 'utf8').replace(/\r?\n/g, '\r\n');
   writeFileSync(pluginPath, crlf);

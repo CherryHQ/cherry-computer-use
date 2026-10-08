@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "packages/sdk/**"
+      - "packages/sdk-native/**"
       - "packages/cli/**"
       - ".changeset/**"
       - "scripts/npm/**"
@@ -28,6 +29,7 @@ on:
     branches: [main]
     paths:
       - "packages/sdk/**"
+      - "packages/sdk-native/**"
       - "packages/cli/**"
       - ".changeset/**"
       - "scripts/npm/**"

@@ -74,7 +74,7 @@ if [[ "${codesign_mode}" != "auto" && "${codesign_mode}" != "identity" && "${cod
 fi
 
 read_package_version() {
-  python3 - "${repo_root}/packages/cli/package.json" <<'PY'
+  python3 - "${repo_root}/packages/sdk/package.json" <<'PY'
 import json
 import sys
 
@@ -244,13 +244,13 @@ iconset_build_script="${repo_root}/scripts/build-apple-iconset.sh"
 cursor_reference_source="${repo_root}/docs/references/codex-computer-use-reverse-engineering/assets/extracted-2026-04-19/official-software-cursor-window-252.png"
 
 bundle_display_name="Cherry Computer Use"
-bundle_identifier="com.cherryai.cherrystudio.computer-use "
+bundle_identifier="com.cherryai.cherrystudio.computer-use"
 app_variant="release"
 app_bundle_name="${release_app_bundle_name}"
 
 if [[ "${configuration}" != "release" ]]; then
   bundle_display_name="Cherry Computer Use (Dev)"
-  bundle_identifier="com.cherryai.cherrystudio.computer-use .dev"
+  bundle_identifier="com.cherryai.cherrystudio.computer-use.dev"
   app_variant="dev"
   app_bundle_name="${development_app_bundle_name}"
 fi

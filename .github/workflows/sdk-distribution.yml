@@ -1,0 +1,129 @@
+name: SDK distribution
+
+on:
+  pull_request:
+    paths:
+      - 'packages/sdk/**'
+      - 'packages/sdk-native/**'
+      - 'packages/runtime-go/**'
+      - 'packages/OpenComputerUseKit/**'
+      - 'apps/OpenComputerUse/**'
+      - 'apps/OpenComputerUseLinux/**'
+      - 'apps/OpenComputerUseWindows/**'
+      - 'scripts/**'
+      - 'protocol/**'
+      - 'assets/app-icons/**'
+      - 'Package.swift'
+      - 'package*.json'
+      - '.changeset/**'
+      - '.github/workflows/sdk-distribution.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      signed:
+        type: boolean
+        default: false
+    secrets:
+      CSC_LINK:
+        required: false
+      CSC_KEY_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    name: SDK tarball
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run release:versions:check && npm run release:check
+      - run: npm run sdk:check && npm run sdk:test
+      - name: Pack the SDK once for all native installations
+        run: |
+          mkdir -p dist/sdk-artifacts
+          npm pack --workspace @cherrystudio/computer-use --ignore-scripts --pack-destination dist/sdk-artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-client
+          path: dist/sdk-artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    name: Runtime (${{ matrix.target }})
+    needs: client
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-26 }
+          - { target: darwin-x64, os: macos-15-intel }
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: win32-x64, os: windows-2025 }
+          - { target: win32-arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: '1.23.4'
+          cache-dependency-path: |
+            apps/OpenComputerUseWindows/go.sum
+            apps/OpenComputerUseLinux/go.sum
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-client
+          path: dist/sdk-artifacts
+      - name: Verify native runner architecture
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: node -e 'if ((process.platform + "-" + process.arch) !== process.env.EXPECTED_TARGET) process.exit(1)'
+      - name: Build signed and notarized macOS runtime
+        if: runner.os == 'macOS' && inputs.signed
+        run: npm run sdk:runtime:build -- --signed
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build native runtime (ad-hoc macOS for PR verification)
+        if: runner.os != 'macOS' || !inputs.signed
+        run: npm run sdk:runtime:build
+      - name: Install SDK tarball and start the automatically selected runtime
+        run: npm run sdk:package:verify
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-native-${{ matrix.target }}
+          path: |
+            dist/sdk-artifacts/cherrystudio-computer-use-${{ matrix.target }}-*.tgz
+            dist/sdk-artifacts/${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 7

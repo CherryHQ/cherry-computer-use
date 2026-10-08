@@ -2,7 +2,7 @@
 
 TypeScript client for the Cherry Computer Use native runtime, for Node 24+ and Electron's main process.
 
-**Status: native app control sessions and the first desktop slice are implemented.** All three runtimes expose private sessions, application discovery, structured observation and one semantic left click on an element. Real SDK desktop tests pass on Windows 11 ARM64 and Linux X11; macOS lifecycle tests pass, while desktop validation awaits Accessibility and Screen Recording grants. Coordinate/multiple/right clicks, the other six actions and Wayland capture remain unsupported. macOS explicit permission requests are implemented. SDK/platform packages have not been published, and Cherry development integration now covers permission queries and requests; packaged Electron delivery remains pending.
+**Status: native app control sessions and the first desktop slice are implemented.** All three runtimes expose private sessions, application discovery, structured observation and one semantic left click on an element. Real SDK desktop tests pass on Windows 11 ARM64 and Linux X11; macOS lifecycle tests pass, while desktop validation awaits Accessibility and Screen Recording grants. Coordinate/multiple/right clicks, the other six actions and Wayland capture remain unsupported. macOS explicit permission requests are implemented. The original SDK 0.1.0 was published without native packages; the native-distribution patch adds six automatically selected runtime packages, and and Cherry development integration now covers permission queries and requests; packaged Electron delivery remains pending.
 
 ## Development
 
@@ -21,12 +21,12 @@ CI can reuse a completed build with `npm run test:built --workspace @cherrystudi
 
 ## API
 
-The current runtime supports this lifecycle example. Supply a locally built complete `.app` on macOS or an executable on Windows/Linux:
+Install with `npm install @cherrystudio/computer-use` (Node 24+, optional dependencies enabled). The native-distribution patch installs the matching helper automatically. SDK 0.1.0 still requires an explicit locally built `runtimePath`:
 
 ```ts
 import { ComputerUse } from '@cherrystudio/computer-use'
 
-const computer = await ComputerUse.start({ runtimePath })
+const computer = await ComputerUse.start()
 try {
   const capabilities = await computer.getCapabilities()
   const permissions = await computer.getPermissionStatus()
@@ -44,7 +44,7 @@ The following example targets the repository's counter fixture. Choose an author
 ```ts
 import { ComputerUse } from '@cherrystudio/computer-use'
 
-const computer = await ComputerUse.start({ runtimePath })
+const computer = await ComputerUse.start()
 try {
   const apps = await computer.listApps()
   const app = apps.find(app => app.name === 'CherrySDKFixture')
@@ -103,10 +103,10 @@ Without an explicit path, the resolver expects `@cherrystudio/computer-use-{darw
 - Windows: `runtime/open-computer-use.exe`.
 - Linux: `runtime/open-computer-use`.
 
-These platform packages and `optionalDependencies` will be added in the distribution stage. Missing packages raise `RUNTIME_NOT_FOUND`; there is no PATH lookup or network installation at runtime. Electron hosts will need to provide the executable resource path outside ASAR.
+The SDK pins all six platform packages to its exact version with `optionalDependencies`; npm selects the matching OS/CPU. Platform packages contain the native helper and no npm CLI or install scripts. macOS release helpers are Developer ID signed and notarized. Missing packages (including installs with `--omit=optional`) raise `RUNTIME_NOT_FOUND`; there is no PATH lookup or network installation at runtime. Electron hosts must package the helper outside ASAR and supply its resource path when necessary. Signed notarization and Electron packaging are separate acceptance checks.
 
 Code Mode is optional and deferred. Ordinary tools and a future script facade can consume the same client; the SDK contains no interpreter, model SDK or Agent session storage.
 
 ## Cherry 发布身份
 
-SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.cherrystudio.computer-use `），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native workspace `@cherrystudio/computer-use-cli` 暂不发布，可在本地构建制品；独立 SDK 平台包尚未交付，当前仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。
+SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.cherrystudio.computer-use`），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native workspace `@cherrystudio/computer-use-cli` 暂不发布，可在本地构建制品；SDK 平台包随 SDK 同版本交付，自动发现后端；0.1.0 仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。
