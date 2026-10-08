@@ -421,10 +421,21 @@ test('close is idempotent, reports confirmed cleanup, and leaves another client 
   await assert.rejects(first.client.listApps(), hasCode('CLOSED'))
 })
 
-for (const mode of ['shutdown-hang', 'wrong-shutdown-owner']) {
-  test(`${mode} cannot be reported as successful cleanup`, async (t) => {
+for (const mode of ['shutdown-hang', 'wrong-shutdown-owner', 'shutdown-nonzero', 'shutdown-signal']) {
+  test(`${mode} cannot be reported as successful cleanup`, { skip: mode === 'shutdown-signal' && process.platform === 'win32' }, async (t) => {
     const { client, child } = await start(t, mode)
-    await assert.rejects(client.close(), hasCode('CLEANUP_FAILED'))
+    await assert.rejects(client.close(), (error: unknown) => {
+      assert.ok(hasCode('CLEANUP_FAILED')(error))
+      if (mode === 'shutdown-nonzero' || mode === 'shutdown-signal') {
+        assert.ok(error instanceof ComputerUseError)
+        assert.ok(error.cause instanceof ComputerUseError)
+        assert.equal(error.cause.code, 'RUNTIME_EXITED')
+        assert.match(error.cause.message, mode === 'shutdown-nonzero'
+          ? /code: 3, signal: none/
+          : /code: null, signal: SIGTERM/)
+      }
+      return true
+    })
     assert.ok(child.exitCode !== null || child.signalCode !== null)
   })
 }

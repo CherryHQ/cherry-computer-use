@@ -21,4 +21,4 @@ PR #5 repairs the client-only 0.1.0 distribution with six exactly versioned nati
 
 ## Release-time boundaries
 
-Formal Apple-service signing/notarization and npm publication have not been executed by this task. They remain mandatory release gates after the version PR merges. macOS GUI permissions, Wayland and packaged Electron delivery remain separate acceptance work; lifecycle tests do not establish those behaviors.
+After PR #5 and version PR #6 merged, the formal 0.1.1 release passed Developer ID signing, notarization, stapling and installed Gatekeeper checks on both macOS architectures. Intel macOS then failed CJS shutdown verification, so the publish job was skipped and no 0.1.1 packages were published. The follow-up lifecycle repair preserves this gate; see the history for reproduction and validation. macOS GUI permissions, Wayland and packaged Electron delivery remain separate acceptance work; lifecycle tests do not establish those behaviors.

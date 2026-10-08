@@ -303,10 +303,11 @@ export class RuntimeConnection {
         )
       }
       this.acknowledged = true
-      if ((await bounded(this.exited, CLEANUP_TIMEOUT_MS)) !== 0) {
+      const exitCode = await bounded(this.exited, CLEANUP_TIMEOUT_MS)
+      if (exitCode !== 0) {
         throw new ComputerUseError(
           'RUNTIME_EXITED',
-          'Runtime exited unsuccessfully after shutdown'
+          `Runtime exited unsuccessfully after shutdown (code: ${exitCode}, signal: ${this.child.signalCode ?? 'none'})`
         )
       }
       cleanup = 'complete'

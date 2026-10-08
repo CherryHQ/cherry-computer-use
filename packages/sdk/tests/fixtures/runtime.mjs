@@ -194,7 +194,10 @@ rpc.onRequest('shutdown', () => {
   if (mode === 'shutdown-hang') return new Promise(() => {})
   setTimeout(() => {
     rpc.dispose()
-    writer.end(() => process.exit(0))
+    writer.end(() => {
+      if (mode === 'shutdown-signal') process.kill(process.pid, 'SIGTERM')
+      else process.exit(mode === 'shutdown-nonzero' ? 3 : 0)
+    })
   }, 50)
   return {
     sessionId: mode === 'wrong-shutdown-owner' ? 'another-owner' : sessionId,

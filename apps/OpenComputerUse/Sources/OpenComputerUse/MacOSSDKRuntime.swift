@@ -127,7 +127,10 @@ enum MacOSSDKRuntime {
         }
         watchdog.cancel()
 
+        let forwarding = DispatchGroup()
+        forwarding.enter()
         DispatchQueue.global().async {
+            defer { forwarding.leave() }
             do {
                 while let request = owner.next() { try agent.write(request) }
                 _ = Darwin.shutdown(socket.fileDescriptor, SHUT_WR)
@@ -137,6 +140,13 @@ enum MacOSSDKRuntime {
                 agent.stop()
                 owner.terminateIfRunning()
             }
+        }
+        defer {
+            // Wake the writer and join it before the socket's earlier defer closes
+            // its FileHandle. Reading fileDescriptor after close raises NSException.
+            owner.disconnect()
+            agent.stop()
+            forwarding.wait()
         }
         while let response = try agent.read() {
             if let shutdownID = owner.shutdownID, response.value["id"] as? String == shutdownID,
