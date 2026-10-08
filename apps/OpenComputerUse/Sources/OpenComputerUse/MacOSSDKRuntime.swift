@@ -139,9 +139,9 @@ enum MacOSSDKRuntime {
             }
         }
         while let response = try agent.read() {
-            if let result = response.value["result"] as? [String: Any], result["cleanup"] as? String == "complete" {
+            if let shutdownID = owner.shutdownID, response.value["id"] as? String == shutdownID,
+               let result = response.value["result"] as? [String: Any], result["cleanup"] as? String == "complete" {
                 guard result["sessionId"] as? String == sessionID,
-                      response.value["id"] as? String == owner.shutdownID,
                       owner.waitForExit(timeout: 1) else {
                     throw SDKProtocolError("CLEANUP_FAILED: SDK agent exit not confirmed")
                 }
