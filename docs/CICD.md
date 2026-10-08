@@ -6,7 +6,7 @@
 
 发布采用与 Cherry Studio 一致的 Changesets 版本 PR / npm 模型，仅在本仓库 main 上运行。当前只发布 SDK `@cherrystudio/computer-use`；CLI `@cherrystudio/computer-use-cli` 为 private workspace 且被 Changesets ignore，暂不发布，不再向上游未 scoped 包发布，也不自动发布 Cursor Motion DMG 或创建 GitHub Release。
 
-`npm run changeset:version` 更新 SDK、六个平台包依赖和原生版本；CLI/plugin 版本保持独立。版本 PR 合并后，发布 workflow 调用 [sdk-distribution.yml](../.github/workflows/sdk-distribution.yml)，在六个原生 OS/CPU runner 上安装同一 SDK tarball、自动选择平台包并验证启动/关闭。macOS 正式构建要求签名、公证和安装后验证；PR 只使用 ad-hoc。
+`npm run changeset:version` 更新 SDK、六个平台包依赖和原生版本；CLI/plugin 版本保持独立。版本 PR 合并后，发布 workflow 调用 [sdk-distribution.yml](../.github/workflows/sdk-distribution.yml)，在六个原生 OS/CPU runner 上安装同一 SDK tarball、自动选择平台包并验证启动/关闭。macOS 正式构建要求签名、公证和安装后验证；PR 只使用 ad-hoc。Intel macOS 显式选择 Xcode 26.2，避免 runner 默认 Swift 6.1 不满足项目的 Swift 6.2 要求。
 
 全部平台通过后，先发布六个平台包，再发布 SDK。发布门禁检查产物完整性、源码提交、同一 SDK 哈希、实际安装验证记录和 macOS 签名标记。CLI 保持 private；不再允许只构建 JS 就发布 SDK。SDK 0.1.0 缺少平台分发，本次 patch changeset 修复这一问题。流程、重试边界和 secrets 见 [发布指南](releases/RELEASE_GUIDE.md)。
 

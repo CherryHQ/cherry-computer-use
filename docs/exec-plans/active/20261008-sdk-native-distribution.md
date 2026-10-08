@@ -20,3 +20,5 @@ Repair the incomplete 0.1.0 SDK distribution. Installing the SDK must install a 
 - Clean-checkout validation exposed npm lockfile resolution for unpublished optional dependencies. Added private development placeholders in a Changesets fixed group (private versioning enabled, tags disabled); public packages are still generated from real binaries. A version-PR simulation bumped SDK/all six dependencies to 0.1.1, retained private CLI 0.3.5 and passed npm ci.
 - Seven release regressions, Swift 192 tests (one skipped), Linux/Windows Go unit tests and actionlint passed locally.
 - The local 1Password signer previously blocked delivery. The user unlocked it on October 9; signed submission and remote verification are resuming. No registry writes have been performed; formal Apple-service validation remains a release-time gate.
+
+- October 9: signed implementation commit `b6a68c2` was pushed as PR #5. Existing three-platform sdk-check passed. Five native architecture install/start jobs passed; Intel macOS exposed an older default Swift 6.1 toolchain. Its job now explicitly selects installed Xcode 26.2, satisfying the package Swift 6.2 requirement.

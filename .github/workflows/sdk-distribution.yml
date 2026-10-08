@@ -103,6 +103,11 @@ jobs:
         env:
           EXPECTED_TARGET: ${{ matrix.target }}
         run: node -e 'if ((process.platform + "-" + process.arch) !== process.env.EXPECTED_TARGET) process.exit(1)'
+      - name: Select Swift 6.2 toolchain on Intel macOS
+        if: matrix.target == 'darwin-x64'
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+          swift --version
       - name: Build signed and notarized macOS runtime
         if: runner.os == 'macOS' && inputs.signed
         run: npm run sdk:runtime:build -- --signed
