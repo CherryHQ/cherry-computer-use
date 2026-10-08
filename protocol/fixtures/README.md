@@ -68,7 +68,7 @@ swiftc protocol/fixtures/macos.swift -o /tmp/CherrySDKFixture
 /tmp/CherrySDKFixture &
 fixture_pid=$!
 trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-COMPUTER_USE_RUNTIME_PATH="$PWD/dist/Open Computer Use (Dev).app" \
+COMPUTER_USE_RUNTIME_PATH="$PWD/dist/Cherry Computer Use (Dev).app" \
 COMPUTER_USE_FIXTURE_APP=CherrySDKFixture COMPUTER_USE_REQUIRE_SCREENSHOT=1 \
 node --test protocol/desktop.test.mjs
 ```

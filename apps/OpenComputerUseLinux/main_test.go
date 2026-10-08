@@ -250,7 +250,7 @@ func TestCLIHelpMentionsLinuxRuntime(t *testing.T) {
 	if err := runCLI([]string{"--help"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Open Computer Use for Linux") {
+	if !strings.Contains(out.String(), "Cherry Computer Use for Linux") {
 		t.Fatalf("help text did not mention Linux runtime:\n%s", out.String())
 	}
 }

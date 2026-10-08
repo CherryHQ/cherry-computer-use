@@ -1,27 +1,18 @@
-# open-computer-use
+# Cherry Computer Use
 
-[![English](https://img.shields.io/badge/English-Click-yellow)](./README.md)
-[![简体中文](https://img.shields.io/badge/简体中文-点击查看-orange)](./README.zh-CN.md)
-[![Release](https://img.shields.io/github/v/release/iFurySt/open-codex-computer-use)](https://github.com/iFurySt/open-codex-computer-use/releases)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/iFurySt/open-codex-computer-use)
-<a href="https://llmapis.com?source=https%3A%2F%2Fgithub.com%2FiFurySt%2Fopen-codex-computer-use" target="_blank"><img src="https://llmapis.com/api/badge/iFurySt/open-codex-computer-use" alt="LLMAPIS" width="20" /></a>
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-> [!TIP]
-> Interested in Browser Use? Check out [open-browser-use](https://github.com/iFurySt/open-codex-browser-use).
+Cherry Studio's local desktop automation runtime, MCP CLI and TypeScript SDK for macOS, Linux and Windows.
 
----
+Forked from [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use). Upstream attribution, MIT license and third-party notices are preserved. The demos below document the upstream runtime; Cherry uses its own branding and release identity.
 
-`open-computer-use` is an open-source `Computer Use` service wrapped as `MCP`. Any AI agent or MCP client can use it to run Computer Use on macOS, Linux, and Windows.
-
-This project was inspired by OpenAI's [Codex Computer Use](https://openai.com/index/codex-for-almost-everything/). It showed that non-intrusive CUA can be built on top of Accessibility, so I decided to build an open-source version.
-
-I started this repo with my [harness template](https://github.com/iFurySt/harness-template), a template for quickly spinning up AI-first projects. It has been one of our most useful workflows lately, especially for nearly 100% AI-generated projects. I also wrote [a post](https://www.ifuryst.com/blog/2026/speedrunning-the-ai-era/) about the methodology behind it.
+Only `@cherrystudio/computer-use` (SDK) is scheduled for npm publication. The native CLI workspace is private and remains local only. See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md). SDK registry availability depends on completing the first Cherry release.
 
 ## Demos
 
 ### Codex App and Codex CLI
 
-[![Open Computer Use custom demo cover](./docs/generated/readme-assets/open-computer-use-demo-cover.png)](https://youtu.be/2s6aVpGiwaQ)
+[![Upstream Open Computer Use demo cover](./docs/generated/readme-assets/open-computer-use-demo-cover.png)](https://youtu.be/2s6aVpGiwaQ)
 
 <sub><em>`open-computer-use` used as Computer Use in Codex App and Codex CLI, matching the official experience.</em></sub>
 
@@ -39,8 +30,10 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 ## Quick Start
 
+CLI publication is paused. Build a local tarball with `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack` on macOS, then install the resulting file:
+
 ```bash
-npm i -g open-computer-use
+npm i -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 The npm package also exposes `ocu` as the short CLI alias.
@@ -82,14 +75,14 @@ Install the skill directly:
 
 ```bash
 # Install for Codex
-npx skills add iFurySt/open-codex-computer-use -g -a codex --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a codex --skill open-computer-use -y
 npx skills ls -g -a codex | rg 'open-computer-use'
 ```
 
 Install for Claude Code:
 
 ```bash
-npx skills add iFurySt/open-codex-computer-use -g -a claude-code --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a claude-code --skill open-computer-use -y
 ```
 
 Update an existing global install, including the Codex install created above:

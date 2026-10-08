@@ -32,9 +32,9 @@ resolve_app_bundle() {
   local -a candidates
 
   if [[ "${configuration}" == "release" ]]; then
-    candidates=("Open Computer Use.app")
+    candidates=("Cherry Computer Use.app")
   else
-    candidates=("Open Computer Use (Dev).app" "Open Computer Use.app")
+    candidates=("Cherry Computer Use (Dev).app" "Cherry Computer Use.app")
   fi
 
   for bundle_name in "${candidates[@]}"; do

@@ -3,11 +3,11 @@
   "version": "0.3.5",
   "description": "Open-source cross-platform Computer Use MCP server packaged as a Codex plugin.",
   "author": {
-    "name": "Leo",
-    "url": "https://github.com/iFurySt"
+    "name": "Cherry Studio",
+    "url": "https://github.com/CherryHQ"
   },
-  "homepage": "https://github.com/iFurySt/open-codex-computer-use",
-  "repository": "https://github.com/iFurySt/open-codex-computer-use",
+  "homepage": "https://github.com/CherryHQ/cherry-computer-use",
+  "repository": "https://github.com/CherryHQ/cherry-computer-use",
   "license": "MIT",
   "keywords": [
     "computer-use",
@@ -18,27 +18,27 @@
   ],
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Open Computer Use",
+    "displayName": "Cherry Computer Use",
     "shortDescription": "Control desktop apps from Codex with the open local server",
-    "longDescription": "Open Computer Use packages this repository's open-source desktop automation server as a Codex plugin. It exposes the same nine desktop-control MCP tools through a local macOS app bundle or Linux / Windows native binary, with semantic accessibility paths preferred before fallback input.",
-    "developerName": "Leo",
+    "longDescription": "Cherry Computer Use packages this repository's open-source desktop automation server as a Codex plugin. It exposes the same nine desktop-control MCP tools through a local macOS app bundle or Linux / Windows native binary, with semantic accessibility paths preferred before fallback input.",
+    "developerName": "Cherry Studio",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/iFurySt/open-codex-computer-use",
-    "privacyPolicyURL": "https://github.com/iFurySt/open-codex-computer-use/blob/main/SECURITY.md",
-    "termsOfServiceURL": "https://github.com/iFurySt/open-codex-computer-use/blob/main/LICENSE",
+    "websiteURL": "https://github.com/CherryHQ/cherry-computer-use",
+    "privacyPolicyURL": "https://github.com/CherryHQ/cherry-computer-use/blob/main/SECURITY.md",
+    "termsOfServiceURL": "https://github.com/CherryHQ/cherry-computer-use/blob/main/LICENSE",
     "defaultPrompt": [
       "Inspect the current UI state of this desktop app without stealing focus when possible",
       "Open a new local document with keyboard shortcuts first, then type content without moving my real pointer unless required",
       "Drive the fixture app and verify the nine computer-use tools still behave correctly"
     ],
-    "brandColor": "#0E7490",
-    "composerIcon": "./assets/open-computer-use-small.svg",
-    "logo": "./assets/open-computer-use.svg",
+    "brandColor": "#FF5F5F",
+    "composerIcon": "./assets/cherry-computer-use.png",
+    "logo": "./assets/cherry-computer-use.png",
     "screenshots": []
   }
 }

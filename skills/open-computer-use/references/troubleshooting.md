@@ -1,4 +1,4 @@
-# Open Computer Use Troubleshooting
+# Cherry Computer Use Troubleshooting
 
 Read this reference when setup, permission checks, app discovery, snapshots, or actions fail.
 
@@ -10,7 +10,7 @@ The macOS runtime requires macOS 14.0 or later. Check the host version before tr
 sw_vers -productVersion
 ```
 
-On macOS versions earlier than 14.0, the binary cannot launch and may report a `dyld` or minimum-version incompatibility. `open-computer-use doctor`, Accessibility authorization, and Screen Recording authorization cannot resolve this error. Upgrade macOS or run Open Computer Use on a supported macOS, Windows, or Linux desktop.
+On macOS versions earlier than 14.0, the binary cannot launch and may report a `dyld` or minimum-version incompatibility. `open-computer-use doctor`, Accessibility authorization, and Screen Recording authorization cannot resolve this error. Upgrade macOS or run Cherry Computer Use on a supported macOS, Windows, or Linux desktop.
 
 ## First Checks
 

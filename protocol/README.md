@@ -93,7 +93,7 @@ Wire declarations are generated with `json-schema-to-typescript`; [Ajv standalon
 
 ## Native verification
 
-Build the SDK with `npm run sdk:build`, build the target runtime, then run `node --test protocol/native.test.mjs`. Set `COMPUTER_USE_RUNTIME_PATH` to a complete macOS `.app` or Windows/Linux executable. Defaults are `dist/Open Computer Use (Dev).app` and `dist/native/open-computer-use[.exe]` respectively.
+Build the SDK with `npm run sdk:build`, build the target runtime, then run `node --test protocol/native.test.mjs`. Set `COMPUTER_USE_RUNTIME_PATH` to a complete macOS `.app` or Windows/Linux executable. Defaults are `dist/Cherry Computer Use (Dev).app` and `dist/native/open-computer-use[.exe]` respectively.
 
 The [native contract tests](native.test.mjs) consume the public SDK and validate raw replies against the same schema. They run without a desktop bus or fixture and cover isolated sessions, ownership, parameter rejection, fragmented UTF-8 frames, EOF, malformed input and macOS agent exit after proxy death. Swift/Go unit tests exercise blocked requests, queued cancellation and cleanup failures. Passing lifecycle tests alone does not establish desktop actions, platform npm packages or Electron packaging.
 

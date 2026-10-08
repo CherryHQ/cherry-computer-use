@@ -74,7 +74,7 @@ if [[ "${codesign_mode}" != "auto" && "${codesign_mode}" != "identity" && "${cod
 fi
 
 read_package_version() {
-  python3 - "${repo_root}/plugins/open-computer-use/.codex-plugin/plugin.json" <<'PY'
+  python3 - "${repo_root}/packages/cli/package.json" <<'PY'
 import json
 import sys
 
@@ -218,7 +218,7 @@ codesign_app_bundle() {
   fi
 
   if [[ "${identity}" != "-" ]]; then
-    args+=(--options runtime)
+    args+=(--options runtime --timestamp)
   fi
 
   run_with_codesign_keychain "${codesign_keychain}" \
@@ -235,22 +235,22 @@ cd "${repo_root}"
 
 package_version="$(read_package_version)"
 bundle_version="${OPEN_COMPUTER_USE_BUNDLE_VERSION:-$(git -C "${repo_root}" rev-list --count HEAD 2>/dev/null || echo 1)}"
-release_app_bundle_name="Open Computer Use.app"
-development_app_bundle_name="Open Computer Use (Dev).app"
+release_app_bundle_name="Cherry Computer Use.app"
+development_app_bundle_name="Cherry Computer Use (Dev).app"
 legacy_app_bundle_name="OpenComputerUse.app"
 bundle_icon_name="OpenComputerUse.icns"
-icon_master_png="${repo_root}/assets/app-icons/open-computer-use-1024.png"
+icon_master_png="${repo_root}/assets/app-icons/cherry-computer-use-1024.png"
 iconset_build_script="${repo_root}/scripts/build-apple-iconset.sh"
 cursor_reference_source="${repo_root}/docs/references/codex-computer-use-reverse-engineering/assets/extracted-2026-04-19/official-software-cursor-window-252.png"
 
-bundle_display_name="Open Computer Use"
-bundle_identifier="com.ifuryst.opencomputeruse"
+bundle_display_name="Cherry Computer Use"
+bundle_identifier="com.cherryai.cherrystudio.computer-use "
 app_variant="release"
 app_bundle_name="${release_app_bundle_name}"
 
 if [[ "${configuration}" != "release" ]]; then
-  bundle_display_name="Open Computer Use (Dev)"
-  bundle_identifier="com.ifuryst.opencomputeruse.dev"
+  bundle_display_name="Cherry Computer Use (Dev)"
+  bundle_identifier="com.cherryai.cherrystudio.computer-use .dev"
   app_variant="dev"
   app_bundle_name="${development_app_bundle_name}"
 fi

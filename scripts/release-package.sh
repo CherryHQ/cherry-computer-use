@@ -16,6 +16,9 @@ node "${repo_root}/scripts/npm/build-packages.mjs" \
   --arch universal \
   --out-dir "${staging_dir}"
 
+npm run --prefix "${repo_root}" sdk:build
+npm pack "${repo_root}/packages/sdk" --pack-destination "${tarball_dir}" >/dev/null
+
 while IFS= read -r package_dir; do
   npm pack "${package_dir}" --pack-destination "${tarball_dir}" >/dev/null
 done < <(find "${staging_dir}" -mindepth 1 -maxdepth 1 -type d | sort)

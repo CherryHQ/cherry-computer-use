@@ -99,7 +99,7 @@ public func openComputerUseHelpText(command: String? = nil) -> String {
     switch command {
     case nil:
         return """
-        Open Computer Use
+        Cherry Computer Use
 
         Usage:
           open-computer-use [command] [options]

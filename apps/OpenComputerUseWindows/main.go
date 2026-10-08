@@ -1252,7 +1252,7 @@ func helpText(command string) string {
 	case "snapshot":
 		return "Usage:\n  open-computer-use.exe snapshot [--text-limit <positive-int|max>] [--max-tree-nodes <positive-int>] [--max-tree-depth <positive-int>] <app>\n\nPrint the current Windows UI Automation snapshot for the target app.\n"
 	default:
-		return `Open Computer Use for Windows
+		return `Cherry Computer Use for Windows
 
 Usage:
   open-computer-use.exe [command] [options]

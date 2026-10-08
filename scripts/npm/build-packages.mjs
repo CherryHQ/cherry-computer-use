@@ -19,13 +19,10 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
 const defaultOutDir = path.join(repoRoot, "dist", "npm");
-const appBundleName = "Open Computer Use.app";
+const appBundleName = "Cherry Computer Use.app";
 const appExecutableName = "OpenComputerUse";
-const metaPackageNames = [
-  "open-computer-use",
-  "open-computer-use-mcp",
-  "open-codex-computer-use-mcp",
-];
+const cliManifest = JSON.parse(readFileSync(path.join(repoRoot, "packages/cli/package.json"), "utf8"));
+const metaPackageNames = [cliManifest.name];
 const runtimeTargets = [
   {
     os: "darwin",
@@ -149,10 +146,6 @@ function run(command, args, options = {}) {
   }
 }
 
-function readJSON(filePath) {
-  return JSON.parse(readFileSync(filePath, "utf-8"));
-}
-
 function removeJunkFiles(targetPath) {
   if (!existsSync(targetPath)) {
     return;
@@ -231,9 +224,10 @@ const installCommands = new Map([
 ]);
 
 function printLauncherHelp() {
-  console.log(\`Open Computer Use
+  console.log(\`Cherry Computer Use
 
 Usage:
+  cherry-computer-use [command] [options]
   open-computer-use [command] [options]
   ocu [command] [options]
   open-computer-use
@@ -328,7 +322,7 @@ function resolveNativeExecutable() {
     fail(\`Missing bundled native runtime for \${platformKey} at \${executablePath}.
 
 Reinstall with:
-  npm install -g open-computer-use\`);
+  npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz\`);
   }
 
   return executablePath;
@@ -373,42 +367,10 @@ if (installCommands.has(command)) {
 `;
 }
 
-function renderPostinstall(packageName, version) {
-  return `#!/usr/bin/env node
-const mcpConfig = ${JSON.stringify({
-  mcpServers: {
-    "open-computer-use": {
-      command: "open-computer-use",
-      args: ["mcp"],
-    },
-  },
-}, null, 2)};
-const lines = [
-  "",
-  "Installed ${packageName}@${version}.",
-  "Package: https://www.npmjs.com/package/${packageName}",
-  "Commands: open-computer-use, ocu, open-computer-use-mcp, open-codex-computer-use-mcp",
-  "Native runtime will be selected from bundled artifacts for " + process.platform + "-" + process.arch + ".",
-  "",
-  "Next:",
-  "1. Run open-computer-use --version or ocu --version",
-  "2. Add the MCP config below to your host client",
-  "3. On macOS, run open-computer-use doctor and grant Accessibility / Screen Recording if prompted",
-  "",
-  "MCP config:",
-  JSON.stringify(mcpConfig, null, 2),
-  "",
-];
-for (const line of lines) {
-  console.log(line);
-}
-`;
-}
-
 function renderReadme(packageName, version) {
   return `# ${packageName}
 
-Cross-platform npm distribution for the open-source **Open Computer Use** MCP server.
+Local-only package for the open-source **Cherry Computer Use** MCP server. CLI registry publication is paused.
 
 This package bundles native runtimes for these supported platforms and lets the Node launcher choose the current \`process.platform\` / \`process.arch\` pair:
 
@@ -424,7 +386,7 @@ Global command aliases:
 ## Install
 
 \`\`\`bash
-npm install -g ${packageName}
+npm install -g /path/to/cherrystudio-computer-use-cli-${version}.tgz
 \`\`\`
 
 The root launcher resolves the current \`process.platform\` / \`process.arch\` pair and runs the matching bundled native runtime.
@@ -444,7 +406,7 @@ If your MCP client accepts a stdio-style \`mcpServers\` JSON config, this is the
 }
 \`\`\`
 
-Package page: https://www.npmjs.com/package/${packageName}
+This package is private and is not published to the npm registry.
 
 ## Use
 
@@ -476,72 +438,13 @@ open-computer-use install-codex-plugin
 - Linux requires a signed-in desktop session with AT-SPI2 / D-Bus accessibility available for real app control.
 - Windows requires a signed-in desktop session for UI Automation access.
 
-Source repository: https://github.com/iFurySt/open-codex-computer-use
+Source repository: https://github.com/CherryHQ/cherry-computer-use
 `;
 }
 
-function packageKeywords(extraKeywords = []) {
-  return [
-    "computer-use",
-    "codex",
-    "mcp",
-    "macos",
-    "linux",
-    "windows",
-    "automation",
-    ...extraKeywords,
-  ];
-}
-
 function renderMetaPackageJson(packageName, version) {
-  return {
-    name: packageName,
-    version,
-    description: "Cross-platform Computer Use MCP server launcher. After install, configure open-computer-use mcp.",
-    license: "MIT",
-    homepage: "https://github.com/iFurySt/open-codex-computer-use",
-    repository: {
-      type: "git",
-      url: "git+https://github.com/iFurySt/open-codex-computer-use.git",
-    },
-    bugs: {
-      url: "https://github.com/iFurySt/open-codex-computer-use/issues",
-    },
-    keywords: packageKeywords(),
-    preferGlobal: true,
-    publishConfig: {
-      access: "public",
-    },
-    bin: {
-      "open-computer-use": "bin/open-computer-use",
-      "ocu": "bin/ocu",
-      "open-computer-use-mcp": "bin/open-computer-use-mcp",
-      "open-codex-computer-use-mcp": "bin/open-codex-computer-use-mcp",
-    },
-    scripts: {
-      postinstall: "node ./scripts/postinstall.mjs",
-    },
-    files: [
-      ".agents/plugins/marketplace.json",
-      "bin/",
-      "dist/Open Computer Use.app/",
-      "dist/linux/",
-      "dist/windows/",
-      "plugins/open-computer-use/.codex-plugin/",
-      "plugins/open-computer-use/.mcp.json",
-      "plugins/open-computer-use/assets/",
-      "plugins/open-computer-use/scripts/",
-      "scripts/install-claude-mcp.sh",
-      "scripts/install-gemini-mcp.sh",
-      "scripts/install-config-helper.mjs",
-      "scripts/install-codex-mcp.sh",
-      "scripts/install-opencode-mcp.sh",
-      "scripts/install-codex-plugin.sh",
-      "scripts/postinstall.mjs",
-      "README.md",
-      "LICENSE",
-    ],
-  };
+  const { scripts: _scripts, ...manifest } = cliManifest;
+  return { ...manifest, name: packageName, version };
 }
 
 function copyInstallerScripts(packageRoot) {
@@ -595,7 +498,7 @@ function copyBundledRuntimes(packageRoot, packageName) {
 }
 
 function stageMetaPackage(packageName, version, outDir) {
-  const packageRoot = path.join(outDir, packageName);
+  const packageRoot = path.join(outDir, packageName.split("/").at(-1));
   rmSync(packageRoot, { recursive: true, force: true });
 
   mkdirSync(path.join(packageRoot, ".agents", "plugins"), { recursive: true });
@@ -612,12 +515,13 @@ function stageMetaPackage(packageName, version, outDir) {
   copyBundledRuntimes(packageRoot, packageName);
   copyInstallerScripts(packageRoot);
 
+  cpSync(path.join(repoRoot, "THIRD_PARTY_NOTICES.md"), path.join(packageRoot, "THIRD_PARTY_NOTICES.md"));
   const launcher = renderLauncher();
+  writeExecutable(path.join(packageRoot, "bin", "cherry-computer-use"), launcher);
   writeExecutable(path.join(packageRoot, "bin", "open-computer-use"), launcher);
   writeExecutable(path.join(packageRoot, "bin", "ocu"), launcher);
   writeExecutable(path.join(packageRoot, "bin", "open-computer-use-mcp"), launcher);
   writeExecutable(path.join(packageRoot, "bin", "open-codex-computer-use-mcp"), launcher);
-  writeFileSync(path.join(packageRoot, "scripts", "postinstall.mjs"), renderPostinstall(packageName, version), "utf-8");
   writeFileSync(path.join(packageRoot, "README.md"), renderReadme(packageName, version), "utf-8");
   writeFileSync(path.join(packageRoot, "package.json"), `${JSON.stringify(renderMetaPackageJson(packageName, version), null, 2)}\n`, "utf-8");
 
@@ -634,8 +538,7 @@ function stagePackage(packageName, version, outDir) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const pluginManifestPath = path.join(repoRoot, "plugins", "open-computer-use", ".codex-plugin", "plugin.json");
-  const { version } = readJSON(pluginManifestPath);
+  const { version } = cliManifest;
 
   if (!options.skipBuild) {
     ensureBuilt(options.configuration, options.arch);

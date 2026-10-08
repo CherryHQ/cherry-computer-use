@@ -1,6 +1,6 @@
-# Open Computer Use Installation
+# Cherry Computer Use Installation
 
-Read this reference when the user asks to install, verify, repair, or explain Open Computer Use setup.
+Read this reference when the user asks to install, verify, repair, or explain Cherry Computer Use setup.
 
 ## Platform Requirements
 
@@ -16,10 +16,10 @@ On macOS versions earlier than 14.0, npm installation may succeed but the bundle
 
 ## Install The CLI
 
-Use npm:
+CLI registry publication is paused. On macOS, build a local tarball with `OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc npm run npm:pack`, then install the resulting file:
 
 ```sh
-npm install -g open-computer-use
+npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 Verify:
@@ -32,10 +32,10 @@ open-computer-use call list_apps
 
 Supported npm packages expose `ocu` as the short alias. If it is unavailable, use `open-computer-use`.
 
-If the package is already installed and the user asks to update it:
+If the user asks to update a local install, rebuild and install the new tarball:
 
 ```sh
-npm update -g open-computer-use
+npm install -g /path/to/cherrystudio-computer-use-cli-<version>.tgz
 ```
 
 ## macOS Permissions
@@ -89,14 +89,14 @@ For any other MCP client, add a stdio server manually:
 Install the skill for Codex:
 
 ```sh
-npx skills add iFurySt/open-codex-computer-use -g -a codex --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a codex --skill open-computer-use -y
 npx skills ls -g -a codex | rg 'open-computer-use'
 ```
 
 Install the skill for Claude Code:
 
 ```sh
-npx skills add iFurySt/open-codex-computer-use -g -a claude-code --skill open-computer-use -y
+npx skills add CherryHQ/cherry-computer-use -g -a claude-code --skill open-computer-use -y
 ```
 
 Update an existing global skill install:

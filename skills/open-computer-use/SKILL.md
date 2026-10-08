@@ -1,13 +1,13 @@
 ---
 name: open-computer-use
-description: Platform-neutral guidance for using Open Computer Use, the open-source Computer Use MCP server and CLI for macOS, Linux, and Windows. Use when an agent needs to install, verify, troubleshoot, configure, or operate Open Computer Use through its native CLI, stdio MCP server, or direct Computer Use tool calls.
+description: Platform-neutral guidance for using Cherry Computer Use, the open-source Computer Use MCP server and CLI for macOS, Linux, and Windows. Use when an agent needs to install, verify, troubleshoot, configure, or operate Cherry Computer Use through its native CLI, stdio MCP server, or direct Computer Use tool calls.
 ---
 
-# Open Computer Use
+# Cherry Computer Use
 
 ## Overview
 
-Open Computer Use exposes Computer Use as a local CLI and stdio MCP server. It is not Codex.app-specific; adapt the commands and MCP config to the agent runtime you are operating in.
+Cherry Computer Use exposes Computer Use as a local CLI and stdio MCP server. It is not Codex.app-specific; adapt the commands and MCP config to the agent runtime you are operating in.
 
 The macOS runtime requires macOS 14.0 or later. Windows and Linux use their own platform runtimes and are not subject to this macOS minimum.
 
@@ -52,7 +52,7 @@ open-computer-use call get_app_state --args '{"app":"TextEdit","text_limit":1000
 open-computer-use call get_app_state --args '{"app":"TextEdit","text_limit":"max"}'
 open-computer-use call get_app_state --args '{"app":"Google Chrome","max_tree_nodes":3000,"max_tree_depth":96}'
 open-computer-use call click --args '{"app":"TextEdit","element_index":"0"}'
-open-computer-use call type_text --args '{"app":"TextEdit","text":"Hello from Open Computer Use"}'
+open-computer-use call type_text --args '{"app":"TextEdit","text":"Hello from Cherry Computer Use"}'
 ```
 
 For a short sequence that reuses state in one process:

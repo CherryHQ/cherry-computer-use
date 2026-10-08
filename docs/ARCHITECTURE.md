@@ -2,6 +2,8 @@
 
 这个仓库当前已经从模板收敛成一个本地 `computer-use` 项目。主线仍是 Swift 实现的 macOS automation MCP server，同时新增了实验性的 Windows 和 Linux runtime，用独立 Go 二进制暴露同一组 9 个 Computer Use tools。
 
+正式产品身份为 **Cherry Computer Use**：macOS Bundle ID `com.cherryai.cherrystudio.computer-use `，开发版为 `.dev`。当前仅 SDK 由 Changesets 发布到 Cherry scope，CLI workspace 为 private，暂不公开发布，见 [发布指南](releases/RELEASE_GUIDE.md)。
+
 ## 当前目录结构
 
 - `packages/sdk` / `protocol`
@@ -44,12 +46,12 @@
 
 - `OpenComputerUse` 默认 app 模式会拉起 `PermissionOnboardingApp`。
 - app bundle 以 `LSUIElement` agent-style 形态运行，默认不在 Dock 暴露常驻图标，但仍可按需显示权限窗口。
-- 当用户从终端执行 macOS 版 `open-computer-use mcp`、`doctor`、`call`、`snapshot` 或 `list-apps` 时，CLI 会先通过 LaunchServices 启动同一个 `.app` bundle 的隐藏 app agent，并通过用户临时目录下的 Unix domain socket 转发请求；真正调用 Accessibility、ScreenCaptureKit 和动作 tools 的进程始终是 `Open Computer Use.app`，不是 iTerm / Terminal / Node launcher。默认 Socket 文件名保持历史兼容；嵌入式宿主可设置 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE`，使其使用 namespace 摘要对应的私有 Socket，避免与其他 OCU bundle 共用 Agent。
+- 当用户从终端执行 macOS 版 `open-computer-use mcp`、`doctor`、`call`、`snapshot` 或 `list-apps` 时，CLI 会先通过 LaunchServices 启动同一个 `.app` bundle 的隐藏 app agent，并通过用户临时目录下的 Unix domain socket 转发请求；真正调用 Accessibility、ScreenCaptureKit 和动作 tools 的进程始终是 `Cherry Computer Use.app`，不是 iTerm / Terminal / Node launcher。默认 Socket 使用 Cherry 独立名称，避免连接到上游 app；嵌入式宿主可设置 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE`，使其使用 namespace 摘要对应的私有 Socket，避免与其他 OCU bundle 共用 Agent。
 - CLI 与 MCP proxy 会把调用进程中 `OPEN_COMPUTER_USE_*` 前缀的环境变量随请求转发给 app agent，并只在该请求执行期间临时覆盖 agent 环境；这让 `click_method=global` 的进程级安全门和 debug 开关在 app-agent 架构下仍按调用方配置生效。
 - 主窗口负责渲染 `Accessibility` / `Screen & System Audio Recording` 两类权限卡片、`Allow` / `Done` 状态和 relaunch 后的状态收敛；当两项权限都已完成时会自动关闭，不再要求用户手动退出。
 - 辅助 drag panel 会跳转到对应的 `System Settings` 页面；点击 `Allow` 后，panel 会从主窗口里的按钮位置做一段 spring + curved frame 的入场，再落到 `System Settings` 内容区下沿。panel 默认保持在窗口右侧内容区下方居中并固定贴近窗口底边，不再依赖实时扫描权限页内部 `+ / -` 控件行；窗口层级上会显式排在当前 `System Settings` 窗口之上，避免被权限列表内容盖住，同时尽量减少对系统设置自身滚动区域的干扰。panel 内也补了显式返回按钮，允许用户中断当前 guidance、回到 onboarding 主窗口重新选择权限步骤。
 - SDK 复用同一套拖拽 UI，但保持请求存活至拖拽被接受、完成或关闭；成功 drop 立即收起浮层并结束 SDK 引导，取消 drop 保留面板。SDK 仅返回 runtime preflight 状态，不从拖拽结果推断授权；窗口不会自行退出/重启协议进程，宿主在结束后关闭会话并用新 helper 复查。
-- 旧 CLI/app 模式的权限状态会合并 TCC 持久授权记录与当前 app 进程的 runtime preflight：TCC 中任一匹配 client 已授权即可视为 granted，避免 CLI 子进程与 GUI app 对授权状态看到不一致的结果；如果当前 `.app` 进程已经通过 `AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`，也会立即视为 granted，避免 stale 或不匹配的 TCC path 记录让 onboarding 浮层继续停留。正式 release 仍以 CI 打出来的 `Open Computer Use.app` 为准，而本地 debug/dev 打包现在显式命名为 `Open Computer Use (Dev).app`，并在 dev bundle 运行时优先认当前 dev 副本，避免系统设置里出现两个完全同名的条目。
+- 旧 CLI/app 模式的权限状态会合并 TCC 持久授权记录与当前 app 进程的 runtime preflight：TCC 中任一匹配 client 已授权即可视为 granted，避免 CLI 子进程与 GUI app 对授权状态看到不一致的结果；如果当前 `.app` 进程已经通过 `AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`，也会立即视为 granted，避免 stale 或不匹配的 TCC path 记录让 onboarding 浮层继续停留。正式 release 仍以 CI 打出来的 `Cherry Computer Use.app` 为准，而本地 debug/dev 打包现在显式命名为 `Cherry Computer Use (Dev).app`，并在 dev bundle 运行时优先认当前 dev 副本，避免系统设置里出现两个完全同名的条目。
 
 ### 2. MCP 层
 

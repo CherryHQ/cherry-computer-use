@@ -1681,7 +1681,7 @@ func helpText(command string) string {
 	case "snapshot":
 		return "Usage:\n  open-computer-use snapshot [--text-limit <positive-int|max>] [--max-tree-nodes <positive-int>] [--max-tree-depth <positive-int>] <app>\n\nPrint the current Linux AT-SPI snapshot for the target app.\n"
 	default:
-		return `Open Computer Use for Linux
+		return `Cherry Computer Use for Linux
 
 Usage:
   open-computer-use [command] [options]
