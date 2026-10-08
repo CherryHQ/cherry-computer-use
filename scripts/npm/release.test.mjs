@@ -69,6 +69,16 @@ test('CLI version changes propagate to native fallbacks and the plugin before pu
   assert.match(readFileSync(path.join(dir, 'apps/OpenComputerUseLinux/main.go'), 'utf8'), /var version = "4\.5\.6"/);
   assert.match(readFileSync(path.join(dir, 'packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseVersion.swift'), 'utf8'), /Version = "4\.5\.6"/);
   assert.equal(run(dir, 'scripts/npm/sync-versions.mjs', '--check').status, 0);
+  const pluginPath = path.join(dir, 'plugins/open-computer-use/.codex-plugin/plugin.json');
+  const crlf = readFileSync(pluginPath, 'utf8').replace(/\r?\n/g, '\r\n');
+  writeFileSync(pluginPath, crlf);
+  const checked = run(dir, 'scripts/npm/sync-versions.mjs', '--check');
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(readFileSync(pluginPath, 'utf8'), crlf, 'check must preserve checkout line endings');
+  writeFileSync(pluginPath, crlf.replace('4.5.6', '0.0.1'));
+  assert.notEqual(run(dir, 'scripts/npm/sync-versions.mjs', '--check').status, 0);
+  assert.equal(run(dir, 'scripts/npm/sync-versions.mjs').status, 0);
+  assert.equal(readFileSync(pluginPath, 'utf8'), crlf, 'updates must preserve CRLF while fixing the version');
 });
 
 test('formal release cannot silently downgrade to ad-hoc when credentials are absent', () => {

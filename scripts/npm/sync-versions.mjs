@@ -13,8 +13,10 @@ function update(name, transform) {
 }
 update('plugins/open-computer-use/.codex-plugin/plugin.json', text => {
   const manifest = JSON.parse(text);
+  if (manifest.version === version) return text;
   manifest.version = version;
-  return JSON.stringify(manifest, null, 2) + '\n';
+  const updated = JSON.stringify(manifest, null, 2) + '\n';
+  return text.includes('\r\n') ? updated.replaceAll('\n', '\r\n') : updated;
 });
 update('packages/OpenComputerUseKit/Sources/OpenComputerUseKit/OpenComputerUseVersion.swift', text =>
   text.replace(/(public let openComputerUseVersion = ")[^"]+(")/, `$1${version}$2`));
