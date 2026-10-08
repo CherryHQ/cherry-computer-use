@@ -1,6 +1,6 @@
 {
   "name": "@cherrystudio/computer-use",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed client for the Cherry Computer Use native runtime",
   "type": "module",
   "license": "MIT",
@@ -55,11 +55,11 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@cherrystudio/computer-use-darwin-arm64": "0.1.0",
-    "@cherrystudio/computer-use-darwin-x64": "0.1.0",
-    "@cherrystudio/computer-use-win32-arm64": "0.1.0",
-    "@cherrystudio/computer-use-win32-x64": "0.1.0",
-    "@cherrystudio/computer-use-linux-arm64": "0.1.0",
-    "@cherrystudio/computer-use-linux-x64": "0.1.0"
+    "@cherrystudio/computer-use-darwin-arm64": "0.1.1",
+    "@cherrystudio/computer-use-darwin-x64": "0.1.1",
+    "@cherrystudio/computer-use-win32-arm64": "0.1.1",
+    "@cherrystudio/computer-use-win32-x64": "0.1.1",
+    "@cherrystudio/computer-use-linux-arm64": "0.1.1",
+    "@cherrystudio/computer-use-linux-x64": "0.1.1"
   }
 }

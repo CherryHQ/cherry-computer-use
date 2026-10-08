@@ -1,5 +1,11 @@
 # @cherrystudio/computer-use
 
+## 0.1.1
+
+### Patch Changes
+
+- [#5](https://github.com/CherryHQ/cherry-computer-use/pull/5) [`b6a68c2`](https://github.com/CherryHQ/cherry-computer-use/commit/b6a68c2bbe0946ca0b0b792288cc74f9de34cb0d) Thanks [@DeJeune](https://github.com/DeJeune)! - Install the matching native runtime automatically on macOS, Windows and Linux (arm64/x64). macOS release helpers are Developer ID signed and notarized. Validate installed SDK and runtime tarballs before publishing; keep the CLI private.
+
 ## 0.1.0
 
 ### Patch Changes
