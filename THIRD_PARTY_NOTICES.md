@@ -8,6 +8,10 @@ The macOS `sky_click` event recipe and private SkyLight bridge are derived from 
 - Source revision: `b8a0f32a06c75225ba24ebb5ab14f6507fa90d15`
 - License: MIT
 
+The macOS accessibility reveal scroll target selection (`AccessibilityRevealScroll.swift`) is adapted from
+`libs/cua-driver/rust/crates/platform-macos/src/ax/reveal_scroll.rs` at revision
+`50d1e84475d2ddad489a2c7151dee9371e7a3700` (trycua/cua pull request #4861), under the same license.
+
 MIT License
 
 Copyright (c) 2025 Cua AI, Inc.

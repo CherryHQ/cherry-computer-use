@@ -7,10 +7,13 @@
 - 三端 `serve --stdio --session-id` 保留私有生命周期，接入 `listApps → getAppState → act(click)`。Windows/Linux 复用 [Go session 与 Desktop](../../packages/runtime-go/README.md)，macOS 使用 [Swift desktop](../../packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SDKDesktop.swift)及 [私有 app agent](../../apps/OpenComputerUse/Sources/OpenComputerUse/MacOSSDKRuntime.swift)。控制读取、串行执行和响应写入分离。
 - 原生端持有应用进程身份和元素引用，只向 SDK 发会话私有 ID、树层级、动作、截断标记和 PNG。重新观察、尝试执行动作都会使目标的旧快照失效；执行前再校验原生身份、名称、角色及动作，拒绝跨会话和过期引用。
 - macOS 的 SDK desktop 是上游引擎（`ComputerUseService` + `AccessibilitySnapshot`）的适配层：观察用引擎的窗口选择、Chromium/Electron 辅助功能模式、树渲染与 CGWindow 截图，七种动作都调用引擎的 `perform*`，`tree.text` 返回引擎渲染的大纲（行号即元素 ID）。观察默认 `.readOnly`，`activation: allow` 才允许激活恢复；不设置全局指针环境变量，所以不会走全局 HID。Windows/Linux 仍只执行一个元素的左键语义动作（Invoke/SelectionItem/Toggle、AT-SPI click/press/activate），其余动作明确不支持，待同样改为引擎适配层。macOS 已接通显式 `requestPermissions`；Windows/Linux 尚无对应系统授权流程。
-- 2026-10-08 实测（打包 helper，飞书在后台）：观察拿到主窗口、615 个节点和截图，约 4 秒，与 CLI `snapshot` 相当；TextEdit 在后台完成 setValue、点击、按键与输入，前台应用不变。引擎对后台 Chromium 窗口的 `postToPid` 滚轮事件不生效，MCP 路径同样如此。
+- 2026-10-08 引擎复用实测（打包 helper，飞书在后台）：观察拿到主窗口、615 个节点和截图，约 4 秒，与 CLI `snapshot` 相当；TextEdit 在后台完成 setValue、点击、按键与输入，前台应用不变。这轮观察和输入结果不代表新增后台滚动已经完成验收。
+- 滚动依次尝试 AX 翻页、`AXScrollToVisible`、定向滚轮；三条真实 AX 路径都要求目标方向的滚动条数值或内容坐标变化，不能仅凭 API 返回成功。揭示选取参考固定版本的 Cua Driver：真实离屏坐标按距离挑选，Chromium 的边缘细条按可见行间距挑选。调用方应传列表或滚动容器；指定有效容器后不因缺少候选改滚外层容器，遍历跳过嵌套的 AXScrollArea/AXWebArea。
+- 没有候选不等于已经到边：虚拟列表可能只暴露可见行。所有路径都无法确认位移时返回 `TARGET_UNAVAILABLE`（SDK 保留 `effect: possible`），要求先重新观察；MCP 同样返回错误。距离近似，滚动区域不暴露滚动条或稳定节点坐标时也可能无法确认。节点选择只检查目标区域；AXScrollToVisible 自身仍可能连带滚动外层区域，需真实嵌套场景验收。
+- 新 helper 的飞书向下滚动通过了一次内容位移断言，但随后鼠标稳定性断言失败；隔离 Chrome 测试也受到前台切换或启动竞争影响。这些尝试不能证明“不抢焦点、不动鼠标”。用户正在使用电脑，严格的飞书往返、Chrome 嵌套/整页、原生控件及 Cherry 消息列表验收暂缓。
 - 动作与观察分开：确认原生调用成功后，采集失败或取消仍返回 `completed`。调用结果未知时保留 `effect: possible`，不重试动作；Windows/Linux 还会禁用本会话后续桌面操作，macOS 引擎错误只报告 `possible`，由调用方重新观察。单次原生调用无法收敛时，取消/关闭失败不能伪装清理完成。
 - 截图独立报告可用性。macOS 用引擎按窗口 ID 截取；Windows 对所属 HWND 调用 PrintWindow；Linux 仅在 X11 中按 PID、标题匹配唯一可见窗口，并限制像素格式和尺寸。无法可靠映射时返回 unavailable。macOS 返回截图像素坐标的元素边界；尚未接入 Wayland capture。
-- macOS 权限查询仅调用 app agent 身份的非交互 preflight，未授予返回 unknown。显式申请先验证完整权限 ID 列表，再复用 app 层已有拖拽授权窗口，打开相应系统设置。请求在拖拽被接受、用户完成、关闭或实际获授权前保持 pending；拖拽成功立即收起浮层并结束 SDK 引导，但不推断授权成功，宿主随后用新 helper 检查权限；关闭/取消会清理窗口、浮层和监视器，返回实际 preflight 结果，不把请求成功当成 granted。SDK 模式不走旧窗口的退出/重启 app 流程。默认交互超时为 5 分钟，可由调用方覆盖。Cherry 保持 helper 存活至引导结束，再用新 helper 重新检查；Agent 控制任务仍须持有自己的长会话。Windows/Linux 的空权限列表表示没有接入 OS 授权流程，不能代替宿主授权。macOS GUI 待用户在系统设置授予辅助功能和屏幕录制；没有绕过 TCC。
+- macOS 权限查询仅调用 app agent 身份的非交互 preflight，未授予返回 unknown。显式申请先验证完整权限 ID 列表，再复用 app 层已有拖拽授权窗口，打开相应系统设置。请求在拖拽被接受、用户完成、关闭或实际获授权前保持 pending；拖拽成功立即收起浮层并结束 SDK 引导，但不推断授权成功，宿主随后用新 helper 检查权限；关闭/取消会清理窗口、浮层和监视器，返回实际 preflight 结果，不把请求成功当成 granted。SDK 模式不走旧窗口的退出/重启 app 流程。默认交互超时为 5 分钟，可由调用方覆盖。Cherry 保持 helper 存活至引导结束，再用新 helper 重新检查；Agent 控制任务仍须持有自己的长会话。Windows/Linux 的空权限列表表示没有接入 OS 授权流程，不能代替宿主授权。2026-10-08 固定 helper 签名并由用户重新添加系统授权后，新 SDK 会话确认辅助功能与屏幕录制均为 granted；没有绕过 TCC。
 - [原生契约测试](../../protocol/native.test.mjs)：macOS 5 项通过，Windows ARM64 与 Linux ARM64 各 4 项通过、macOS 专用项跳过。Swift 9 项、共享 Go 12 项（含 race detector）通过；两端既有 Go 单测通过。
 - [真实桌面测试](../../protocol/desktop.test.mjs)：Parallels Windows 11 ARM64 与无 Python 的 Linux Xvfb/GTK 容器均完成 `Count: 0 → 1 → 2`、PNG、层级/截断、跨会话与过期快照拒绝、独立关闭。Windows 另验 Job Object 在请求取消和 Go owner 强杀时终止 worker/子进程。操作仅针对自建 fixture。
 - Windows 实测暴露默认 UIA provider 初始化失败：.NET 的栈检查遇到 PowerShell 动态帧会抛空引用，WinForms 按钮因此缺少 InvokePattern。共用 bridge 在保留 C# 调用帧的初始化方法内触发默认 provider 加载，真实按钮测试覆盖修复；参见 [Microsoft 的加载实现](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/UIAutomation/UIAutomationClient/MS/Internal/Automation/ProxyManager.cs)。
@@ -57,7 +60,7 @@ SDK、Swift 和共享 Go runtime 已实现协议 v2 的 `openAppSession`、`list
 
 现阶段只提供 runtime 内的隔离和停止，不代替 Cherry 的跨任务协调或用户停止状态。宿主仍须阻止工具通过显式重开/新建 runtime 绕过停止；Tray、普通工具接入和光标尚未实现。应用发现列表移除目标时回收上下文，执行时继续校验原生身份；持续窗口/退出监听随 overlay 接入。
 
-验证：SDK 类型/36 项测试（含 ESM/CJS tarball）、Swift 15 项会话测试、共享 Go race 测试通过；macOS 6 项原生协议测试及 Linux X11 真正 GUI 点击/停止通过。Windows x64 CI（`windows-2025`）已通过原生协议、worker/后代清理及真实计数窗口点击/停止；Windows ARM64 已构建，Parallels 问题导致本地 GUI 复测仍待完成。macOS 已换固定证书签名，系统重新授权及授权后 GUI 仍待用户完成。
+验证：SDK 类型/36 项测试（含 ESM/CJS tarball）、Swift 15 项会话测试、共享 Go race 测试通过；macOS 6 项原生协议测试及 Linux X11 真正 GUI 点击/停止通过。Windows x64 CI（`windows-2025`）已通过原生协议、worker/后代清理及真实计数窗口点击/停止；Windows ARM64 已构建，Parallels 问题导致本地 GUI 复测仍待完成。macOS 在 2026-10-08 固定证书并重新授权后已确认两项权限，新增滚动的严格 GUI 验收仍待完成。
 
 ### 两层会话与资源归属
 

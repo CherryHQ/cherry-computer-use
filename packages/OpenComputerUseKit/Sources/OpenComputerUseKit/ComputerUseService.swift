@@ -726,23 +726,32 @@ public final class ComputerUseService {
             return
         }
 
+        let scrollDirection = RevealScroll.Direction(rawValue: normalized)!
+        let context = record.element.flatMap {
+            RevealScroll.Context(target: $0, window: snapshot.windowBounds, direction: scrollDirection)
+        }
         if let repeatCount = integralScrollPageCount(pages),
            let rawAction = record.rawActions.first(where: { $0.caseInsensitiveCompare("AXScroll\(normalized.capitalized)ByPage") == .orderedSame }),
            let element = record.element {
             for _ in 0..<repeatCount {
-                _ = AXUIElementPerformAction(element, rawAction as CFString)
+                guard AXUIElementPerformAction(element, rawAction as CFString) == .success else { break }
                 Thread.sleep(forTimeInterval: 0.05)
             }
-        } else if let point = try globalPoint(for: record, snapshot: snapshot) {
-            try performScrollEvent(
-                at: point,
-                direction: normalized,
-                pages: pages,
-                targetDescription: "element_index=\(elementIndex)",
-                snapshot: snapshot
-            )
-        } else {
+            if context?.hasMoved() == true { return }
+        }
+        if context?.reveal(pages: pages) == true { return }
+        guard let point = try globalPoint(for: record, snapshot: snapshot) else {
             throw ComputerUseError.stateUnavailable("element \(elementIndex) has no scrollable frame")
+        }
+        try performScrollEvent(
+            at: point,
+            direction: normalized,
+            pages: pages,
+            targetDescription: "element_index=\(elementIndex)",
+            snapshot: snapshot
+        )
+        guard context?.hasMoved() == true else {
+            throw ComputerUseError.stateUnavailable("No scroll movement could be verified. The element may be at its boundary or may not support background scrolling. Observe again before retrying.")
         }
     }
 
@@ -1808,7 +1817,7 @@ public final class ComputerUseService {
 
     private func integralScrollPageCount(_ pages: Double) -> Int? {
         let rounded = pages.rounded(.toNearestOrAwayFromZero)
-        guard abs(pages - rounded) < 0.000001 else {
+        guard rounded < Double(Int.max), abs(pages - rounded) < 0.000001 else {
             return nil
         }
         return max(Int(rounded), 1)
