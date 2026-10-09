@@ -119,12 +119,14 @@ test('public SDK starts two isolated native sessions and closes them independent
   await assert.rejects(first.stopAppSession({ appSessionId: 'foreign' }), error => error.code === 'APP_SESSION_NOT_FOUND')
   assert.deepEqual(await first.listAppSessions(), [])
   assert.equal(capabilities.capabilities.length, 9)
-  const engineBacked = ['darwin', 'win32'].includes(process.platform)
-  assert.ok(capabilities.capabilities.every(item => engineBacked
-    ? item.availability.status !== 'unsupported'
-    : ['accessibility', 'screenshot', 'click'].includes(item.name) || item.availability.status === 'unsupported'))
+  // Linux connects semantic actions only; actions that need global input stay unsupported.
+  const linux = process.platform === 'linux'
+  const globalOnly = linux ? ['scroll', 'drag', 'pressKey'] : []
+  assert.ok(capabilities.capabilities.every(item => globalOnly.includes(item.name)
+    ? item.availability.status === 'unsupported'
+    : (linux && item.name === 'screenshot') || item.availability.status !== 'unsupported'), JSON.stringify(capabilities))
   await assert.rejects(first.act({ type: 'click', appSessionId: 'missing', snapshotId: 'not-a-snapshot', x: 0, y: 0 }), error =>
-    error.code === (engineBacked ? 'APP_SESSION_NOT_FOUND' : 'UNSUPPORTED_CAPABILITY') && error.effect === 'none')
+    error.code === 'APP_SESSION_NOT_FOUND' && error.effect === 'none')
   await first.close()
   const permissions = await second.getPermissionStatus()
   assert.ok(Array.isArray(permissions.permissions))

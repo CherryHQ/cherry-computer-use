@@ -3,65 +3,59 @@ package main
 import (
 	"context"
 	"errors"
-	"net"
 	"testing"
 
 	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
-	"github.com/godbus/dbus/v5"
-	"github.com/jezek/xgb/xproto"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
 )
 
-func TestCaptureDecodesDepth32Windows(t *testing.T) {
-	cases := []struct {
-		name   string
-		order  byte
-		depth  byte
-		width  uint16
-		height uint16
-		data   []byte
-		want   bool
-	}{
-		{"plain depth 24 window", xproto.ImageOrderLSBFirst, 24, 320, 160, make([]byte, 320*160*4), true},
-		{"ARGB depth 32 window", xproto.ImageOrderLSBFirst, 32, 320, 160, make([]byte, 320*160*4), true},
-		{"depth 16 window", xproto.ImageOrderLSBFirst, 16, 320, 160, make([]byte, 320*160*2), false},
-		{"big endian server", xproto.ImageOrderMSBFirst, 24, 320, 160, make([]byte, 320*160*4), false},
-		{"short reply", xproto.ImageOrderLSBFirst, 24, 320, 160, make([]byte, 320*160*4-4), false},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := decodablePixelFormat(testCase.order, testCase.depth, testCase.width, testCase.height, testCase.data); got != testCase.want {
-				t.Fatalf("decodablePixelFormat(depth=%d, order=%v) = %v, want %v", testCase.depth, testCase.order, got, testCase.want)
-			}
-		})
-	}
-}
-
-func TestUnreadableDesktopIsNotReportedAsEmpty(t *testing.T) {
-	reasons := []error{errors.New(":1.25: the accessible name is unavailable")}
-	var domain *sdk.DomainError
-	if err := emptyDesktopError(3, 0, reasons); !errors.As(err, &domain) || domain.Code != "TARGET_UNAVAILABLE" {
-		t.Fatalf("registered but unreadable applications must not look like an empty desktop: %v", err)
-	}
-	if err := emptyDesktopError(3, 1, reasons); err != nil {
-		t.Fatalf("a partially readable desktop must still list what it could read: %v", err)
-	}
-	if err := emptyDesktopError(0, 0, nil); err != nil {
-		t.Fatalf("a desktop with no registered applications is legitimately empty: %v", err)
+func TestSDKRefusesGlobalInputVariantsBeforeDispatch(t *testing.T) {
+	driver := newLinuxDesktop()
+	observation := sdk.Observation{Native: desktop.Observation{}}
+	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}}}
+	x, y := 10.0, 20.0
+	for name, action := range map[string]sdk.Action{
+		"coordinate click": {Type: "click", Button: "left", Count: 1, X: &x, Y: &y, AllowGlobalInput: true},
+		"double click":     {Type: "click", Button: "left", Count: 2, AllowGlobalInput: true},
+		"right click":      {Type: "click", Button: "right", Count: 1, AllowGlobalInput: true},
+		"drag":             {Type: "drag", AllowGlobalInput: true},
+		"press key":        {Type: "pressKey", Key: "Return", AllowGlobalInput: true},
+		"scroll":           {Type: "scroll", Direction: "down", Pages: 1, AllowGlobalInput: true},
+	} {
+		element := clickable
+		if action.X != nil || action.Type != "click" {
+			element = nil
+		}
+		err := driver.Act(context.Background(), sdk.Target{}, observation, element, action)
+		var domain *sdk.DomainError
+		if !errors.As(err, &domain) || domain.Code != "UNSUPPORTED_CAPABILITY" || domain.Effect != "none" {
+			t.Fatalf("%s must be refused without side effects even when global input is allowed: %v", name, err)
+		}
 	}
 }
 
-func TestSDKRejectsDisconnectedBusInsteadOfReusingTargetIdentities(t *testing.T) {
-	client, peer := net.Pipe()
-	t.Cleanup(func() { peer.Close() })
-	bus, err := dbus.NewConn(client)
-	if err != nil {
-		t.Fatal(err)
+func TestSDKCapabilitiesSeparateSemanticAndGlobalActions(t *testing.T) {
+	capabilities := newLinuxDesktop().Capabilities(context.Background())
+	for _, name := range []string{"scroll", "drag", "pressKey"} {
+		if capabilities[name].Status != "unsupported" {
+			t.Fatalf("%s needs global input and must be unsupported: %+v", name, capabilities[name])
+		}
 	}
-	bus.Close()
-	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-cherry-sdk-test-bus")
-	_, err = (&linuxDesktop{bus: bus}).Apps(context.Background())
+	for _, name := range []string{"accessibility", "click", "performSecondaryAction", "setValue", "typeText"} {
+		if _, ok := capabilities[name]; !ok {
+			t.Fatalf("missing capability %s", name)
+		}
+	}
+}
+
+func TestEngineErrorsKeepCodeAndEffect(t *testing.T) {
+	err := sdkError(&desktop.Error{Code: "STALE_SNAPSHOT", Message: "changed", Effect: "none"})
 	var domain *sdk.DomainError
-	if !errors.As(err, &domain) || domain.Code != "TARGET_UNAVAILABLE" || domain.Effect != "none" {
-		t.Fatalf("closed bus must require a new session, not discover another bus: %v", err)
+	if !errors.As(err, &domain) || domain.Code != "STALE_SNAPSHOT" || domain.Effect != "none" {
+		t.Fatalf("engine error lost its protocol meaning: %v", err)
+	}
+	err = sdkError(&desktop.Error{Code: "TARGET_UNAVAILABLE", Message: "unknown", Effect: "possible"})
+	if !errors.As(err, &domain) || domain.Effect != "possible" {
+		t.Fatalf("uncertain outcomes must stay uncertain: %v", err)
 	}
 }

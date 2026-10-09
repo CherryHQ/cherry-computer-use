@@ -93,7 +93,9 @@ If desktop access is missing, ask the user to run the command from the logged-in
 
 ## Linux Accessible Interface Errors
 
-If a Linux release reports that `Accessible` has no `is_text` or `is_editable_text` attribute, upgrade to a release containing the AT-SPI interface-detection fix. Current source checks `Accessible.get_interfaces()` for `Text` and `EditableText`, which is compatible with the PyGObject bindings used by Ubuntu 24.04.
+If a Linux release reports that `Accessible` has no `is_text` or `is_editable_text` attribute, upgrade. Current releases read the tree and run semantic actions natively over D-Bus; `python3` with PyGObject AT-SPI is only needed for global pointer and keyboard input (coordinate clicks, `drag`, `press_key`, `scroll`, and `type_text` when no editable field has focus).
+
+`type_text` writes into the one focused editable field of the target window. If two fields report focus it refuses; focus the intended field first.
 
 ## Permission And Safety Issues
 

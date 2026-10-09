@@ -2,299 +2,182 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
-	"slices"
-	"strings"
-	"time"
+	"strconv"
 
-	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
-	"github.com/godbus/dbus/v5"
+	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
 )
 
-type accessibleRef struct {
-	Bus  string
-	Path dbus.ObjectPath
-}
-type linuxTarget struct {
-	Ref accessibleRef
-	PID uint32
-}
-type linuxElement struct {
-	Ref                accessibleRef
-	Name, Role, Action string
-	Index              int32
-}
-type linuxObservation struct {
-	Window accessibleRef
-	Title  string
-}
-type linuxDesktop struct{ bus *dbus.Conn }
+// linuxDesktop adapts the shared engine to SDK sessions; runtime-go owns identities and snapshots.
+type linuxDesktop struct{ engine *desktop.Engine }
 
-func (d *linuxDesktop) connect(ctx context.Context) error {
-	if d.bus != nil {
-		if !d.bus.Connected() {
-			return sdk.Error("TARGET_UNAVAILABLE", "AT-SPI connection closed; start a new session")
-		}
-		return nil
+func newLinuxDesktop() *linuxDesktop { return &linuxDesktop{desktop.New(desktop.Config{})} }
+
+func sdkError(err error) error {
+	var native *desktop.Error
+	if errors.As(err, &native) {
+		return &sdkruntime.DomainError{Code: native.Code, Message: native.Message, Effect: native.Effect}
 	}
-	session, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
+	if errors.Is(err, context.Canceled) {
+		return sdkruntime.Error("CANCELLED", "Request cancelled")
+	}
+	return err
+}
+
+func (d *linuxDesktop) Capabilities(ctx context.Context) map[string]sdkruntime.Availability {
+	available := sdkruntime.Availability{Status: "available"}
+	if err := d.engine.Connect(ctx); err != nil {
+		available = sdkruntime.Unavailable("DEPENDENCY_MISSING", err.Error())
+	}
+	capture := sdkruntime.Unavailable("DEPENDENCY_MISSING", "An X11 display is required for window capture")
+	if d.engine.Wayland() {
+		capture = sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland capture is not connected"}}
+	} else if d.engine.Display() != "" {
+		capture = sdkruntime.Availability{Status: "available"}
+	}
+	globalInput := sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Linux global input is not connected to the SDK"}}
+	return map[string]sdkruntime.Availability{
+		"accessibility": available, "screenshot": capture,
+		"click": available, "performSecondaryAction": available, "setValue": available, "typeText": available,
+		"scroll": globalInput, "drag": globalInput, "pressKey": globalInput,
+	}
+}
+
+func (d *linuxDesktop) Close(context.Context) error { return d.engine.Close() }
+
+func (d *linuxDesktop) Apps(ctx context.Context) ([]sdkruntime.Target, error) {
+	apps, skipped, err := d.engine.Apps(ctx)
+	if len(skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "open-computer-use: skipped %d registered applications; first reason: %v\n", len(skipped), skipped[0])
+	}
 	if err != nil {
-		return sdk.Error("DEPENDENCY_MISSING", "A desktop D-Bus session is required")
+		return nil, sdkError(err)
 	}
-	defer session.Close()
-	if err = session.Auth(nil); err != nil {
-		return sdk.Error("DEPENDENCY_MISSING", "Cannot authenticate to the desktop D-Bus session")
-	}
-	if err = session.Hello(); err != nil {
-		return sdk.Error("DEPENDENCY_MISSING", "Cannot join the desktop D-Bus session")
-	}
-	var address string
-	if err = session.Object("org.a11y.Bus", "/org/a11y/bus").CallWithContext(ctx, "org.a11y.Bus.GetAddress", 0).Store(&address); err != nil {
-		return sdk.Error("DEPENDENCY_MISSING", "The desktop AT-SPI bus is unavailable")
-	}
-	d.bus, err = dbus.Connect(address)
-	if err != nil {
-		return sdk.Error("DEPENDENCY_MISSING", "Cannot connect to the AT-SPI bus")
-	}
-	return nil
-}
-
-func (d *linuxDesktop) Capabilities(ctx context.Context) map[string]sdk.Availability {
-	available := sdk.Availability{Status: "available"}
-	if err := d.connect(ctx); err != nil {
-		available = sdk.Unavailable("DEPENDENCY_MISSING", err.Error())
-	}
-	capture := sdk.Unavailable("DEPENDENCY_MISSING", "An X11 display is required for window capture")
-	if os.Getenv("WAYLAND_DISPLAY") != "" || strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland") {
-		capture = sdk.Availability{Status: "unsupported", Reason: &sdk.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland capture is not connected"}}
-	} else if os.Getenv("DISPLAY") != "" {
-		capture = sdk.Availability{Status: "available"}
-	}
-	return map[string]sdk.Availability{"accessibility": available, "click": available, "screenshot": capture}
-}
-
-func (d *linuxDesktop) Close(context.Context) error {
-	if d.bus != nil {
-		err := d.bus.Close()
-		d.bus = nil
-		return err
-	}
-	return nil
-}
-
-func (d *linuxDesktop) call(ctx context.Context, ref accessibleRef, method string, args ...any) *dbus.Call {
-	callCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	return d.bus.Object(ref.Bus, ref.Path).CallWithContext(callCtx, "org.a11y.atspi."+method, 0, args...)
-}
-
-func (d *linuxDesktop) property(ctx context.Context, ref accessibleRef, name string, result any) error {
-	var value dbus.Variant
-	callCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	if err := d.bus.Object(ref.Bus, ref.Path).CallWithContext(callCtx, "org.freedesktop.DBus.Properties.Get", 0, "org.a11y.atspi.Accessible", name).Store(&value); err != nil {
-		return err
-	}
-	return dbus.Store([]any{value.Value()}, result)
-}
-
-func (d *linuxDesktop) Apps(ctx context.Context) ([]sdk.Target, error) {
-	if err := d.connect(ctx); err != nil {
-		return nil, err
-	}
-	var refs []accessibleRef
-	root := accessibleRef{"org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root"}
-	if err := d.call(ctx, root, "Accessible.GetChildren").Store(&refs); err != nil {
-		return nil, err
-	}
-	targets := []sdk.Target{}
-	unreadable := []error{}
-	for _, ref := range refs {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		// Unique bus names are lifetime identities; never accept a recyclable well-known name.
-		if !strings.HasPrefix(ref.Bus, ":") {
-			unreadable = append(unreadable, fmt.Errorf("%s: registry entry has no unique bus name", ref.Bus))
-			continue
-		}
-		var name string
-		if err := d.property(ctx, ref, "Name", &name); err != nil {
-			unreadable = append(unreadable, fmt.Errorf("%s: %w", ref.Bus, err))
-			continue
-		}
-		if name == "" {
-			unreadable = append(unreadable, fmt.Errorf("%s: accessible name is empty", ref.Bus))
-			continue
-		}
-		var pid uint32
-		if err := d.bus.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetConnectionUnixProcessID", 0, ref.Bus).Store(&pid); err != nil {
-			unreadable = append(unreadable, fmt.Errorf("%s: %w", ref.Bus, err))
-			continue
-		}
-		targets = append(targets, sdk.Target{Key: ref.Bus + string(ref.Path), Name: name, Native: linuxTarget{ref, pid}})
-	}
-	if len(unreadable) > 0 {
-		fmt.Fprintf(os.Stderr, "open-computer-use: skipped %d of %d registered applications; first reason: %v\n", len(unreadable), len(refs), unreadable[0])
-	}
-	if err := emptyDesktopError(len(refs), len(targets), unreadable); err != nil {
-		return nil, err
+	targets := make([]sdkruntime.Target, 0, len(apps))
+	for _, app := range apps {
+		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Native: app})
 	}
 	return targets, nil
 }
 
-// A desktop that registers applications but yields none is a failed read, not an
-// empty desktop: an empty list would let a caller treat unreadable targets as absent.
-func emptyDesktopError(registered, readable int, reasons []error) error {
-	if registered == 0 || readable > 0 {
-		return nil
+func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, options sdkruntime.ObserveOptions) (sdkruntime.Observation, error) {
+	app := target.Native.(desktop.App)
+	readLimit := -1
+	if limit, ok := observeTextLimit(options); ok {
+		readLimit = limit
 	}
-	message := fmt.Sprintf("none of the %d registered applications could be read", registered)
-	if len(reasons) > 0 {
-		message += "; first reason: " + reasons[0].Error()
+	native, err := d.engine.Observe(ctx, app, desktop.TreeOptions{MaxNodes: options.MaxTreeNodes, MaxDepth: options.MaxTreeDepth, TextReadLimit: readLimit})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return sdkruntime.Observation{}, sdkruntime.Error("CANCELLED", "Observation cancelled")
+		}
+		return sdkruntime.Observation{}, sdkError(err)
 	}
-	return sdk.Error("TARGET_UNAVAILABLE", message)
-}
-
-func (d *linuxDesktop) Observe(ctx context.Context, target sdk.Target, options sdk.ObserveOptions) (sdk.Observation, error) {
-	if err := d.connect(ctx); err != nil {
-		return sdk.Observation{}, err
+	tree := sdkruntime.Tree{Status: "available", Elements: make([]sdkruntime.Element, 0, len(native.Nodes)), Truncated: []string{}}
+	if native.NodesTruncated {
+		tree.Truncated = append(tree.Truncated, "nodes")
 	}
-	app := target.Native.(linuxTarget)
-	var children []accessibleRef
-	if err := d.call(ctx, app.Ref, "Accessible.GetChildren").Store(&children); err != nil {
-		return sdk.Observation{}, sdk.Error("TARGET_UNAVAILABLE", "Application is no longer available")
+	if native.DepthTruncated {
+		tree.Truncated = append(tree.Truncated, "depth")
 	}
-	var window accessibleRef
-	for _, child := range children {
-		var role string
-		if d.call(ctx, child, "Accessible.GetRoleName").Store(&role) == nil && slices.Contains([]string{"frame", "dialog", "window", "alert"}, role) {
-			window = child
-			break
+	for index, node := range native.Nodes {
+		element := sdkruntime.Element{ID: strconv.Itoa(index), Role: node.Role, Name: options.LimitText(node.Name, &tree), Native: node}
+		if node.Parent >= 0 {
+			element.ParentID = strconv.Itoa(node.Parent)
 		}
-	}
-	if window.Bus == "" {
-		return sdk.Observation{}, sdk.Error("TARGET_UNAVAILABLE", "Application has no accessible window")
-	}
-	var title string
-	if err := d.property(ctx, window, "Name", &title); err != nil {
-		return sdk.Observation{}, err
-	}
-	observation := sdk.Observation{Window: sdk.Window{Title: title}, Tree: sdk.Tree{Status: "available", Elements: []sdk.Element{}, Truncated: []string{}}, Native: linuxObservation{window, title}}
-	type node struct {
-		ref    accessibleRef
-		parent string
-		depth  int
-	}
-	queue := []node{{ref: window}}
-	visited := map[accessibleRef]bool{}
-	for len(queue) > 0 {
-		if ctx.Err() != nil {
-			return sdk.Observation{}, ctx.Err()
+		if value := nodeValue(node); value != "" {
+			element.Value = options.LimitText(value, &tree)
 		}
-		current := queue[0]
-		queue = queue[1:]
-		if visited[current.ref] {
-			continue
+		if _, ok := desktop.ClickAction(node.Actions); ok {
+			element.Actions = append(element.Actions, "click")
 		}
-		visited[current.ref] = true
-		if len(observation.Tree.Elements) >= options.MaxTreeNodes {
-			observation.Tree.Truncated = append(observation.Tree.Truncated, "nodes")
-			break
-		}
-		var name, role string
-		if err := d.property(ctx, current.ref, "Name", &name); err != nil {
-			return sdk.Observation{}, err
-		}
-		if err := d.call(ctx, current.ref, "Accessible.GetRoleName").Store(&role); err != nil {
-			return sdk.Observation{}, err
-		}
-		index, action := d.clickAction(ctx, current.ref)
-		id := fmt.Sprint(len(observation.Tree.Elements))
-		actions := []string{}
-		if index >= 0 {
-			actions = append(actions, "click")
-		}
-		observation.Tree.Elements = append(observation.Tree.Elements, sdk.Element{ID: id, ParentID: current.parent, Role: role,
-			Name: options.LimitText(name, &observation.Tree), Actions: actions, Native: linuxElement{current.ref, name, role, action, index}})
-		var descendants []accessibleRef
-		if err := d.call(ctx, current.ref, "Accessible.GetChildren").Store(&descendants); err != nil {
-			return sdk.Observation{}, err
-		}
-		if current.depth >= options.MaxTreeDepth {
-			if len(descendants) > 0 && !slices.Contains(observation.Tree.Truncated, "depth") {
-				observation.Tree.Truncated = append(observation.Tree.Truncated, "depth")
+		for _, action := range node.Actions {
+			if action.Label() != "" {
+				element.SecondaryActions = append(element.SecondaryActions, sdkruntime.SecondaryAction{ID: strconv.Itoa(int(action.Index)), Label: action.Label()})
 			}
-			continue
 		}
-		for _, child := range descendants {
-			queue = append(queue, node{child, id, current.depth + 1})
+		if len(element.SecondaryActions) > 0 {
+			element.Actions = append(element.Actions, "performSecondaryAction")
 		}
+		if node.Settable() {
+			element.Actions = append(element.Actions, "setValue")
+		}
+		tree.Elements = append(tree.Elements, element)
 	}
-	observation.Screenshot = captureLinuxWindow(ctx, app.PID, title)
+	observation := sdkruntime.Observation{Window: sdkruntime.Window{Title: native.Window.Title}, Tree: tree, Native: native}
+	capture := d.engine.Capture(ctx, app.PID, native.Window.Title)
+	if capture.Reason != nil {
+		observation.Screenshot = sdkruntime.Capture{Status: "unavailable", Reason: &sdkruntime.Reason{Code: capture.Reason.Code, Message: capture.Reason.Message}}
+	} else {
+		observation.Screenshot = sdkruntime.Capture{Status: "available", Image: &sdkruntime.Image{MimeType: "image/png", Width: capture.Width, Height: capture.Height, DataBase64: base64.StdEncoding.EncodeToString(capture.PNG)}}
+	}
 	return observation, nil
 }
 
-func (d *linuxDesktop) clickAction(ctx context.Context, ref accessibleRef) (int32, string) {
-	var interfaces []string
-	if d.call(ctx, ref, "Accessible.GetInterfaces").Store(&interfaces) != nil || !slices.Contains(interfaces, "org.a11y.atspi.Action") {
-		return -1, ""
+// observeTextLimit mirrors ObserveOptions.LimitText so the engine reads no more text than is shown.
+func observeTextLimit(options sdkruntime.ObserveOptions) (int, bool) {
+	if text, ok := options.TextLimit.(string); ok && text == "max" {
+		return 0, false
 	}
-	for index := int32(0); index < 8; index++ {
-		var name string
-		if d.call(ctx, ref, "Action.GetName", index).Store(&name) != nil {
-			break
-		}
-		if slices.Contains([]string{"click", "press", "activate"}, strings.ToLower(name)) {
-			return index, name
-		}
+	if number, ok := options.TextLimit.(float64); ok {
+		return int(number), true
 	}
-	return -1, ""
+	return 500, true
 }
 
-func (d *linuxDesktop) Click(ctx context.Context, target sdk.Target, observation sdk.Observation, element sdk.Element) error {
-	native := element.Native.(linuxElement)
-	window := observation.Native.(linuxObservation)
-	var name, role, title string
-	if d.property(ctx, native.Ref, "Name", &name) != nil || d.call(ctx, native.Ref, "Accessible.GetRoleName").Store(&role) != nil ||
-		name != native.Name || role != native.Role || d.property(ctx, window.Window, "Name", &title) != nil || title != window.Title {
-		return sdk.Error("STALE_SNAPSHOT", "Element or window changed since observation")
+func nodeValue(node desktop.Node) string {
+	if node.Text != "" {
+		return node.Text
 	}
-	parent := native.Ref
-	belongs := false
-	for depth := 0; depth <= 128; depth++ {
-		if parent == window.Window {
-			belongs = true
-			break
+	if node.Value != nil {
+		return strconv.FormatFloat(*node.Value, 'f', -1, 64)
+	}
+	return ""
+}
+
+func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, observation sdkruntime.Observation, element sdkruntime.Element) error {
+	return d.Act(ctx, target, observation, &element, sdkruntime.Action{Type: "click", Button: "left", Count: 1})
+}
+
+// Act runs semantic actions only. Variants that need the pointer or keyboard are
+// refused before any side effect, whatever allowGlobalInput says.
+func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
+	native := observation.Native.(desktop.Observation)
+	var node desktop.Node
+	if element != nil {
+		node = element.Native.(desktop.Node)
+	}
+	switch action.Type {
+	case "click":
+		if element == nil || action.Button != "left" || action.Count != 1 {
+			return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Linux supports one semantic left click on an element; pointer clicks need global input, which is not connected")
 		}
-		var next accessibleRef
-		if d.property(ctx, parent, "Parent", &next) != nil || next == parent {
-			break
+		click, ok := desktop.ClickAction(node.Actions)
+		if !ok {
+			return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Element has no semantic click action")
 		}
-		parent = next
+		return sdkError(d.engine.DoAction(ctx, native.Window, node, click))
+	case "performSecondaryAction":
+		for _, candidate := range node.Actions {
+			if strconv.Itoa(int(candidate.Index)) == action.ActionID {
+				return sdkError(d.engine.DoAction(ctx, native.Window, node, candidate))
+			}
+		}
+		return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Element does not expose this secondary action")
+	case "setValue":
+		return sdkError(d.engine.SetValue(ctx, native.Window, node, action.Value))
+	case "typeText":
+		err := d.engine.TypeText(ctx, native.Window, action.Text)
+		var engineError *desktop.Error
+		if errors.As(err, &engineError) && engineError.Code == desktop.ErrNoFocusedText {
+			return sdkruntime.Error("TARGET_UNAVAILABLE", engineError.Message+"; typing without one needs global input, which is not connected")
+		}
+		return sdkError(err)
+	default:
+		return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Linux "+action.Type+" needs global input, which is not connected to the SDK")
 	}
-	index, action := d.clickAction(ctx, native.Ref)
-	if !belongs || index != native.Index || action != native.Action {
-		return sdk.Error("STALE_SNAPSHOT", "Element no longer belongs to the observed window/action")
-	}
-	var states []uint32
-	if d.call(ctx, native.Ref, "Accessible.GetState").Store(&states) != nil || len(states) == 0 || states[0]&(1<<8) == 0 {
-		return sdk.Error("TARGET_UNAVAILABLE", "Element is not enabled")
-	}
-	if ctx.Err() != nil {
-		return sdk.Error("CANCELLED", "Click cancelled before dispatch")
-	}
-	// A dispatched semantic action is atomic; wait for its reply rather than claiming early cancellation.
-	execution, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	var applied bool
-	err := d.bus.Object(native.Ref.Bus, native.Ref.Path).CallWithContext(execution, "org.a11y.atspi.Action.DoAction", 0, index).Store(&applied)
-	if err != nil {
-		return &sdk.DomainError{Code: "TARGET_UNAVAILABLE", Message: "Semantic action outcome is unknown", Effect: "possible"}
-	}
-	if !applied {
-		return &sdk.DomainError{Code: "TARGET_UNAVAILABLE", Message: "Application did not confirm the action", Effect: "possible"}
-	}
-	return nil
 }

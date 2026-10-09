@@ -4,12 +4,12 @@
 
 把现有 Go AT-SPI/X11 后端发展为 SDK 与 CLI/MCP 共用的 Linux 引擎，逐步迁移 Python bridge 的必要能力。完成条件是两个入口调用同一份原生实现，保留各自协议和授权边界，并在能力验收后删除旧 Python 执行路径。
 
-状态：方案建议，尚未开始运行时代码实现。用户要求比较直接复用 Python 与迁移实现；本计划推荐 Go 收敛路线，未把尚未验证的全局输入和 Wayland 支持视为已确定能力。
+状态：里程碑 1、2 已实现（2026-10-09）。`internal/desktop` 引擎由 SDK 与 CLI/MCP 共用；观察和语义动作不再需要 Python，CLI 的全局键鼠输入仍走缩减后的 Python helper。语义方向滚动、里程碑 3（全局输入迁移与清理）、里程碑 4（删除 Python）和 Wayland 未开始。
 
 ## 背景与证据
 
 - [Linux main.go](../../../apps/OpenComputerUseLinux/main.go)：SDK `serve` 使用 `linuxDesktop`，CLI/MCP 则通过 `runPython` 启动嵌入的脚本；后者每次重启 Python，使用独立的 30 秒 context。
-- [SDK 后端](../../../apps/OpenComputerUseLinux/sdk.go)已经直接通过 `godbus/dbus/v5` 调用 AT-SPI；[截图](../../../apps/OpenComputerUseLinux/sdk_capture.go)通过 `jezek/xgb` 使用 X11。
+- [SDK 后端](../../../apps/OpenComputerUseLinux/sdk.go)已经直接通过 `godbus/dbus/v5` 调用 AT-SPI；[截图](../../../apps/OpenComputerUseLinux/internal/desktop/capture.go)通过 `jezek/xgb` 使用 X11。
 - [Python bridge](../../../apps/OpenComputerUseLinux/runtime.py)依赖 Python、PyGObject、AT-SPI typelib，截图还使用 GDK。它提供七种动作，但部分动作使用全局键鼠，执行后直接采集快照。
 - [无 Python 实验](../../../experiments/LinuxNativeProbe/README.md)已验证 Go 路径的 GTK 观察、点击和 PNG。该结果不代表其他六种动作、Wayland 或真实应用都已验收。
 - [runtime 设计](../../design-docs/computer-use-runtime.md)已经把 Python 定位为过渡选项；Go 原生接入优先，但不承诺所有后端都能无 cgo 实现。
@@ -106,21 +106,38 @@ AT-SPI 语义操作与 Wayland 截图/输入分开报告。后者验证 RemoteDe
 - 实现阶段：在相应 Go module 运行 `go test ./...`、`go vet ./...`；共享生命周期修改另跑 race 检查；涉及 SDK/协议时运行该包已定义的检查脚本。
 - 复用 [Linux 原型容器](../../../experiments/LinuxNativeProbe/Dockerfile)、[原生协议测试](../../../protocol/native.test.mjs)和[桌面测试](../../../protocol/desktop.test.mjs)扩展契约测试，保留容器无 Python 的硬性断言。
 - 增加真实 GTK fixture 的动作结果和独立焦点/指针/输入状态观测；多窗口、重复标题、进程重启、D-Bus 消失、动作成功但观察失败均需覆盖。
-- 本轮只保存提案；现有 Windows PR 与 Linux 运行行为不变。后续按阶段记录本地验证、远端 CI、真实桌面和发行包覆盖，分别报告。
+- 提案阶段只保存文档；里程碑 1、2 已改变 Linux 运行行为，见上方实现记录。现有 Windows PR 不受影响。后续按阶段记录本地验证、远端 CI、真实桌面和发行包覆盖，分别报告。
 
 ## 进度记录
 
 - [x] 核对 Go SDK 与 Python CLI/MCP 的调用路径和无 Python 实验。
 - [x] 比较直接复用、SDK 单独迁移与双入口共用三种方案。
 - [x] 记录能力边界、迁移顺序、验收和 Python 删除条件。
-- [ ] 完成里程碑 0 的原生接口/输入清理实验。
-- [ ] 提取共用引擎并接通双入口观察。
-- [ ] 完成语义动作和剩余 X11 动作验收。
+- [~] 里程碑 0：已核对语义动作所需的 D-Bus 签名与字符/字节计数（见下方结论）；全局输入的键位/清理实验尚未做。
+- [x] 提取共用引擎并接通双入口观察（CLI 文本树与 Python 输出逐字一致，仅数值 `0.0` 改为 `0`）。
+- [x] 语义动作：`click`、次级动作、`setValue`、`typeText` 由两个入口共用；SDK 通过 `ActionDriver` 接入。
+- [ ] 语义方向滚动：未开放，CLI `scroll` 仍走全局翻页键，SDK 报告不支持。
+- [ ] 剩余 X11 动作（全局按键、拖拽、坐标点击、翻页）迁移与清理验收。
 - [ ] 删除 Python 执行路径并完成发行包验证。
+
+## 里程碑 1、2 实现记录
+
+- 引擎：[internal/desktop](../../../apps/OpenComputerUseLinux/internal/desktop/)。`Config.Env` 显式提供会话变量，SDK 传空（读进程环境），CLI 传 `linuxRuntimeEnvironment` 恢复结果；引擎不写进程环境。CLI 因 xgb 只读进程 `XAUTHORITY`，在自身进程中补写该变量，SDK 不这样做。
+- 窗口：ACTIVE → SHOWING → 首个窗口，SDK 由此改为与 CLI 相同的选择。树：深度优先，`runtimeId` 为相对应用的子索引路径。逐节点的独立 D-Bus 读取并发发出；gnome-shell 1200 节点约 1.4s，Python（libatspi 缓存）约 1.0s。
+- 动作：执行前重新读取名称/角色/窗口标题和父链；动作按索引与名称、描述同时匹配；派发后不随取消中止，结果未知为 `possible`，不重试、不改走指针。`setValue`：有 Value 接口时只接受有限数字并检查范围；文本要求 EDITABLE 且非 READ_ONLY；两者读回比对。`typeText`：只接受窗口内唯一聚焦的可编辑文本，先删选区再插入，读回确认。
+- CLI 过渡路由（派发前决定）：元素有语义动作且为单次左键时走引擎；坐标、非左键、多击、无语义动作的元素、`drag`、`press_key`、`scroll`，以及没有聚焦文本框的 `type_text`，由 Go 换算屏幕坐标、重新校验元素后交给 Python helper。helper 不再解析目标或采集快照，修饰键在 `finally` 中释放，未知修饰键在发送前拒绝。动作后由 Go 重新观察；观察失败时动作仍报告完成。`accessibility` 方法下 `click_count` 不为 1 改为明确拒绝（原先静默执行一次）。
+- SDK：能力表中 `click`、`performSecondaryAction`、`setValue`、`typeText` 可用，`scroll`、`drag`、`pressKey` 为 unsupported；坐标、多击和非左键点击无论 `allowGlobalInput` 都在派发前拒绝。
+- 已确认的接口细节：`Action.GetActions` 返回本地化名称（GTK 为 `Click`），需逐个 `GetName`；Chromium 实现 Action 却不在 `GetInterfaces` 中列出，因此总是读取 `NActions`；GTK 3 的 `EditableText.InsertText` 长度按 UTF-8 字节计，偏移按字符计；`READ_ONLY` 为第 43 位；窗口失去焦点时 GTK 不报告 FOCUSED，此时 `typeText` 拒绝。
+
+### 验证
+
+- `go vet ./...`、`go test -race ./...`（`apps/OpenComputerUseLinux`）；`python3 runtime_test.py`；`node --test protocol/native.test.mjs`。
+- 真实 GNOME Wayland 桌面（ARM64）：`OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1` 的引擎测试连续 4 次通过（点击、过期/禁用拒绝、复选框、次级动作、数值与越界、Unicode 文本、只读拒绝、选区替换与光标插入）；`protocol/desktop.test.mjs` 与新增 `protocol/linux-desktop.test.mjs` 对 GTK fixture 通过；CLI `call --calls` 的点击、数值、次级动作与只读拒绝通过；`list-apps` 与三个应用的 `snapshot` 与 Python 版本输出对比。
+- 未覆盖：X11 截图（本机为 Wayland）、无 Python 容器重跑、x64、CLI 全局输入路径（避免向真实窗口发送按键）、Qt/Chromium 的文本动作。
 
 ## 决策与参考
 
-- 2026-10-09：推荐基于现有 Go 后端迁移 Python 必要能力，并收敛 SDK 与 CLI/MCP；实现尚未启动。Wayland 和全局输入的进程布局由验证结果决定，不预先承诺纯 Go 覆盖全部能力。
+- 2026-10-09：推荐基于现有 Go 后端迁移 Python 必要能力，并收敛 SDK 与 CLI/MCP。同日实现里程碑 1、2；保留 CLI 全局输入的既有能力，未静默收缩。Wayland 和全局输入的进程布局由验证结果决定，不预先承诺纯 Go 覆盖全部能力。
 - [AT-SPI EditableText](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/iface.EditableText.html)：文本操作与字符偏移。
 - [AT-SPI Component.ScrollTo](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/method.Component.scroll_to.html)：滚入视野的语义边界。
 - [AT-SPI 键盘合成](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/func.generate_keyboard_event.html)：作用于当前 UI 上下文。

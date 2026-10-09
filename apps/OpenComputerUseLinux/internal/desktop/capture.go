@@ -1,34 +1,39 @@
-package main
+package desktop
 
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
 	"image/png"
-	"os"
-	"strings"
 	"time"
 
-	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 )
 
-func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Capture {
-	failed := func(message string) sdk.Capture {
-		return sdk.Capture{Status: "unavailable", Reason: &sdk.Reason{Code: "CAPTURE_FAILED", Message: message}}
+// Capture is a PNG of one window, or the reason none is available.
+type Capture struct {
+	PNG           []byte
+	Width, Height int
+	Reason        *Error
+}
+
+// Capture reads the X11 window that uniquely matches the application's PID and the
+// accessible window title. X11 authentication still follows the process XAUTHORITY.
+func (e *Engine) Capture(ctx context.Context, pid uint32, title string) Capture {
+	failed := func(message string) Capture {
+		return Capture{Reason: fail("CAPTURE_FAILED", "%s", message)}
 	}
-	if os.Getenv("WAYLAND_DISPLAY") != "" || strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland") {
-		return sdk.Capture{Status: "unavailable", Reason: &sdk.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland capture is not connected"}}
+	if e.Wayland() {
+		return Capture{Reason: fail("UNSUPPORTED_CAPABILITY", "Wayland capture is not connected")}
 	}
-	if os.Getenv("DISPLAY") == "" {
+	if e.Display() == "" {
 		return failed("No X11 display is configured")
 	}
-	connection, err := xgb.NewConn()
+	connection, err := xgb.NewConnDisplay(e.Display())
 	if err != nil {
 		return failed("Cannot connect to the X11 display")
 	}
@@ -80,7 +85,7 @@ func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Captu
 	if png.Encode(&output, bitmap) != nil {
 		return failed("PNG encoding failed")
 	}
-	return sdk.Capture{Status: "available", Image: &sdk.Image{MimeType: "image/png", Width: bitmap.Bounds().Dx(), Height: bitmap.Bounds().Dy(), DataBase64: base64.StdEncoding.EncodeToString(output.Bytes())}}
+	return Capture{PNG: output.Bytes(), Width: bitmap.Bounds().Dx(), Height: bitmap.Bounds().Dy()}
 }
 
 // Depth 24 carries plain windows and depth 32 carries the ARGB windows that
