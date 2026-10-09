@@ -157,8 +157,12 @@ func TestRealDesktopSemanticActions(t *testing.T) {
 	}
 	field := find(current, "Second field")
 	var selected bool
-	if err := engine.call(ctx, field.Ref, "Text.AddSelection", int32(1), int32(3)).Store(&selected); err != nil || !selected {
-		t.Fatalf("cannot select inside the focused field: %v", err)
+	// GTK may already select everything on focus-in; replace that selection if so.
+	if engine.call(ctx, field.Ref, "Text.SetSelection", int32(0), int32(1), int32(3)).Store(&selected) != nil || !selected {
+		_ = engine.call(ctx, field.Ref, "Text.AddSelection", int32(1), int32(3)).Store(&selected)
+	}
+	if !selected {
+		t.Fatal("cannot select inside the focused field")
 	}
 	if err := engine.TypeText(ctx, current.Window, "中🙂"); err != nil {
 		t.Fatal(err)

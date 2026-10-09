@@ -59,7 +59,7 @@ Scope: `apps/OpenComputerUseLinux`、协议测试与相关文档。
 ### Files Modified
 
 - [Linux 引擎](../../../apps/OpenComputerUseLinux/internal/desktop/)
-- [SDK 适配](../../../apps/OpenComputerUseLinux/sdk.go)、[CLI 适配](../../../apps/OpenComputerUseLinux/cli_engine.go)、[全局输入 helper](../../../apps/OpenComputerUseLinux/runtime.py)
+- [SDK 适配](../../../apps/OpenComputerUseLinux/sdk.go)、[CLI 适配](../../../apps/OpenComputerUseLinux/cli_engine.go)、全局输入 helper `runtime.py`（后续已删除）
 - [Linux 动作测试](../../../protocol/linux-desktop.test.mjs)、[原生协议测试](../../../protocol/native.test.mjs)
 - [执行计划](../../exec-plans/active/20261009-linux-shared-engine.md)、架构、SDK/协议 README 与 changeset
 
@@ -67,3 +67,40 @@ Scope: `apps/OpenComputerUseLinux`、协议测试与相关文档。
 
 - Go vet、race 单测、Python helper 单测、原生协议测试通过。
 - 真实 GNOME Wayland 桌面的引擎、SDK 与 CLI 测试通过，CLI 输出与 Python 版本对比一致；X11 截图、无 Python 容器、x64 与 CLI 全局输入路径未在本轮重跑。
+
+## [2026-10-09 16:15] | Task: 实现 Linux 全局输入迁移并删除 Python
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 实现下一步（里程碑 3，并在验证后完成里程碑 4 的代码部分）。
+
+### Changes Overview
+
+Scope: `apps/OpenComputerUseLinux`、协议测试、CI 与相关文档。
+
+- 在隔离 Xephyr 会话中验证全局输入方案：XTEST 可用；X server 不释放断开客户端按住的键；原 Python 修饰键与 CJK 打字路径有缺陷。
+- 新增引擎 XTEST 输入（按键、打字、指针点击、拖拽、翻页），键盘要求目标窗口持有焦点、指针要求落点属于目标窗口；缺失字符临时映射后恢复。
+- 新增 `input-guard` 子进程：按下前登记，owner 任意方式退出时只释放其仍按住的输入。
+- SDK 在 X11 且 `allowGlobalInput: true` 时开放这些动作，Wayland 报告 unsupported；CLI 全部改走引擎，删除 `runtime.py`、其测试与嵌入。
+- 新增 `testdata/x11-session.sh` 隔离会话，CI Linux job 在 Xvfb 中运行全局输入与 SDK 桌面测试。
+
+### Design Intent
+
+按计划先实验再定进程布局。实验证明 XTEST 按键在客户端死亡后会卡住，所以清理者必须独立于 owner；guard 只做清理，执行仍在进程内，避免为每个动作跨进程通信。焦点与遮挡检查让输入不会落到其他窗口，Wayland 下拒绝而不是假装送达。
+
+### Files Modified
+
+- [输入与 guard](../../../apps/OpenComputerUseLinux/internal/desktop/input.go)、[guard](../../../apps/OpenComputerUseLinux/internal/desktop/guard.go)、[键位](../../../apps/OpenComputerUseLinux/internal/desktop/keys.go)
+- [SDK 适配](../../../apps/OpenComputerUseLinux/sdk.go)、[CLI 适配](../../../apps/OpenComputerUseLinux/cli_engine.go)、[隔离会话脚本](../../../apps/OpenComputerUseLinux/testdata/x11-session.sh)
+- [CI](../../../.github/workflows/sdk-check.yml)、[执行计划](../../exec-plans/active/20261009-linux-shared-engine.md)、架构、SDK/协议 README 与 changeset
+
+### Validation
+
+- 隔离 X11 中引擎全局输入测试、SDK 两个桌面测试与 CLI 无 Python 运行通过；CI 步骤主体本地照跑通过。
+- 真实 Wayland 桌面只验证了拒绝路径与语义动作，未向其注入全局输入。x64、平台 tarball、带窗口管理器的 X11 与非 GTK 应用未验证。

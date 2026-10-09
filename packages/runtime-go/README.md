@@ -6,8 +6,8 @@ It supports initialization, capability/permission queries, app control sessions,
 `Desktop` owns opaque app/snapshot/element identities and combines `DesktopDriver`
 observation with snapshot-scoped actions. Windows implements `ActionDriver` through
 the existing PowerShell engine for all seven actions, including window-relative
-coordinate clicks. Linux implements `ActionDriver` with its shared AT-SPI engine for
-semantic actions only and refuses global-input actions before dispatch. Drivers keep
+coordinate clicks. Linux implements `ActionDriver` with its shared AT-SPI/X11 engine;
+its global-input actions require `allowGlobalInput` and X11. Drivers keep
 native references outside wire data. Permission requests remain unsupported.
 
 Each app control context owns its snapshots and cancellation state. Observation

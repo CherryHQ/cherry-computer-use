@@ -28,12 +28,10 @@ type snapshotOptions struct {
 	textLimit, maxTreeNodes, maxTreeDepth int
 }
 
-// service serves the CLI and MCP tools from the shared native engine. Only
-// global pointer and keyboard input still goes through the Python helper.
+// service serves the CLI and MCP tools from the shared native engine.
 type service struct {
 	engine    *desktop.Engine
 	snapshots map[string]*appSnapshot
-	legacy    func(linuxRequest) (*linuxResponse, error)
 }
 
 func newService() *service {
@@ -42,7 +40,7 @@ func newService() *service {
 	if os.Getenv("XAUTHORITY") == "" && env["XAUTHORITY"] != "" {
 		_ = os.Setenv("XAUTHORITY", env["XAUTHORITY"])
 	}
-	return &service{engine: desktop.New(desktop.Config{Env: env}), snapshots: map[string]*appSnapshot{}, legacy: runPython}
+	return &service{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard}), snapshots: map[string]*appSnapshot{}}
 }
 func (s *service) callTool(name string, args map[string]any) toolCallResult {
 	switch name {
@@ -351,37 +349,24 @@ func (s *service) act(app string, snapshot *appSnapshot, action func(context.Con
 	return updated.result()
 }
 
-// global sends one operation through the transitional Python input helper.
-func (s *service) global(request linuxRequest) func(context.Context) error {
-	return func(context.Context) error {
-		response, err := s.legacy(request)
-		if errors.Is(err, errGlobalInputUnavailable) {
-			return &desktop.Error{Code: "DEPENDENCY_MISSING", Message: err.Error(), Effect: "none"}
-		}
-		if err != nil {
-			return &desktop.Error{Code: "TARGET_UNAVAILABLE", Message: err.Error(), Effect: "possible"}
-		}
-		if !response.OK {
-			return &desktop.Error{Code: "TARGET_UNAVAILABLE", Message: response.Error, Effect: "possible"}
-		}
-		return nil
-	}
+func globalTarget(snapshot *appSnapshot) desktop.GlobalTarget {
+	return desktop.GlobalTarget{PID: snapshot.observation.App.PID, Title: snapshot.observation.Window.Title}
 }
 
-func screenPoint(snapshot *appSnapshot, record *elementRecord, x, y *float64) (*float64, *float64, error) {
+// screenPoint maps an element centre or window-relative x/y to the screen using
+// the accessible window bounds that the element frames are relative to.
+func screenPoint(snapshot *appSnapshot, record *elementRecord, x, y *float64) (desktop.Point, error) {
 	bounds := snapshot.WindowBounds
 	if bounds == nil {
-		return nil, nil, errors.New("coordinate action requires window bounds; the window reports none")
+		return desktop.Point{}, errors.New("coordinate action requires window bounds; the window reports none")
 	}
 	if record != nil {
 		if record.Frame == nil {
-			return nil, nil, fmt.Errorf("element %d has no frame for a pointer click", record.Index)
+			return desktop.Point{}, fmt.Errorf("element %d has no frame for a pointer click", record.Index)
 		}
-		px, py := bounds.X+record.Frame.X+record.Frame.Width/2, bounds.Y+record.Frame.Y+record.Frame.Height/2
-		return &px, &py, nil
+		return desktop.Point{X: bounds.X + record.Frame.X + record.Frame.Width/2, Y: bounds.Y + record.Frame.Y + record.Frame.Height/2}, nil
 	}
-	px, py := bounds.X+*x, bounds.Y+*y
-	return &px, &py, nil
+	return desktop.Point{X: bounds.X + *x, Y: bounds.Y + *y}, nil
 }
 
 func (s *service) click(app, elementIndex string, x, y *float64, clickCount int, mouseButton, clickMethod string) toolCallResult {
@@ -432,18 +417,24 @@ func (s *service) click(app, elementIndex string, x, y *float64, clickCount int,
 	if record != nil && hasSemantic && clickMethod != "global" && mouseButton == "left" && clickCount == 1 {
 		return s.act(app, snapshot, func(ctx context.Context) error { return s.engine.DoAction(ctx, window, node, semantic) })
 	}
-	px, py, err := screenPoint(snapshot, record, x, y)
+	button, ok := map[string]byte{"left": 1, "middle": 2, "right": 3}[mouseButton]
+	if !ok {
+		return textResult("Invalid mouse_button: "+mouseButton, true)
+	}
+	if clickCount < 1 || clickCount > 3 {
+		return textResult("click_count must be between 1 and 3", true)
+	}
+	point, err := screenPoint(snapshot, record, x, y)
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
-	request := linuxRequest{Tool: "click", X: px, Y: py, ClickCount: clickCount, MouseButton: mouseButton}
 	return s.act(app, snapshot, func(ctx context.Context) error {
 		if record != nil {
 			if _, err := s.engine.Revalidate(ctx, window, node); err != nil {
 				return err
 			}
 		}
-		return s.global(request)(ctx)
+		return s.engine.PointerClick(ctx, globalTarget(snapshot), point, button, clickCount)
 	})
 }
 
@@ -477,7 +468,7 @@ func (s *service) performSecondaryAction(app, elementIndex, action string) toolC
 	})
 }
 
-// scroll still sends page keys to the focused window; see the Linux engine plan.
+// scroll sends page keys to the target window, which must have keyboard focus.
 func (s *service) scroll(app, direction, elementIndex string, pages float64) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
@@ -500,12 +491,11 @@ func (s *service) scroll(app, direction, elementIndex string, pages float64) too
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
-	request := linuxRequest{Tool: "scroll", Direction: normalized, Pages: pages}
 	return s.act(app, snapshot, func(ctx context.Context) error {
 		if _, err := s.engine.Revalidate(ctx, snapshot.observation.Window, node); err != nil {
 			return err
 		}
-		return s.global(request)(ctx)
+		return s.engine.PageScroll(ctx, globalTarget(snapshot), normalized, pages)
 	})
 }
 
@@ -525,16 +515,18 @@ func (s *service) drag(app string, fromX, fromY, toX, toY *float64) toolCallResu
 	if failure != nil {
 		return *failure
 	}
-	startX, startY, err := screenPoint(snapshot, nil, fromX, fromY)
+	from, err := screenPoint(snapshot, nil, fromX, fromY)
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
-	endX, endY, _ := screenPoint(snapshot, nil, toX, toY)
-	return s.act(app, snapshot, s.global(linuxRequest{Tool: "drag", FromX: startX, FromY: startY, ToX: endX, ToY: endY}))
+	to, _ := screenPoint(snapshot, nil, toX, toY)
+	return s.act(app, snapshot, func(ctx context.Context) error {
+		return s.engine.Drag(ctx, globalTarget(snapshot), from, to)
+	})
 }
 
-// typeText edits the focused field natively; with no focused field it keeps the
-// established global keystroke path, decided before anything is sent.
+// typeText edits the focused field natively; with no focused editable field it
+// types keys into the target window, which must have keyboard focus.
 func (s *service) typeText(app, text string) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
@@ -550,7 +542,7 @@ func (s *service) typeText(app, text string) toolCallResult {
 		err := s.engine.TypeText(ctx, snapshot.observation.Window, text)
 		var native *desktop.Error
 		if errors.As(err, &native) && native.Code == desktop.ErrNoFocusedText {
-			return s.global(linuxRequest{Tool: "type_text", Text: text})(ctx)
+			return s.engine.TypeKeys(ctx, globalTarget(snapshot), text)
 		}
 		return err
 	})
@@ -567,7 +559,9 @@ func (s *service) pressKey(app, key string) toolCallResult {
 	if failure != nil {
 		return *failure
 	}
-	return s.act(app, snapshot, s.global(linuxRequest{Tool: "press_key", Key: key}))
+	return s.act(app, snapshot, func(ctx context.Context) error {
+		return s.engine.PressKey(ctx, globalTarget(snapshot), key)
+	})
 }
 
 func (s *service) setValue(app, elementIndex, value string) toolCallResult {

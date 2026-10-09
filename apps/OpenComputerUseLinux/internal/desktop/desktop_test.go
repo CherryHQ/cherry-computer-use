@@ -75,6 +75,9 @@ func TestExplicitEnvironmentDoesNotFallBackToProcessSession(t *testing.T) {
 	if !engine.Wayland() || engine.Display() != "" {
 		t.Fatal("engine must read the configured session, not the process environment")
 	}
+	if New(Config{Env: map[string]string{"WAYLAND_DISPLAY": "wayland-0", "XDG_SESSION_TYPE": "x11", "DISPLAY": ":1"}}).Wayland() {
+		t.Fatal("a declared X11 session must not become Wayland because a socket exists")
+	}
 	var native *Error
 	if err := engine.Connect(context.Background()); !errors.As(err, &native) || native.Code != "DEPENDENCY_MISSING" {
 		t.Fatalf("missing configured bus must be a dependency error: %v", err)

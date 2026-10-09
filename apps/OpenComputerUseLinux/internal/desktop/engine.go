@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -40,12 +41,16 @@ type Ref struct {
 // the engine never writes the process environment itself.
 type Config struct {
 	Env map[string]string
+	// InputGuard starts the guard process for global input on a display; nil
+	// leaves global input unavailable. See RunInputGuard.
+	InputGuard func(display string) *exec.Cmd
 }
 
 // Engine is private to one runtime: code is shared, connections and references are not.
 type Engine struct {
 	config Config
 	bus    *dbus.Conn
+	input  *input
 }
 
 func New(config Config) *Engine { return &Engine{config: config} }
@@ -112,6 +117,10 @@ func (e *Engine) accessibilityBusAddress(ctx context.Context) (string, error) {
 }
 
 func (e *Engine) Close() error {
+	if e.input != nil {
+		e.input.close()
+		e.input = nil
+	}
 	if e.bus == nil {
 		return nil
 	}
@@ -121,8 +130,12 @@ func (e *Engine) Close() error {
 }
 
 // Wayland reports a Wayland session, where X11 capture and input do not apply.
+// A declared session type wins over a Wayland socket that merely exists.
 func (e *Engine) Wayland() bool {
-	return e.env("WAYLAND_DISPLAY") != "" || strings.EqualFold(e.env("XDG_SESSION_TYPE"), "wayland")
+	if session := e.env("XDG_SESSION_TYPE"); session != "" {
+		return strings.EqualFold(session, "wayland")
+	}
+	return e.env("WAYLAND_DISPLAY") != ""
 }
 
 // Display is the X11 display used for capture, empty when none is configured.

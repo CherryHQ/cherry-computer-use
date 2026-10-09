@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
@@ -26,9 +23,6 @@ import (
 var version = "0.1.1"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
-
-//go:embed runtime.py
-var linuxRuntimeScript string
 
 const serverInstructions = "Computer Use tools let you interact with Linux desktop apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Linux actions use AT-SPI2 semantic actions and editable text APIs first. Coordinate mouse and key synthesis are best-effort fallbacks and are not a universal Wayland background input model."
 
@@ -140,24 +134,6 @@ func (s *appSnapshot) result() toolCallResult {
 	return result
 }
 
-// linuxRequest is one global input operation for the transitional Python helper.
-// Coordinates are already in screen space; the helper never resolves targets.
-type linuxRequest struct {
-	Tool        string   `json:"tool"`
-	X           *float64 `json:"x,omitempty"`
-	Y           *float64 `json:"y,omitempty"`
-	FromX       *float64 `json:"from_x,omitempty"`
-	FromY       *float64 `json:"from_y,omitempty"`
-	ToX         *float64 `json:"to_x,omitempty"`
-	ToY         *float64 `json:"to_y,omitempty"`
-	ClickCount  int      `json:"click_count,omitempty"`
-	MouseButton string   `json:"mouse_button,omitempty"`
-	Direction   string   `json:"direction,omitempty"`
-	Pages       float64  `json:"pages,omitempty"`
-	Text        string   `json:"text,omitempty"`
-	Key         string   `json:"key,omitempty"`
-}
-
 type textLimit struct {
 	max   bool
 	count int
@@ -170,68 +146,16 @@ func (limit textLimit) runtimeValue() any {
 	return limit.count
 }
 
-type linuxResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-}
-
-// errGlobalInputUnavailable means nothing was sent: the helper could not start.
-var errGlobalInputUnavailable = errors.New("Linux global input requires python3 with PyGObject AT-SPI")
-
-func runPython(request linuxRequest) (*linuxResponse, error) {
-	if runtime.GOOS != "linux" {
-		return nil, errGlobalInputUnavailable
-	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		return nil, errGlobalInputUnavailable
-	}
-
-	tempDir, err := os.MkdirTemp("", "open-computer-use-linux-*")
+// inputGuard starts this executable's guard, which releases held global input if
+// the runtime dies; see desktop.RunInputGuard.
+func inputGuard(display string) *exec.Cmd {
+	executable, err := os.Executable()
 	if err != nil {
-		return nil, err
+		executable = os.Args[0]
 	}
-	defer os.RemoveAll(tempDir)
-
-	scriptPath := filepath.Join(tempDir, "runtime.py")
-	operationPath := filepath.Join(tempDir, "operation.json")
-	if err := os.WriteFile(scriptPath, []byte(linuxRuntimeScript), 0o600); err != nil {
-		return nil, err
-	}
-	operationData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(operationPath, operationData, 0o600); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "python3", scriptPath, operationPath)
-	cmd.Env = linuxRuntimeEnvironment(os.Environ())
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, errors.New("Linux global input timed out after 30s")
-	}
-	if err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if text == "" {
-			text = strings.TrimSpace(string(output))
-		}
-		if text == "" {
-			text = err.Error()
-		}
-		return nil, fmt.Errorf("Linux global input failed: %s", text)
-	}
-
-	var response linuxResponse
-	if err := json.Unmarshal(output, &response); err != nil {
-		return nil, fmt.Errorf("Linux global input returned invalid JSON: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return &response, nil
+	command := exec.Command(executable, "input-guard", display)
+	command.Stderr = os.Stderr
+	return command
 }
 
 func linuxRuntimeEnvironment(base []string) []string {
@@ -1000,6 +924,13 @@ func runCLI(args []string, stdout io.Writer) error {
 		return nil
 	case "mcp":
 		return runMCP(os.Stdin, stdout)
+	case "input-guard":
+		// Internal: started by this runtime for global input; not a user command.
+		if len(args) != 2 {
+			return errors.New("input-guard is internal")
+		}
+		desktop.GuardMain(args[1])
+		return nil
 	case "serve":
 		sessionID, err := sdkruntime.ParseServeArgs(args[1:])
 		if err != nil {
@@ -1012,7 +943,7 @@ func runCLI(args []string, stdout io.Writer) error {
 			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(newLinuxDesktop()),
 		})
 	case "doctor":
-		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) and X11 engine runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) still uses python3 with PyGObject AT-SPI.")
+		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) and X11 engine runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) uses X11 XTEST, reaches only X11/XWayland windows, and requires the target window to have keyboard focus or lie under the pointer.")
 		return nil
 	case "list-apps":
 		result := newService().callTool("list_apps", map[string]any{})
@@ -1385,8 +1316,8 @@ Commands:
 Notes:
   The Linux runtime uses AT-SPI2 semantic actions first, then best-effort
   coordinate/key synthesis. Run it in the signed-in desktop session.
-  Observation and semantic actions are native; only global input uses
-  python3 with PyGObject AT-SPI.
+  Global pointer and keyboard input uses X11 XTEST and only reaches
+  X11/XWayland windows.
 `
 	}
 }

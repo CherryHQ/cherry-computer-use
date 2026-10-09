@@ -6,7 +6,7 @@
 
 - 三端 `serve --stdio --session-id` 保留私有生命周期，接入 `listApps → getAppState → act(click)`。Windows/Linux 复用 [Go session 与 Desktop](../../packages/runtime-go/README.md)，macOS 使用 [Swift desktop](../../packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SDKDesktop.swift)及 [私有 app agent](../../apps/OpenComputerUse/Sources/OpenComputerUse/MacOSSDKRuntime.swift)。控制读取、串行执行和响应写入分离。
 - 原生端持有应用进程身份和元素引用，只向 SDK 发会话私有 ID、树层级、动作、截断标记和 PNG。重新观察、尝试执行动作都会使目标的旧快照失效；执行前再校验原生身份、名称、角色及动作，拒绝跨会话和过期引用。
-- macOS 的 SDK desktop 是上游引擎（`ComputerUseService` + `AccessibilitySnapshot`）的适配层：观察用引擎的窗口选择、Chromium/Electron 辅助功能模式、树渲染与 CGWindow 截图，七种动作都调用引擎的 `perform*`，`tree.text` 返回引擎渲染的大纲（行号即元素 ID）。观察默认 `.readOnly`，`activation: allow` 才允许激活恢复；不设置全局指针环境变量，所以不会走全局 HID。Windows 已改为引擎适配层；Linux 的 SDK 与 CLI/MCP 共用 Go AT-SPI 引擎，支持语义点击、次级动作、setValue 与 typeText，需要全局输入的动作明确不支持（见 [Linux 共用引擎计划](../exec-plans/active/20261009-linux-shared-engine.md)）。macOS 已接通显式 `requestPermissions`；Windows/Linux 尚无对应系统授权流程。
+- macOS 的 SDK desktop 是上游引擎（`ComputerUseService` + `AccessibilitySnapshot`）的适配层：观察用引擎的窗口选择、Chromium/Electron 辅助功能模式、树渲染与 CGWindow 截图，七种动作都调用引擎的 `perform*`，`tree.text` 返回引擎渲染的大纲（行号即元素 ID）。观察默认 `.readOnly`，`activation: allow` 才允许激活恢复；不设置全局指针环境变量，所以不会走全局 HID。Windows 已改为引擎适配层；Linux 的 SDK 与 CLI/MCP 共用 Go AT-SPI/X11 引擎：语义动作默认可用；坐标/多击/非左键点击、拖拽、按键、翻页和无焦点文本框时的打字需要 `allowGlobalInput: true` 且仅限 X11，经 XTEST 发送并由任务私有 guard 在进程异常退出时释放（见 [Linux 共用引擎计划](../exec-plans/active/20261009-linux-shared-engine.md)）。macOS 已接通显式 `requestPermissions`；Windows/Linux 尚无对应系统授权流程。
 - 2026-10-08 引擎复用实测（打包 helper，飞书在后台）：观察拿到主窗口、615 个节点和截图，约 4 秒，与 CLI `snapshot` 相当；TextEdit 在后台完成 setValue、点击、按键与输入，前台应用不变。这轮观察和输入结果不代表新增后台滚动已经完成验收。
 - 滚动依次尝试 AX 翻页、`AXScrollToVisible`、定向滚轮；三条真实 AX 路径都要求目标方向的滚动条数值或内容坐标变化，不能仅凭 API 返回成功。揭示选取参考固定版本的 Cua Driver：真实离屏坐标按距离挑选，Chromium 的边缘细条按可见行间距挑选。调用方应传列表或滚动容器；指定有效容器后不因缺少候选改滚外层容器，遍历跳过嵌套的 AXScrollArea/AXWebArea。
 - 没有候选不等于已经到边：虚拟列表可能只暴露可见行。所有路径都无法确认位移时返回 `TARGET_UNAVAILABLE`（SDK 保留 `effect: possible`），要求先重新观察；MCP 同样返回错误。距离近似，滚动区域不暴露滚动条或稳定节点坐标时也可能无法确认。节点选择只检查目标区域；AXScrollToVisible 自身仍可能连带滚动外层区域，需真实嵌套场景验收。
@@ -134,7 +134,7 @@ flowchart TD
 | 旧 [macOS proxy](../../apps/OpenComputerUse/Sources/OpenComputerUse/MacOSAppAgentProxy.swift)逐条同步转发，连接既有 agent；LaunchServices 回调丢弃 app 对象 | 动作期间取消无法及时转发，proxy 退出也不能证明 agent 退出 | 已增加 SDK 独立启动路径，保留本次 app 实例身份；双向独立读写与所属实例退出确认 |
 | [Swift MCP server](../../packages/OpenComputerUseKit/Sources/OpenComputerUseKit/MCPServer.swift)同步执行；[service](../../packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift)返回 `ToolCallResult` | 协议、业务结果和展示文本耦合 | 提取结构化执行结果，SDK 与 CLI/MCP 分别适配；不解析 MCP 文本 |
 | Windows [Go bridge](../../apps/OpenComputerUseWindows/main.go)用后台 context 加固定超时，且合并 stdout/stderr | SDK 取消未进入请求 context，诊断可能污染 JSON | 请求 context 贯通，独立协议输出；增加 worker 的取消检查和退出确认 |
-| [PowerShell](../../apps/OpenComputerUseWindows/runtime.ps1)和 [Python](../../apps/OpenComputerUseLinux/runtime.py)在动作后直接采集快照 | 采集失败可能掩盖已经执行的动作 | 后端拆成执行动作、采集状态两个操作，由原生会话组合结果 |
+| [PowerShell](../../apps/OpenComputerUseWindows/runtime.ps1)和已删除的 Linux Python bridge 在动作后直接采集快照 | 采集失败可能掩盖已经执行的动作 | 后端拆成执行动作、采集状态两个操作，由原生会话组合结果 |
 | [Linux Go bridge](../../apps/OpenComputerUseLinux/main.go)每次调用重启 Python，使用后台 context | 不适合承载跨工具调用的 portal/采集会话 | 后端会话按任务存活；优先验证 Go 直接接入，若保留 Python 则采用任务私有 worker；owner 断开触发清理 |
 
 上表保留基线的迁移边界。macOS 已按此完成：引擎动作拆成执行与 MCP 包装两层，快照由调用方持有，SDK 与 MCP 共用同一引擎。首个切片曾让三端 SDK 直接读取平台 API，Windows/Linux 仍是这种并行实现，需按 macOS 方式改为调用各自引擎，不再扩展并行实现。

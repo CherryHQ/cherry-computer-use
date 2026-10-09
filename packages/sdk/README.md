@@ -7,8 +7,10 @@ macOS and Windows adapt their existing engines for all seven actions. Windows us
 UI Automation and window-directed messages, including coordinate clicks; it never
 falls back to global input. Linux supports discovery, observation and semantic
 element actions: left click, secondary actions, `setValue`, and `typeText` into the
-one focused editable field. Linux scroll, drag, key presses and pointer clicks need
-global input and are unsupported. Query capabilities and element actions before
+one focused editable field. On X11, pointer clicks, drag, key presses, page scrolling
+and typing without a focused field use global input and require
+`allowGlobalInput: true`; keys need the target window to have focus. Wayland reports
+them unsupported. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native

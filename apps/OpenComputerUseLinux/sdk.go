@@ -15,7 +15,20 @@ import (
 // linuxDesktop adapts the shared engine to SDK sessions; runtime-go owns identities and snapshots.
 type linuxDesktop struct{ engine *desktop.Engine }
 
-func newLinuxDesktop() *linuxDesktop { return &linuxDesktop{desktop.New(desktop.Config{})} }
+func newLinuxDesktop() *linuxDesktop {
+	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard})}
+}
+
+// globalInput reports whether X11 global input can be offered, and why not.
+func (d *linuxDesktop) globalInput() sdkruntime.Availability {
+	if d.engine.Wayland() {
+		return sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland global input is not connected"}}
+	}
+	if d.engine.Display() == "" {
+		return sdkruntime.Unavailable("DEPENDENCY_MISSING", "Global input needs an X11 display")
+	}
+	return sdkruntime.Availability{Status: "available"}
+}
 
 func sdkError(err error) error {
 	var native *desktop.Error
@@ -39,7 +52,7 @@ func (d *linuxDesktop) Capabilities(ctx context.Context) map[string]sdkruntime.A
 	} else if d.engine.Display() != "" {
 		capture = sdkruntime.Availability{Status: "available"}
 	}
-	globalInput := sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Linux global input is not connected to the SDK"}}
+	globalInput := d.globalInput()
 	return map[string]sdkruntime.Availability{
 		"accessibility": available, "screenshot": capture,
 		"click": available, "performSecondaryAction": available, "setValue": available, "typeText": available,
@@ -84,6 +97,7 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 	if native.DepthTruncated {
 		tree.Truncated = append(tree.Truncated, "depth")
 	}
+	pointer := d.globalInput().Status == "available"
 	for index, node := range native.Nodes {
 		element := sdkruntime.Element{ID: strconv.Itoa(index), Role: node.Role, Name: options.LimitText(node.Name, &tree), Native: node}
 		if node.Parent >= 0 {
@@ -92,7 +106,7 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 		if value := nodeValue(node); value != "" {
 			element.Value = options.LimitText(value, &tree)
 		}
-		if _, ok := desktop.ClickAction(node.Actions); ok {
+		if _, ok := desktop.ClickAction(node.Actions); ok || (pointer && node.Extents != nil) {
 			element.Actions = append(element.Actions, "click")
 		}
 		for _, action := range node.Actions {
@@ -143,24 +157,45 @@ func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, obse
 	return d.Act(ctx, target, observation, &element, sdkruntime.Action{Type: "click", Button: "left", Count: 1})
 }
 
-// Act runs semantic actions only. Variants that need the pointer or keyboard are
-// refused before any side effect, whatever allowGlobalInput says.
+// Act prefers semantic actions. Pointer and keyboard variants need
+// allowGlobalInput and X11, and are checked against the observed window before
+// any input is sent.
 func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
 	native := observation.Native.(desktop.Observation)
 	var node desktop.Node
 	if element != nil {
 		node = element.Native.(desktop.Node)
 	}
+	target := desktop.GlobalTarget{PID: native.App.PID, Title: native.Window.Title}
 	switch action.Type {
 	case "click":
-		if element == nil || action.Button != "left" || action.Count != 1 {
-			return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Linux supports one semantic left click on an element; pointer clicks need global input, which is not connected")
+		click, semantic := desktop.ClickAction(node.Actions)
+		if element != nil && semantic && action.Button == "left" && action.Count == 1 {
+			return sdkError(d.engine.DoAction(ctx, native.Window, node, click))
 		}
-		click, ok := desktop.ClickAction(node.Actions)
-		if !ok {
-			return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Element has no semantic click action")
+		if err := d.requireGlobalInput(action); err != nil {
+			return err
 		}
-		return sdkError(d.engine.DoAction(ctx, native.Window, node, click))
+		button := map[string]byte{"left": 1, "middle": 2, "right": 3}[action.Button]
+		if element == nil {
+			point, err := d.windowPoint(ctx, target, sdkruntime.Point{X: *action.X, Y: *action.Y})
+			if err != nil {
+				return err
+			}
+			return sdkError(d.engine.PointerClick(ctx, target, point, button, action.Count))
+		}
+		if node.Extents == nil {
+			return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Element has no bounds for a pointer click")
+		}
+		current, err := d.engine.Revalidate(ctx, native.Window, node)
+		if err != nil {
+			return sdkError(err)
+		}
+		if current.Extents == nil {
+			return sdkruntime.Error("TARGET_UNAVAILABLE", "Element no longer has bounds")
+		}
+		center := desktop.Point{X: current.Extents.X + current.Extents.Width/2, Y: current.Extents.Y + current.Extents.Height/2}
+		return sdkError(d.engine.PointerClick(ctx, target, center, button, action.Count))
 	case "performSecondaryAction":
 		for _, candidate := range node.Actions {
 			if strconv.Itoa(int(candidate.Index)) == action.ActionID {
@@ -173,11 +208,62 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 	case "typeText":
 		err := d.engine.TypeText(ctx, native.Window, action.Text)
 		var engineError *desktop.Error
-		if errors.As(err, &engineError) && engineError.Code == desktop.ErrNoFocusedText {
-			return sdkruntime.Error("TARGET_UNAVAILABLE", engineError.Message+"; typing without one needs global input, which is not connected")
+		if !errors.As(err, &engineError) || engineError.Code != desktop.ErrNoFocusedText {
+			return sdkError(err)
 		}
-		return sdkError(err)
+		if err := d.requireGlobalInput(action); err != nil {
+			return sdkruntime.Error("TARGET_UNAVAILABLE", engineError.Message+"; typing without one needs global input: "+err.Error())
+		}
+		return sdkError(d.engine.TypeKeys(ctx, target, action.Text))
+	case "pressKey":
+		if err := d.requireGlobalInput(action); err != nil {
+			return err
+		}
+		return sdkError(d.engine.PressKey(ctx, target, action.Key))
+	case "scroll":
+		if err := d.requireGlobalInput(action); err != nil {
+			return err
+		}
+		return sdkError(d.engine.PageScroll(ctx, target, action.Direction, action.Pages))
+	case "drag":
+		if err := d.requireGlobalInput(action); err != nil {
+			return err
+		}
+		from, err := d.windowPoint(ctx, target, *action.From)
+		if err != nil {
+			return err
+		}
+		to, err := d.windowPoint(ctx, target, *action.To)
+		if err != nil {
+			return err
+		}
+		return sdkError(d.engine.Drag(ctx, target, from, to))
 	default:
-		return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Linux "+action.Type+" needs global input, which is not connected to the SDK")
+		return sdkruntime.Error("UNSUPPORTED_CAPABILITY", "Unknown action")
 	}
+}
+
+// requireGlobalInput refuses before dispatch unless the caller allowed global
+// input and the session can deliver it.
+func (d *linuxDesktop) requireGlobalInput(action sdkruntime.Action) error {
+	if availability := d.globalInput(); availability.Status != "available" {
+		return sdkruntime.Error(availability.Reason.Code, availability.Reason.Message)
+	}
+	if !action.AllowGlobalInput {
+		return sdkruntime.Error("PERMISSION_REQUIRED", "This Linux action moves the shared pointer or keyboard; it needs allowGlobalInput: true")
+	}
+	return nil
+}
+
+// windowPoint maps screenshot coordinates, relative to the observed X window, to
+// the screen and refuses points outside that window.
+func (d *linuxDesktop) windowPoint(ctx context.Context, target desktop.GlobalTarget, point sdkruntime.Point) (desktop.Point, error) {
+	window, err := d.engine.WindowRect(ctx, target)
+	if err != nil {
+		return desktop.Point{}, sdkError(err)
+	}
+	if point.X < 0 || point.Y < 0 || point.X >= window.Width || point.Y >= window.Height {
+		return desktop.Point{}, sdkruntime.Error("INVALID_ARGUMENT", "Point is outside the observed window")
+	}
+	return desktop.Point{X: window.X + point.X, Y: window.Y + point.Y}, nil
 }

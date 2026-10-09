@@ -93,7 +93,9 @@ If desktop access is missing, ask the user to run the command from the logged-in
 
 ## Linux Accessible Interface Errors
 
-If a Linux release reports that `Accessible` has no `is_text` or `is_editable_text` attribute, upgrade. Current releases read the tree and run semantic actions natively over D-Bus; `python3` with PyGObject AT-SPI is only needed for global pointer and keyboard input (coordinate clicks, `drag`, `press_key`, `scroll`, and `type_text` when no editable field has focus).
+If a Linux release reports that `Accessible` has no `is_text` or `is_editable_text` attribute, upgrade. Current releases need no Python: they read the tree and run actions natively over D-Bus and X11.
+
+Coordinate clicks, `drag`, `press_key`, `scroll`, and `type_text` without a focused editable field send X11 input. Keys are refused unless the target window has keyboard focus, and clicks are refused when another window covers the point; bring the target forward first. Under Wayland they only reach XWayland windows; a native Wayland window reports that it cannot be matched to an X11 window.
 
 `type_text` writes into the one focused editable field of the target window. If two fields report focus it refuses; focus the intended field first.
 

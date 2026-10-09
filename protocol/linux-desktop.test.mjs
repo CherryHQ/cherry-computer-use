@@ -56,14 +56,35 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   await state(elements => elements.some(element => element.name === 'Second field' && element.value === '追加🙂'))
   assert.equal(named('First field').value, '中文 😀')
 
-  for (const action of [
-    { type: 'pressKey', key: 'Return', allowGlobalInput: true },
+  const wayland = Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland'
+  const globalActions = [
+    { type: 'pressKey', key: 'Return' },
     { type: 'scroll', direction: 'down', pages: 1 },
     { type: 'drag', from: { x: 20, y: 20 }, to: { x: 60, y: 20 } },
     { type: 'click', x: 20, y: 20 },
-  ]) {
+  ]
+  for (const action of globalActions) {
     await state(() => true)
-    await assert.rejects(client.act({ appSessionId: session.id, snapshotId: snapshot.id, allowGlobalInput: false, ...action }), refused('UNSUPPORTED_CAPABILITY'))
+    await assert.rejects(act(action), refused(wayland ? 'UNSUPPORTED_CAPABILITY' : 'PERMISSION_REQUIRED'))
   }
-  await state(elements => elements.some(element => element.name === `Count: ${count + 1}`))
+  if (wayland) {
+    for (const action of globalActions) {
+      await state(() => true)
+      await assert.rejects(act({ ...action, allowGlobalInput: true }), refused('UNSUPPORTED_CAPABILITY'))
+    }
+    return
+  }
+  // X11 with explicit permission: keys reach the focused fixture field, a double
+  // pointer click presses the counter twice, and points outside the window are refused.
+  const global = action => client.act({ appSessionId: session.id, snapshotId: snapshot.id, ...action, allowGlobalInput: true })
+  await state(() => true)
+  await global({ type: 'pressKey', key: 'ctrl+a' })
+  await state(() => true)
+  await global({ type: 'pressKey', key: 'X' })
+  await state(elements => elements.some(element => element.name === 'Second field' && element.value === 'X'))
+  await global({ type: 'click', elementId: named(`Count: ${count + 1}`).id, count: 2 })
+  await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))
+  await assert.rejects(global({ type: 'click', x: 5000, y: 5000 }), refused('INVALID_ARGUMENT'))
+  await state(() => true)
+  assert.equal((await global({ type: 'scroll', direction: 'down', pages: 1 })).status, 'completed')
 })

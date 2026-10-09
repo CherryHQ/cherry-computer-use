@@ -257,17 +257,18 @@ func TestCLIHelpMentionsLinuxRuntime(t *testing.T) {
 	}
 }
 
-func TestLinuxRuntimeDocumentsATSPIAndFallbackBoundary(t *testing.T) {
-	if !strings.Contains(linuxRuntimeScript, "generate_mouse_event") {
-		t.Fatal("Linux global input should stay explicit and visible in the helper")
-	}
-	for _, removed := range []string{"build_snapshot", "set_text_contents", "do_action"} {
-		if strings.Contains(linuxRuntimeScript, removed) {
-			t.Fatalf("Python helper must not observe or run semantic actions; found %s", removed)
-		}
-	}
+func TestLinuxRuntimeDocumentsFallbackBoundary(t *testing.T) {
 	if !strings.Contains(serverInstructions, "not a universal Wayland background input model") {
 		t.Fatal("MCP instructions must document the Linux background-input boundary")
+	}
+}
+
+func TestInputGuardSubcommandIsInternal(t *testing.T) {
+	if err := runCLI([]string{"input-guard"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("input-guard must require its display argument")
+	}
+	if command := inputGuard(":5"); len(command.Args) != 3 || command.Args[1] != "input-guard" || command.Args[2] != ":5" {
+		t.Fatalf("guard command = %v", command.Args)
 	}
 }
 
@@ -319,10 +320,6 @@ func TestRenderSnapshotKeepsTreeContract(t *testing.T) {
 
 func TestCLIRefusesAmbiguousOrUnsupportedSemanticActionsBeforeDispatch(t *testing.T) {
 	svc := newService()
-	svc.legacy = func(linuxRequest) (*linuxResponse, error) {
-		t.Fatal("refused actions must not reach global input")
-		return nil, nil
-	}
 	snapshot := renderSnapshot(desktop.Observation{
 		App:    desktop.App{Name: "fixture", PID: 7},
 		Window: desktop.Window{Title: "Fixture"},
@@ -342,6 +339,7 @@ func TestCLIRefusesAmbiguousOrUnsupportedSemanticActionsBeforeDispatch(t *testin
 		"right accessibility click":    {svc.click("fixture", "1", nil, nil, 1, "right", "accessibility"), "only supports mouse_button 'left'"},
 		"no semantic click":            {svc.click("fixture", "2", nil, nil, 1, "left", "accessibility"), "could not find a semantic click action"},
 		"pointer click without bounds": {svc.click("fixture", "2", nil, nil, 1, "left", "auto"), "requires window bounds"},
+		"unknown mouse button":         {svc.click("fixture", "1", nil, nil, 1, "back", "auto"), "Invalid mouse_button"},
 		"ambiguous secondary action":   {svc.performSecondaryAction("fixture", "1", "click"), "ambiguous"},
 		"unknown secondary action":     {svc.performSecondaryAction("fixture", "1", "zoom"), "not a valid secondary action"},
 		"unknown element":              {svc.setValue("fixture", "9", "x"), "unknown element_index"},

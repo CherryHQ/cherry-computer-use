@@ -9,41 +9,74 @@ import (
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
 )
 
-func TestSDKRefusesGlobalInputVariantsBeforeDispatch(t *testing.T) {
-	driver := newLinuxDesktop()
-	observation := sdk.Observation{Native: desktop.Observation{}}
-	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}}}
+func testDesktop(env map[string]string) *linuxDesktop {
+	return &linuxDesktop{desktop.New(desktop.Config{Env: env, InputGuard: inputGuard})}
+}
+
+func globalActions() map[string]struct {
+	action  sdk.Action
+	element bool
+} {
 	x, y := 10.0, 20.0
-	for name, action := range map[string]sdk.Action{
-		"coordinate click": {Type: "click", Button: "left", Count: 1, X: &x, Y: &y, AllowGlobalInput: true},
-		"double click":     {Type: "click", Button: "left", Count: 2, AllowGlobalInput: true},
-		"right click":      {Type: "click", Button: "right", Count: 1, AllowGlobalInput: true},
-		"drag":             {Type: "drag", AllowGlobalInput: true},
-		"press key":        {Type: "pressKey", Key: "Return", AllowGlobalInput: true},
-		"scroll":           {Type: "scroll", Direction: "down", Pages: 1, AllowGlobalInput: true},
-	} {
+	return map[string]struct {
+		action  sdk.Action
+		element bool
+	}{
+		"coordinate click": {sdk.Action{Type: "click", Button: "left", Count: 1, X: &x, Y: &y}, false},
+		"double click":     {sdk.Action{Type: "click", Button: "left", Count: 2}, true},
+		"right click":      {sdk.Action{Type: "click", Button: "right", Count: 1}, true},
+		"drag":             {sdk.Action{Type: "drag", From: &sdk.Point{X: 1, Y: 1}, To: &sdk.Point{X: 2, Y: 2}}, false},
+		"press key":        {sdk.Action{Type: "pressKey", Key: "Return"}, false},
+		"scroll":           {sdk.Action{Type: "scroll", Direction: "down", Pages: 1}, false},
+	}
+}
+
+func TestSDKGlobalInputNeedsExplicitPermissionOnX11(t *testing.T) {
+	driver := testDesktop(map[string]string{"DISPLAY": ":99"})
+	observation := sdk.Observation{Native: desktop.Observation{}}
+	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}, Extents: &desktop.Rect{Width: 10, Height: 10}}}
+	for name, testCase := range globalActions() {
 		element := clickable
-		if action.X != nil || action.Type != "click" {
+		if !testCase.element {
 			element = nil
 		}
-		err := driver.Act(context.Background(), sdk.Target{}, observation, element, action)
+		err := driver.Act(context.Background(), sdk.Target{}, observation, element, testCase.action)
 		var domain *sdk.DomainError
-		if !errors.As(err, &domain) || domain.Code != "UNSUPPORTED_CAPABILITY" || domain.Effect != "none" {
-			t.Fatalf("%s must be refused without side effects even when global input is allowed: %v", name, err)
+		if !errors.As(err, &domain) || domain.Code != "PERMISSION_REQUIRED" || domain.Effect != "none" {
+			t.Fatalf("%s without allowGlobalInput must be refused without side effects: %v", name, err)
 		}
 	}
 }
 
-func TestSDKCapabilitiesSeparateSemanticAndGlobalActions(t *testing.T) {
-	capabilities := newLinuxDesktop().Capabilities(context.Background())
-	for _, name := range []string{"scroll", "drag", "pressKey"} {
-		if capabilities[name].Status != "unsupported" {
-			t.Fatalf("%s needs global input and must be unsupported: %+v", name, capabilities[name])
+func TestSDKRefusesGlobalInputOnWayland(t *testing.T) {
+	driver := testDesktop(map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"})
+	observation := sdk.Observation{Native: desktop.Observation{}}
+	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}}}
+	for name, testCase := range globalActions() {
+		element := clickable
+		if !testCase.element {
+			element = nil
+		}
+		testCase.action.AllowGlobalInput = true
+		err := driver.Act(context.Background(), sdk.Target{}, observation, element, testCase.action)
+		var domain *sdk.DomainError
+		if !errors.As(err, &domain) || domain.Code != "UNSUPPORTED_CAPABILITY" || domain.Effect != "none" {
+			t.Fatalf("%s must not be translated into XWayland input: %v", name, err)
 		}
 	}
-	for _, name := range []string{"accessibility", "click", "performSecondaryAction", "setValue", "typeText"} {
-		if _, ok := capabilities[name]; !ok {
-			t.Fatalf("missing capability %s", name)
+}
+
+func TestSDKCapabilitiesFollowTheDisplayServer(t *testing.T) {
+	for env, want := range map[string]string{"": "unavailable", ":99": "available", "wayland": "unsupported"} {
+		vars := map[string]string{"DISPLAY": env}
+		if env == "wayland" {
+			vars = map[string]string{"DISPLAY": ":0", "XDG_SESSION_TYPE": "wayland"}
+		}
+		capabilities := testDesktop(vars).Capabilities(context.Background())
+		for _, name := range []string{"scroll", "drag", "pressKey"} {
+			if capabilities[name].Status != want {
+				t.Fatalf("%s with %q = %+v, want %s", name, env, capabilities[name], want)
+			}
 		}
 	}
 }
