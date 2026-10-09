@@ -2,7 +2,16 @@
 
 TypeScript client for the Cherry Computer Use native runtime, for Node 24+ and Electron's main process.
 
-**Status: native app control sessions and the first desktop slice are implemented.** All three runtimes expose private sessions, application discovery, structured observation and one semantic left click on an element. Real SDK desktop tests pass on Windows 11 ARM64 and Linux X11; macOS lifecycle tests pass, while desktop validation awaits Accessibility and Screen Recording grants. Coordinate/multiple/right clicks, the other six actions and Wayland capture remain unsupported. macOS explicit permission requests are implemented. The original SDK 0.1.0 was published without native packages; the native-distribution patch adds six automatically selected runtime packages, and and Cherry development integration now covers permission queries and requests; packaged Electron delivery remains pending.
+**Status: private native app control sessions are implemented on all three platforms.**
+macOS and Windows adapt their existing engines for all seven actions. Windows uses
+UI Automation and window-directed messages, including coordinate clicks; it never
+falls back to global input. Linux currently supports discovery, observation and
+one semantic left element click. Query capabilities and element actions before
+acting. Windows message delivery does not guarantee that every application accepts
+background input; multi-window selection and GPU window capture remain limited.
+macOS supports explicit permission requests. SDK 0.1.1 includes matching native
+packages; the Windows engine adapter changes require a subsequent SDK/native release.
+
 
 ## Development
 

@@ -125,6 +125,20 @@ jobs:
             $code = $LASTEXITCODE
           } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
           exit $code
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'CherrySDKActions.exe'
+          & ./protocol/fixtures/windows-actions.ps1 -OutputPath $fixture
+          $process = Start-Process $fixture -PassThru
+          try {
+            $env:COMPUTER_USE_RUNTIME_PATH = Join-Path $PWD 'dist/native/open-computer-use.exe'
+            $env:COMPUTER_USE_WINDOWS_ACTION_FIXTURE = 'CherrySDKActions'
+            node --test protocol/windows-desktop.test.mjs
+            $code = $LASTEXITCODE
+          } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+          exit $code
       - if: runner.os == 'Linux'
         run: |
           ./scripts/build-open-computer-use-linux.sh --arch amd64

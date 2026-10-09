@@ -7,7 +7,7 @@
 ## 当前目录结构
 
 - `packages/sdk` / `protocol`
-  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期及首个结构化桌面切片（应用发现、观察、单次元素语义点击）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；其余动作、Agent 工具接入和 Electron 打包验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
+  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 保留单次元素语义点击。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux 其余动作与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
   协议 v2 已实现任务内每应用控制上下文、状态查询与原生停止；观察/动作必须绑定应用会话。Cherry 控制归属、用户停止状态、Tray 与软件光标尚未接入；资源归属及验收顺序见 [runtime 设计](design-docs/computer-use-runtime.md)。
 - `experiments/LinuxNativeProbe/`
   Go 直接接入 AT-SPI D-Bus/X11 的隔离原型，已在无 Python 的 Linux 容器内完成 GTK 计数按钮操作与窗口截图；独立 probe 保留实验边界，同一容器另运行已接入的 Linux SDK 桌面测试；不证明 Wayland 支持。复现步骤见 [实验说明](../experiments/LinuxNativeProbe/README.md)。
@@ -19,6 +19,7 @@
   端到端 smoke runner，会拉起 fixture 和 MCP server，并通过 JSON-RPC 真实调用 9 个 tools；同时也支持单独的 visual cursor idle smoke，用跨进程 observation file 断言等待下一次 move 时是 anchored tip + tiny rotate wobble，而不是横向漂移。
 - `apps/OpenComputerUseWindows`
   实验性 Windows runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 PowerShell UI Automation bridge，构建产物是 `open-computer-use.exe`，并随已有 npm 包的 `dist/windows/<arch>/` bundled artifacts 分发。
+  SDK 的 `sdk.ps1` 复用 `runtime.ps1` 的树记录和 `Invoke-Operation` 动作分发，仅保留会话目标校验、窗口截图和错误协议；不再维护只支持点击的平行实现。共享 Go 层通过可选 `ActionDriver` 接入七种动作，Linux 保持原有能力。SDK 输入固定 UTF-8，解析失败返回无副作用错误；未知执行结果仍禁止后续桌面操作。
 - `apps/OpenComputerUseLinux`
   实验性 Linux runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 Python AT-SPI bridge，构建产物是 `open-computer-use`，并随已有 npm 包的 `dist/linux/<arch>/` bundled artifacts 分发。
 - `packages/OpenComputerUseKit`

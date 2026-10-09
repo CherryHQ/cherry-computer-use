@@ -119,7 +119,7 @@ test('public SDK starts two isolated native sessions and closes them independent
   await assert.rejects(first.stopAppSession({ appSessionId: 'foreign' }), error => error.code === 'APP_SESSION_NOT_FOUND')
   assert.deepEqual(await first.listAppSessions(), [])
   assert.equal(capabilities.capabilities.length, 9)
-  const engineBacked = process.platform === 'darwin'
+  const engineBacked = ['darwin', 'win32'].includes(process.platform)
   assert.ok(capabilities.capabilities.every(item => engineBacked
     ? item.availability.status !== 'unsupported'
     : ['accessibility', 'screenshot', 'click'].includes(item.name) || item.availability.status === 'unsupported'))

@@ -144,6 +144,13 @@ function Get-ScreenPoint($localFrame, $windowBounds) {
     }
 }
 
+function Assert-OperationActive {
+    if ($null -ne $script:OperationCancelled -and (& $script:OperationCancelled)) {
+        $script:sdkCode = 'CANCELLED'
+        throw 'Action cancelled during execution'
+    }
+}
+
 function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
@@ -166,10 +173,12 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
 
     $repeat = [math]::Max(1, $count)
     for ($i = 0; $i -lt $repeat; $i++) {
+        Assert-OperationActive
         [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
-        [void][OCUWin32]::PostMessage($hwnd, $down, [IntPtr]$downFlag, $lParam)
-        Start-Sleep -Milliseconds 35
-        [void][OCUWin32]::PostMessage($hwnd, $up, [IntPtr]::Zero, $lParam)
+        try {
+            [void][OCUWin32]::PostMessage($hwnd, $down, [IntPtr]$downFlag, $lParam)
+            Start-Sleep -Milliseconds 35
+        } finally { [void][OCUWin32]::PostMessage($hwnd, $up, [IntPtr]::Zero, $lParam) }
         Start-Sleep -Milliseconds 50
     }
 }
@@ -187,14 +196,19 @@ function Send-Drag([IntPtr]$hwnd, [int]$fromX, [int]$fromY, [int]$toX, [int]$toY
     $steps = 12
     $startParam = ConvertTo-LParam $start.X $start.Y
     [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $startParam)
-    [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONDOWN, [IntPtr]1, $startParam)
-    for ($i = 1; $i -le $steps; $i++) {
-        $x = [int][math]::Round($start.X + (($end.X - $start.X) * $i / $steps))
-        $y = [int][math]::Round($start.Y + (($end.Y - $start.Y) * $i / $steps))
-        [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]1, (ConvertTo-LParam $x $y))
-        Start-Sleep -Milliseconds 20
-    }
-    [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONUP, [IntPtr]::Zero, (ConvertTo-LParam $end.X $end.Y))
+    Assert-OperationActive
+    $lastParam = $startParam
+    try {
+        [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONDOWN, [IntPtr]1, $startParam)
+        for ($i = 1; $i -le $steps; $i++) {
+            Assert-OperationActive
+            $x = [int][math]::Round($start.X + (($end.X - $start.X) * $i / $steps))
+            $y = [int][math]::Round($start.Y + (($end.Y - $start.Y) * $i / $steps))
+            $lastParam = ConvertTo-LParam $x $y
+            [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]1, $lastParam)
+            Start-Sleep -Milliseconds 20
+        }
+    } finally { [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONUP, [IntPtr]::Zero, $lastParam) }
 }
 
 function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direction, [double]$pages) {
@@ -216,6 +230,7 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
 
 function Send-Text([IntPtr]$hwnd, [string]$text) {
     foreach ($char in $text.ToCharArray()) {
+        Assert-OperationActive
         [void][OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 8
     }
@@ -286,16 +301,20 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
             "cmd" { $modifiers += 0x5B }
         }
     }
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
-    }
     $vk = Get-VirtualKey $main
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 25
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
-    [array]::Reverse($modifiers)
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+    Assert-OperationActive
+    try {
+        foreach ($modifier in $modifiers) {
+            [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
+        }
+        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 25
+    } finally {
+        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
+        [array]::Reverse($modifiers)
+        foreach ($modifier in $modifiers) {
+            [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+        }
     }
 }
 
@@ -486,6 +505,7 @@ function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $s
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
+        identityName = Get-ElementString $element "Name"
         name = Limit-Text (Get-ElementString $element "Name") $TextLimit
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
@@ -515,10 +535,9 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
     $effectiveMaxTreeNodes = if ($MaxTreeNodes -gt 0) { $MaxTreeNodes } else { $script:AccessibilityTreeMaxNodeCount }
     $effectiveMaxTreeDepth = if ($MaxTreeDepth -gt 0) { $MaxTreeDepth } else { $script:AccessibilityTreeMaxDepth }
 
-    function Visit($node, [int]$depth) {
-        if ($script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth) {
-            return
-        }
+    function Visit($node, [int]$depth, [int]$parentIndex) {
+        if ($script:nextIndex -ge $script:MaxTreeNodes) { [void]$script:truncated.Add('nodes'); return }
+        if ($depth -gt $script:MaxTreeDepth) { [void]$script:truncated.Add('depth'); return }
         $runtime = ""
         try { $runtime = (@($node.GetRuntimeId()) -join ".") } catch { $runtime = [guid]::NewGuid().ToString() }
         if (-not $script:visited.Add($runtime)) {
@@ -528,6 +547,10 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
         $index = $script:nextIndex
         $script:nextIndex++
         $record = Get-ElementRecord $node $index $script:windowBounds $TextLimit
+        $record | Add-Member -NotePropertyName parentIndex -NotePropertyValue $parentIndex
+        if ($null -ne $TextLimit -and ($record.identityName.Length -gt $TextLimit -or (Get-ElementValue $node $null).Length -gt $TextLimit)) {
+            [void]$script:truncated.Add('text')
+        }
         $script:records.Add($record)
 
         $role = $record.localizedControlType
@@ -553,7 +576,7 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
         try {
             $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
             for ($i = 0; $i -lt $children.Count; $i++) {
-                Visit $children.Item($i) ($depth + 1)
+                Visit $children.Item($i) ($depth + 1) $index
             }
         } catch {
         }
@@ -566,9 +589,11 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
     $script:windowBounds = $windowBounds
     $script:MaxTreeNodes = $effectiveMaxTreeNodes
     $script:MaxTreeDepth = $effectiveMaxTreeDepth
-    Visit $element 0
+    $script:truncated = New-Object System.Collections.Generic.HashSet[string]
+    Visit $element 0 -1
 
     [pscustomobject]@{
+        truncated = @($script:truncated)
         records = $records.ToArray()
         lines = $lines.ToArray()
     }
@@ -789,6 +814,7 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
     elseif ($direction -eq "right") { $horizontal = [Windows.Automation.ScrollAmount]::LargeIncrement }
     $repeat = [math]::Max(1, [int][math]::Ceiling($pages))
     for ($i = 0; $i -lt $repeat; $i++) {
+        Assert-OperationActive
         $scroll.Scroll($horizontal, $vertical)
         Start-Sleep -Milliseconds 40
     }
@@ -881,7 +907,7 @@ function Find-TextEntryWindowHandle($process, $preferredElement) {
     return [IntPtr]::Zero
 }
 
-function Invoke-TypeText($process, [string]$text) {
+function Invoke-TypeText($process, [string]$text, [bool]$AllowFocusFallback = $true) {
     $element = Find-TextEntryElement $process
     $targetHwnd = Find-TextEntryWindowHandle $process $element
     if ($targetHwnd -ne [IntPtr]::Zero -and (Send-TextToEditHandle $targetHwnd $text $element)) {
@@ -891,7 +917,7 @@ function Invoke-TypeText($process, [string]$text) {
     if ($null -ne $element) {
         $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
         if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            if (-not (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK")) {
+            if (-not $AllowFocusFallback -or -not (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK")) {
                 throw "UIA ValuePattern text fallback is disabled by default because it may bring the target app to the foreground; set OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1 to enable it."
             }
             $current = ""
@@ -901,6 +927,96 @@ function Invoke-TypeText($process, [string]$text) {
         }
     }
     return $false
+}
+
+function Invoke-Operation($process, $operation, $element) {
+    $hwnd = [IntPtr]$process.MainWindowHandle
+    $windowBounds = $operation.windowBounds
+    switch ($operation.tool) {
+        "click" {
+            $clickMethod = [string]$operation.click_method
+            if ([string]::IsNullOrWhiteSpace($clickMethod)) { $clickMethod = "auto" }
+
+            if ($clickMethod -eq "accessibility") {
+                if ($null -eq $element) { throw "click_method 'accessibility' requires element_index" }
+                if ($operation.mouse_button -eq "right" -or $operation.mouse_button -eq "middle") {
+                    throw "click_method 'accessibility' does not support mouse_button '$($operation.mouse_button)'"
+                }
+                if (-not (Invoke-PreferredClick $element)) {
+                    throw "click_method 'accessibility' could not click the requested element"
+                }
+            } elseif ($clickMethod -eq "app_post") {
+                if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
+                    $point = Get-ScreenPoint $operation.element.frame $windowBounds
+                } else {
+                    $point = [pscustomobject]@{
+                        x = [int][math]::Round($windowBounds.x + [double]$operation.x)
+                        y = [int][math]::Round($windowBounds.y + [double]$operation.y)
+                    }
+                }
+                Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+            } elseif ($clickMethod -eq "global") {
+                throw "click_method 'global' is not supported on Windows"
+            } elseif ($clickMethod -eq "sky_click") {
+                throw "click_method 'sky_click' is not supported on Windows"
+            } elseif ($clickMethod -eq "auto") {
+                $handled = $false
+                if ($null -ne $element -and $operation.mouse_button -ne "right" -and $operation.mouse_button -ne "middle") {
+                    $handled = $operation.click_count -eq 1 -and (Invoke-PreferredClick $element)
+                }
+                if (-not $handled) {
+                    if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
+                        $point = Get-ScreenPoint $operation.element.frame $windowBounds
+                    } else {
+                        $point = [pscustomobject]@{
+                            x = [int][math]::Round($windowBounds.x + [double]$operation.x)
+                            y = [int][math]::Round($windowBounds.y + [double]$operation.y)
+                        }
+                    }
+                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                }
+            } else {
+                throw "Invalid click_method '$clickMethod'"
+            }
+        }
+        "perform_secondary_action" {
+            if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
+            Invoke-SecondaryAction $element $operation.action
+        }
+        "scroll" {
+            $handled = $false
+            if ($null -ne $element) {
+                $handled = Invoke-Scroll $element $operation.direction ([double]$operation.pages)
+            }
+            if (-not $handled) {
+                $frame = if ($null -ne $operation.element) { $operation.element.frame } else { New-Frame 0 0 $windowBounds.width $windowBounds.height }
+                $point = Get-ScreenPoint $frame $windowBounds
+                Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)
+            }
+        }
+        "drag" {
+            Send-Drag $hwnd ([int][math]::Round($windowBounds.x + [double]$operation.from_x)) ([int][math]::Round($windowBounds.y + [double]$operation.from_y)) ([int][math]::Round($windowBounds.x + [double]$operation.to_x)) ([int][math]::Round($windowBounds.y + [double]$operation.to_y))
+        }
+        "type_text" {
+            if (-not (Invoke-TypeText $process $operation.text ($operation.allowFocusFallback -ne $false))) {
+                Send-Text $hwnd $operation.text
+            }
+        }
+        "press_key" {
+            Send-Key $hwnd $operation.key
+        }
+        "set_value" {
+            if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
+            $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
+            if ($null -eq $valuePattern) {
+                throw "Cannot set a value for an element that is not settable"
+            }
+            $valuePattern.SetValue($operation.value)
+        }
+        default {
+            throw "unsupportedTool(`"$($operation.tool)`")"
+        }
+    }
 }
 
 # Read the operation file as UTF-8 explicitly. Windows PowerShell 5.1's
@@ -922,90 +1038,7 @@ try {
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 
-        switch ($operation.tool) {
-            "click" {
-                $clickMethod = [string]$operation.click_method
-                if ([string]::IsNullOrWhiteSpace($clickMethod)) { $clickMethod = "auto" }
-
-                if ($clickMethod -eq "accessibility") {
-                    if ($null -eq $element) { throw "click_method 'accessibility' requires element_index" }
-                    if ($operation.mouse_button -eq "right" -or $operation.mouse_button -eq "middle") {
-                        throw "click_method 'accessibility' does not support mouse_button '$($operation.mouse_button)'"
-                    }
-                    if (-not (Invoke-PreferredClick $element)) {
-                        throw "click_method 'accessibility' could not click the requested element"
-                    }
-                } elseif ($clickMethod -eq "app_post") {
-                    if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
-                        $point = Get-ScreenPoint $operation.element.frame $windowBounds
-                    } else {
-                        $point = [pscustomobject]@{
-                            x = [int][math]::Round($windowBounds.x + [double]$operation.x)
-                            y = [int][math]::Round($windowBounds.y + [double]$operation.y)
-                        }
-                    }
-                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
-                } elseif ($clickMethod -eq "global") {
-                    throw "click_method 'global' is not supported on Windows"
-                } elseif ($clickMethod -eq "sky_click") {
-                    throw "click_method 'sky_click' is not supported on Windows"
-                } elseif ($clickMethod -eq "auto") {
-                    $handled = $false
-                    if ($null -ne $element -and $operation.mouse_button -ne "right" -and $operation.mouse_button -ne "middle") {
-                        $handled = Invoke-PreferredClick $element
-                    }
-                    if (-not $handled) {
-                        if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
-                            $point = Get-ScreenPoint $operation.element.frame $windowBounds
-                        } else {
-                            $point = [pscustomobject]@{
-                                x = [int][math]::Round($windowBounds.x + [double]$operation.x)
-                                y = [int][math]::Round($windowBounds.y + [double]$operation.y)
-                            }
-                        }
-                        Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
-                    }
-                } else {
-                    throw "Invalid click_method '$clickMethod'"
-                }
-            }
-            "perform_secondary_action" {
-                if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
-                Invoke-SecondaryAction $element $operation.action
-            }
-            "scroll" {
-                $handled = $false
-                if ($null -ne $element) {
-                    $handled = Invoke-Scroll $element $operation.direction ([double]$operation.pages)
-                }
-                if (-not $handled) {
-                    $point = Get-ScreenPoint $operation.element.frame $windowBounds
-                    Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)
-                }
-            }
-            "drag" {
-                Send-Drag $hwnd ([int][math]::Round($windowBounds.x + [double]$operation.from_x)) ([int][math]::Round($windowBounds.y + [double]$operation.from_y)) ([int][math]::Round($windowBounds.x + [double]$operation.to_x)) ([int][math]::Round($windowBounds.y + [double]$operation.to_y))
-            }
-            "type_text" {
-                if (-not (Invoke-TypeText $process $operation.text)) {
-                    Send-Text $hwnd $operation.text
-                }
-            }
-            "press_key" {
-                Send-Key $hwnd $operation.key
-            }
-            "set_value" {
-                if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
-                $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-                if ($null -eq $valuePattern) {
-                    throw "Cannot set a value for an element that is not settable"
-                }
-                $valuePattern.SetValue($operation.value)
-            }
-            default {
-                throw "unsupportedTool(`"$($operation.tool)`")"
-            }
-        }
+        Invoke-Operation $process $operation $element
 
         Start-Sleep -Milliseconds 120
         $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }

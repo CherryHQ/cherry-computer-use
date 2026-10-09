@@ -4,15 +4,17 @@ Shared by the Windows and Linux executables. This package implements the
 [SDK protocol](../../protocol/README.md), independently of the legacy MCP server.
 It supports initialization, capability/permission queries, app control sessions, cancellation and shutdown.
 `Desktop` owns opaque app/snapshot/element identities and combines `DesktopDriver`
-observation with one semantic left element click. Drivers retain native references
-outside wire data: Windows uses an owned PowerShell worker; Linux uses Go D-Bus/X11.
-The other actions, coordinate clicks and permission requests remain unsupported.
+observation with snapshot-scoped actions. Windows implements `ActionDriver` through
+the existing PowerShell engine for all seven actions, including window-relative
+coordinate clicks. Linux retains one semantic left element click. Drivers keep
+native references outside wire data. Permission requests remain unsupported.
 
 Each app control context owns its snapshots and cancellation state. Observation
 and action require its `appSessionId`. App stop/state messages bypass the ordinary
 queue: stopping cancels active work, prevents queued work from starting and waits
 for cleanup. A failed stop disables desktop operations instead of reporting success.
-The current backend has no synthetic held input or overlay to release.
+Windows pairs directed button/key messages with releases in `finally` blocks and
+checks cancellation during repeated input; it does not use global input or overlays.
 
 The reader continues receiving control messages while one backend request executes.
 Cancellation settles the original request only when its backend returns. Shutdown

@@ -192,7 +192,7 @@ interface ActionResult {
 
 ## 原生协议与取消
 
-三端已增加独立的 `serve --stdio` SDK 入口，JSON-RPC 2.0 仅作为传输协议。已接通生命周期、`listApps`、`getAppState` 和 `act`；macOS 七种动作与坐标/多次/非左键点击都由上游引擎执行，显式权限申请已接通；Windows/Linux 仅支持单次左键元素语义 `click`，`requestPermissions` 与其余动作暂报 unsupported。现有 MCP `tools/list` 与 `tools/call` 仍由 MCP adapter 提供。
+三端已增加独立的 `serve --stdio` SDK 入口，JSON-RPC 2.0 仅作为传输协议。已接通生命周期、`listApps`、`getAppState` 和 `act`；macOS 七种动作与坐标/多次/非左键点击都由上游引擎执行，显式权限申请已接通；Windows 通过共享 PowerShell 引擎接通七种动作与窗口坐标点击；Linux 仍仅支持单次左键元素语义 `click`。Windows/Linux 的 `requestPermissions` 仍不支持。现有 MCP `tools/list` 与 `tools/call` 仍由 MCP adapter 提供。
 
 JS 端已采用 [vscode-jsonrpc](https://github.com/microsoft/vscode-languageserver-node/blob/main/jsonrpc/README.md)的流读写与 Content-Length framing，并使用 `json-rpc-2.0` 管理请求关联；取消通知与所属进程生命周期由 SDK 绑定。子进程写入失败测试暴露了 `vscode-jsonrpc` 9.0.2 connection wrapper 的未处理 rejection，因此没有使用该 wrapper，也没有添加全局异常吞错。选择依据与完整 wire 契约见 [协议说明](../../protocol/README.md)。`dist` 通过 tsup `noExternal` 内联 `ajv`、`json-rpc-2.0` 与 `vscode-jsonrpc`，发布包没有运行时依赖：以 `link:` 方式消费时，宿主的打包器只收集自身依赖图，外置依赖会被丢掉（Cherry 打包后曾因缺少 `vscode-jsonrpc` 无法启动）。Swift/Go SDK 入口使用相同 framing；现有 MCP 的逐行 JSON 协议保持兼容。
 
@@ -235,7 +235,7 @@ macOS 已完成上表迁移：SDK backend 与 MCP 共用引擎，结果不经过
 三端进程关系、控制通道与具体改动位置见 [原生运行时设计](computer-use-runtime.md)。
 
 1. SDK、`protocol/` 与 Swift/Go 生命周期切片已落地；`start → initialize → capabilities → close` 已在三端本机环境验证。真实键鼠输入取消恢复属于尚未接入的动作阶段。
-2. 三端已接入 `listApps → getAppState → click` 结构化链路，覆盖快照失效和动作/采集结果区分。Windows ARM64/Linux X11 真实 GUI 通过；macOS GUI 待授权。其余六类动作仍不支持。
+2. 三端已接入 `listApps → getAppState → click` 结构化链路，覆盖快照失效和动作/采集结果区分。Windows ARM64/Linux X11 真实 GUI 通过；macOS GUI 待授权。Windows 的七种动作适配与中文输入修复见 [执行计划](../exec-plans/completed/20261009-windows-sdk-engine.md)；Linux 的其余六类动作仍不支持。
 3. 已采用固定证书重建 macOS helper，重新授权及权限保持/真实桌面验收仍待完成。每应用控制上下文与 v2 协议契约已实现；下一步接 Cherry 控制归属、用户停止状态、Tray 单应用/全部停止和已支持点击的软件光标。
 4. 通过 Cherry 原有普通工具入口复用任务级 SDK 实例及应用控制上下文，完成“观察并返回图片 → 下一次工具调用执行动作”，验证用户停止后不能被 Agent 自动恢复；关闭 Code Mode 也必须完整可用。
 5. 扩展输入、移动、拖拽及分步取消，补齐七类动作与平台限制，使用打包后的 SDK/runtime tarball 完成三端桌面验收。持久脚本、JS reset 与跨脚本变量留到后续 Code Mode 阶段单独验收。

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,4 +103,41 @@ func TestSDKBridgeOwnerProcess(t *testing.T) {
 	}
 	_, err := (&powershellSDKBridge{directory}).Run(context.Background(), map[string]any{"method": "observe", "pidPath": filepath.Join(directory, "workers.json")})
 	t.Fatalf("owned bridge returned before test owner was killed: %v", err)
+}
+
+// CP936 used to corrupt the closing quote of a Chinese name before dispatch.
+func TestSDKWorkerInputEncodingAndMalformedPayload(t *testing.T) {
+	bridge, err := newSDKBridge()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close(context.Background())
+	script := filepath.Join(bridge.(*powershellSDKBridge).directory, "sdk.ps1")
+	for _, test := range []struct{ name, payload, message string }{
+		{"utf8", `{"method":"显示侧边栏","name":"中文 😀"}`, "Unknown SDK bridge method"},
+		{"malformed", `{"method":"act",`, ""},
+		{"empty", "", "Empty command payload"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::GetEncoding(936); & '"+script+"'")
+			command.Stdin = strings.NewReader(test.payload + "\n")
+			output, err := command.Output()
+			if err != nil {
+				t.Fatalf("worker exited without a protocol response: %v", err)
+			}
+			var response struct {
+				OK                    bool
+				Code, Effect, Message string
+			}
+			if err := json.Unmarshal(bytes.TrimPrefix(output, []byte("\xef\xbb\xbf")), &response); err != nil {
+				t.Fatalf("invalid response: %s: %v", output, err)
+			}
+			if response.OK || response.Code != "INVALID_ARGUMENT" || response.Effect != "none" {
+				t.Fatalf("parse failure claimed an effect: %+v", response)
+			}
+			if test.message != "" && response.Message != test.message {
+				t.Fatalf("UTF-8 payload did not survive parsing: %+v", response)
+			}
+		})
+	}
 }
