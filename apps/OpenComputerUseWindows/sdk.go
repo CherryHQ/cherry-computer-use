@@ -26,6 +26,7 @@ type windowsTarget struct {
 }
 type windowsObservation struct {
 	Target windowsTarget
+	Bounds *sdk.Rect
 }
 
 func (d *windowsDesktop) Capabilities(context.Context) map[string]sdk.Availability {
@@ -33,7 +34,11 @@ func (d *windowsDesktop) Capabilities(context.Context) map[string]sdk.Availabili
 	if _, err := exec.LookPath("powershell.exe"); err != nil {
 		availability = sdk.Unavailable("DEPENDENCY_MISSING", "Windows PowerShell is required for UI Automation")
 	}
-	return map[string]sdk.Availability{"accessibility": availability, "click": availability, "screenshot": availability}
+	capabilities := map[string]sdk.Availability{}
+	for _, name := range []string{"accessibility", "screenshot", "click", "scroll", "drag", "typeText", "pressKey", "setValue", "performSecondaryAction"} {
+		capabilities[name] = availability
+	}
+	return capabilities
 }
 func (d *windowsDesktop) run(ctx context.Context, operation any, result any) error {
 	if d.bridge == nil {
@@ -64,6 +69,7 @@ func (d *windowsDesktop) Observe(ctx context.Context, target sdk.Target, options
 	var result struct {
 		sdk.Observation
 		Target     windowsTarget              `json:"target"`
+		Bounds     *sdk.Rect                  `json:"bounds"`
 		References map[string]json.RawMessage `json:"references"`
 	}
 	if err := d.run(ctx, map[string]any{"method": "observe", "target": target.Native, "options": options}, &result); err != nil {
@@ -72,15 +78,23 @@ func (d *windowsDesktop) Observe(ctx context.Context, target sdk.Target, options
 	for i := range result.Tree.Elements {
 		result.Tree.Elements[i].Native = result.References[result.Tree.Elements[i].ID]
 	}
-	result.Observation.Native = windowsObservation{Target: result.Target}
+	result.Observation.Native = windowsObservation{Target: result.Target, Bounds: result.Bounds}
 	return result.Observation, nil
 }
-func (d *windowsDesktop) Click(ctx context.Context, _ sdk.Target, observation sdk.Observation, element sdk.Element) error {
+func (d *windowsDesktop) Click(ctx context.Context, target sdk.Target, observation sdk.Observation, element sdk.Element) error {
+	return d.Act(ctx, target, observation, &element, sdk.Action{Type: "click", Button: "left", Count: 1})
+}
+func (d *windowsDesktop) Act(ctx context.Context, _ sdk.Target, observation sdk.Observation, element *sdk.Element, action sdk.Action) error {
 	if ctx.Err() != nil {
-		return sdk.Error("CANCELLED", "Click cancelled before dispatch")
+		return sdk.Error("CANCELLED", "Action cancelled before dispatch")
+	}
+	native := observation.Native.(windowsObservation)
+	var reference any
+	if element != nil {
+		reference = element.Native
 	}
 	var applied bool
-	err := d.run(ctx, map[string]any{"method": "click", "target": observation.Native.(windowsObservation).Target, "element": element.Native}, &applied)
+	err := d.run(ctx, map[string]any{"method": "act", "target": native.Target, "bounds": native.Bounds, "element": reference, "action": action}, &applied)
 	if err != nil {
 		return err
 	}

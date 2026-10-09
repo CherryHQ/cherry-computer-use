@@ -34,7 +34,7 @@ func newSDKBridge() (sdkBridge, error) {
 }
 func (b *powershellSDKBridge) Close(context.Context) error { return os.RemoveAll(b.directory) }
 func (b *powershellSDKBridge) Run(ctx context.Context, operation any) (json.RawMessage, error) {
-	action := operation.(map[string]any)["method"] == "click"
+	action := operation.(map[string]any)["method"] == "act"
 	if ctx.Err() != nil {
 		return nil, sdk.Error("CANCELLED", "Request cancelled before dispatch")
 	}

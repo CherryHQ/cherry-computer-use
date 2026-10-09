@@ -50,6 +50,16 @@ the fixture and runtime share the logged-in user's interactive session. Session 
 is not a valid replacement for a GUI test. Portable Node and a cross-built Go
 executable suffice; no Go installation is needed inside the VM.
 
+### Windows full-action regression
+
+Build `windows-actions.ps1` into `CherrySDKActions.exe`, start that fixture in the
+same interactive session, and run `node --test protocol/windows-desktop.test.mjs`
+with `COMPUTER_USE_WINDOWS_ACTION_FIXTURE=CherrySDKActions` and the runtime path set.
+Stop the fixture in `finally`, as with the counter above. The test verifies Chinese
+UIA targets and all seven SDK actions. The key, wheel and drag assertions inspect
+messages received by the fixture window; they do not imply that arbitrary apps
+accept the same background messages.
+
 ## Linux X11
 
 Follow the [Python-free Docker instructions](../../experiments/LinuxNativeProbe/README.md).

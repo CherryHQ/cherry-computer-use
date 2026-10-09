@@ -1,6 +1,6 @@
 # SDK protocol v2
 
-Status: client contract, Swift/Go lifecycle servers and the first structured desktop slice are implemented. This protocol is separate from the existing MCP entry point; desktop support is limited to discovery, observation and one semantic left element click.
+Status: client contract and Swift/Go lifecycle servers are implemented. The protocol has a separate entry point from MCP. macOS and Windows adapt their existing engines for discovery, observation and all seven actions; Linux retains one semantic left element click.
 
 [schema.json](schema.json) is the source of wire types and validators. Run `npm run sdk:build` from the repository root to regenerate. The [SDK README](../packages/sdk/README.md) documents the consumer API and current implementation limits.
 
@@ -28,15 +28,15 @@ The native server must own a private control connection and its helper resources
 | `act` | `Action` | `ActionResult` |
 | `shutdown` | object containing the session ID | `ShutdownResult` |
 
-The current servers implement lifecycle methods, `listApps`, `getAppState` and a single semantic left element `click`. Accessibility, click and screenshot availability reflect platform dependencies/permissions; the remaining six capabilities remain unsupported. macOS implements explicit `requestPermissions`; Windows/Linux do not. Coordinate, right/middle and multiple clicks are rejected before input. macOS queries accessibility and screen-capture preflight without prompting, reporting `unknown` when not granted. Windows/Linux return an empty permission list because this slice has no OS permission flow, not because host authorization is implied. `listApps` only lists applications whose accessibility identity can be read; Linux reports each registered application it could not read on stderr and fails with `TARGET_UNAVAILABLE` when none could be read, so an unreadable desktop is never reported as an empty one. Linux X11 capture accepts both plain depth-24 windows and the ARGB depth-32 windows that compositing clients map.
+All servers implement lifecycle and app-session methods. macOS and Windows expose all seven engine actions; Linux supports one semantic left element click and rejects other action forms before input. Availability reflects platform dependencies and permissions. Windows supports window-relative coordinate clicks, multiple/right/middle clicks, directed drag/scroll/key/text input and UIA value/secondary actions. It revalidates the observed window bounds and native element identity before execution. Windows uses the shared PowerShell tree renderer and action dispatcher while retaining window-specific capture; it does not substitute a screen-region image for a background window. macOS implements explicit `requestPermissions`; Windows/Linux do not. macOS queries accessibility and screen-capture preflight without prompting, reporting `unknown` when not granted. Windows/Linux return an empty permission list because this slice has no OS permission flow, not because host authorization is implied. `listApps` only lists applications whose accessibility identity can be read; Linux reports each registered application it could not read on stderr and fails with `TARGET_UNAVAILABLE` when none could be read, so an unreadable desktop is never reported as an empty one. Linux X11 capture accepts both plain depth-24 windows and the ARGB depth-32 windows that compositing clients map.
 
 On macOS, `requestPermissions` reuses the native drag-to-add onboarding window for the requested IDs. Its response remains pending until an accepted drag, completion or user dismissal and reports actual preflight state. Drag acceptance ends the UI interaction but never implies an OS grant; the host rechecks the full permission list in a new session. Cancellation and owner EOF close all onboarding windows and monitors before terminal acknowledgement. The SDK client defaults this interactive call to a five-minute deadline; other calls retain thirty seconds. Hosts must await the request before closing its session, then use a fresh session to observe grants that require process restart.
 
-Native framing limits headers to 8 KiB and bodies to 64 MiB; the ordinary execution queue is bounded at 64, with room for up to 64 additional stop requests and 128 pending responses. Request cleanup has a one-second deadline. Shutdown waits for output with a bounded deadline; failure never produces a successful cleanup acknowledgement. A semantic action already dispatched to the OS must settle or fail as uncertain; cancellation does not roll it back. Unresponsive platform calls can cause an unconfirmed close rather than a false cleanup acknowledgement. This slice does not synthesize pressed keys/buttons.
+Native framing limits headers to 8 KiB and bodies to 64 MiB; the ordinary execution queue is bounded at 64, with room for up to 64 additional stop requests and 128 pending responses. Request cleanup has a one-second deadline. Shutdown waits for output with a bounded deadline; failure never produces a successful cleanup acknowledgement. A semantic action already dispatched to the OS must settle or fail as uncertain; cancellation does not roll it back. Unresponsive platform calls can cause an unconfirmed close rather than a false cleanup acknowledgement. Windows directed key/button sequences release input in `finally` blocks; repeated input checks cancellation. Killing an unresponsive worker still yields unconfirmed cleanup.
 
 Validate parameters on the native side too. The client validates requests and domain results, but TypeScript types are not an execution boundary. The native service produces structured elements and capture states, with truncation flags; it must not reconstruct these fields from MCP display text. A runtime may add `tree.text`, its own rendered outline whose line prefixes are element IDs. Screenshots are base64 PNG on the wire and decoded to bytes by the SDK.
 
-Native code owns app/window/element IDs and snapshot validity. IDs must not refer to another client or a restarted process. Re-observation or an action that may change the target invalidates the previous snapshot for that target. Native code revalidates process/window/element identity and action support before execution. Coordinate conversion is reserved for a later slice; no coordinate input is currently accepted.
+Native code owns app/window/element IDs and snapshot validity. IDs must not refer to another client or a restarted process. Re-observation or an action that may change the target invalidates the previous snapshot for that target. Native code revalidates process/window/element identity and action support before execution. Windows coordinates refer to the observed window, and out-of-window points are rejected before dispatch. Linux does not accept coordinate input.
 
 `activation: 'never'` and `allowGlobalInput: false` are defaults sent by the SDK. Native code must honor them or report a structured failure. Host authorization is additional; these input flags do not establish permission to control a target.
 
@@ -66,8 +66,8 @@ A one-second cleanup deadline produces `CLEANUP_FAILED` and leaves the context
 stopping if native work has not settled. The runtime disables desktop operations;
 the SDK reports `cleanup: unconfirmed` and closes the connection. Completion may
 win cancellation, and an already dispatched semantic action is never rolled back.
-The current slice holds no synthetic keys/buttons or software overlay; cleanup
-for those resources must be added with their action implementations.
+Windows directed input is released before acknowledgement; an interrupted partial
+action retains an uncertain effect and is never automatically replayed.
 
 The native registry isolates contexts within one runtime. Cross-task app ownership,
 Tray controls and the user-stop latch belong to the Cherry host and are still
@@ -100,3 +100,15 @@ The [native contract tests](native.test.mjs) consume the public SDK and validate
 [desktop.test.mjs](desktop.test.mjs) drives a real counter fixture through two SDK sessions: structured hierarchy, PNG bytes, `Count: 0 → 1 → 2`, foreign IDs, used snapshots, external UI changes, truncation, confirmed app stop, reopening with a fresh identity on the same runtime and independent close. Application discovery belongs to this desktop suite, not the headless lifecycle suite. Set `COMPUTER_USE_FIXTURE_APP` to the exact fixture name and `COMPUTER_USE_REQUIRE_SCREENSHOT=1` to require capture; otherwise the desktop test is skipped. See [fixture instructions](fixtures/README.md).
 
 The previous desktop slice passed on Windows 11 ARM64 (Parallels) and Linux ARM64 X11 (Python-free Docker). The v2 app-session slice has been rerun on Linux X11 and the Windows x64 CI runner (`windows-2025`), including confirmed app stop and continued control in a second runtime. Windows CI also passed native framing/lifecycle and worker/descendant cleanup under cancellation and owner death. Windows ARM64 builds with v2; its local desktop rerun is pending after Parallels execution problems. macOS currently has lifecycle/contract evidence only; its GUI test needs explicit OS grants. Other Windows environments, Wayland, platform tarballs and Electron remain separate verification work.
+
+## Windows engine regression
+
+`windows-desktop.test.mjs` with `COMPUTER_USE_WINDOWS_ACTION_FIXTURE` targets the
+[Windows actions fixture](fixtures/windows-actions.ps1). It covers a Chinese UIA
+toggle, secondary actions, Unicode value/text editing, window-directed keys,
+scrolling, drag and coordinate/multiple clicks. The bridge Go tests force CP936
+input before invoking the production worker and require malformed JSON to return
+`INVALID_ARGUMENT` with `effect: none`. Shared Go tests verify that such a rejection
+leaves discovery and subsequent actions usable; unknown effects still close desktop
+operations. This fixture does not establish support for every Chromium application
+or GPU screenshot correctness.

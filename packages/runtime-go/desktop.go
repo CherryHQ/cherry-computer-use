@@ -51,15 +51,28 @@ type Window struct {
 	Title string `json:"title"`
 }
 
+type Rect struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+type SecondaryAction struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 type Element struct {
-	ID               string   `json:"id"`
-	ParentID         string   `json:"parentId,omitempty"`
-	Role             string   `json:"role"`
-	Name             string   `json:"name"`
-	Value            string   `json:"value,omitempty"`
-	Actions          []string `json:"actions"`
-	SecondaryActions []any    `json:"secondaryActions"`
-	Native           any      `json:"-"`
+	ID               string            `json:"id"`
+	ParentID         string            `json:"parentId,omitempty"`
+	Role             string            `json:"role"`
+	Name             string            `json:"name"`
+	Value            string            `json:"value,omitempty"`
+	Actions          []string          `json:"actions"`
+	Bounds           *Rect             `json:"bounds,omitempty"`
+	SecondaryActions []SecondaryAction `json:"secondaryActions"`
+	Native           any               `json:"-"`
 }
 
 type Tree struct {
@@ -237,32 +250,12 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		defer finish()
 		return d.observe(ctx, session, options)
 	case "act":
-		var action struct {
-			Type             string   `json:"type"`
-			AppSessionID     string   `json:"appSessionId"`
-			SnapshotID       string   `json:"snapshotId"`
-			ElementID        string   `json:"elementId"`
-			Button           string   `json:"button"`
-			Count            int      `json:"count"`
-			AllowGlobalInput bool     `json:"allowGlobalInput"`
-			X                *float64 `json:"x"`
-			Y                *float64 `json:"y"`
+		action, err := decodeAction(params)
+		if err != nil {
+			return nil, err
 		}
-		action.Button, action.Count = "left", 1
-		var kind struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(params, &kind) != nil {
-			return nil, Error("INVALID_ARGUMENT", "Invalid action")
-		}
-		if kind.Type != "click" {
-			return nil, Error("UNSUPPORTED_CAPABILITY", "Only element click is connected")
-		}
-		if decodeObject(params, &action) != nil || action.AppSessionID == "" || action.SnapshotID == "" || action.Count < 1 || action.Count > 3 ||
-			!slices.Contains([]string{"left", "middle", "right"}, action.Button) {
-			return nil, Error("INVALID_ARGUMENT", "Invalid click parameters")
-		}
-		if action.ElementID == "" || action.X != nil || action.Y != nil || action.Button != "left" || action.Count != 1 {
+		engine, fullActions := d.driver.(ActionDriver)
+		if !fullActions && (action.Type != "click" || action.ElementID == "" || action.Button != "left" || action.Count != 1) {
 			return nil, Error("UNSUPPORTED_CAPABILITY", "This backend supports one semantic left click on an element")
 		}
 		session, ctx, finish, err := d.beginAppRequest(ctx, action.AppSessionID)
@@ -281,14 +274,22 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 				break
 			}
 		}
-		if element == nil {
+		if action.ElementID != "" && element == nil {
 			return nil, Error("STALE_SNAPSHOT", "Element does not belong to this snapshot")
 		}
-		if !slices.Contains(element.Actions, "click") {
-			return nil, Error("UNSUPPORTED_CAPABILITY", "Element has no semantic click action")
+		if element != nil && !slices.Contains(element.Actions, action.Type) {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "Element does not support the requested action")
+		}
+		if action.Type == "performSecondaryAction" && !slices.ContainsFunc(element.SecondaryActions, func(a SecondaryAction) bool { return a.ID == action.ActionID }) {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "Element does not expose this secondary action")
 		}
 		clear(session.snapshots)
-		if err := d.driver.Click(ctx, session.target, snapshot.Observation, *element); err != nil {
+		if fullActions {
+			err = engine.Act(ctx, session.target, snapshot.Observation, element, action)
+		} else {
+			err = d.driver.Click(ctx, session.target, snapshot.Observation, *element)
+		}
+		if err != nil {
 			var domain *DomainError
 			if !errors.As(err, &domain) {
 				err = &DomainError{"TARGET_UNAVAILABLE", err.Error(), "possible"}
@@ -356,7 +357,9 @@ func (d *Desktop) observe(ctx context.Context, session *appSession, options Obse
 		if element.Actions == nil {
 			element.Actions = []string{}
 		}
-		element.SecondaryActions = []any{}
+		if element.SecondaryActions == nil {
+			element.SecondaryActions = []SecondaryAction{}
+		}
 	}
 	if observation.Tree.Elements == nil {
 		observation.Tree.Elements = []Element{}
