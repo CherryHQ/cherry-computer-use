@@ -1,0 +1,127 @@
+# Linux SDK 与 CLI/MCP 共用原生引擎
+
+## 目标与状态
+
+把现有 Go AT-SPI/X11 后端发展为 SDK 与 CLI/MCP 共用的 Linux 引擎，逐步迁移 Python bridge 的必要能力。完成条件是两个入口调用同一份原生实现，保留各自协议和授权边界，并在能力验收后删除旧 Python 执行路径。
+
+状态：方案建议，尚未开始运行时代码实现。用户要求比较直接复用 Python 与迁移实现；本计划推荐 Go 收敛路线，未把尚未验证的全局输入和 Wayland 支持视为已确定能力。
+
+## 背景与证据
+
+- [Linux main.go](../../../apps/OpenComputerUseLinux/main.go)：SDK `serve` 使用 `linuxDesktop`，CLI/MCP 则通过 `runPython` 启动嵌入的脚本；后者每次重启 Python，使用独立的 30 秒 context。
+- [SDK 后端](../../../apps/OpenComputerUseLinux/sdk.go)已经直接通过 `godbus/dbus/v5` 调用 AT-SPI；[截图](../../../apps/OpenComputerUseLinux/sdk_capture.go)通过 `jezek/xgb` 使用 X11。
+- [Python bridge](../../../apps/OpenComputerUseLinux/runtime.py)依赖 Python、PyGObject、AT-SPI typelib，截图还使用 GDK。它提供七种动作，但部分动作使用全局键鼠，执行后直接采集快照。
+- [无 Python 实验](../../../experiments/LinuxNativeProbe/README.md)已验证 Go 路径的 GTK 观察、点击和 PNG。该结果不代表其他六种动作、Wayland 或真实应用都已验收。
+- [runtime 设计](../../design-docs/computer-use-runtime.md)已经把 Python 定位为过渡选项；Go 原生接入优先，但不承诺所有后端都能无 cgo 实现。
+- [共享 runtime-go](../../../packages/runtime-go/README.md)已有可选 `ActionDriver` 和七种动作的参数验证，可直接供 Linux 适配，不必另建动作协议。
+
+## 方案比较
+
+| 方案 | 可以复用什么 | 成本与问题 | 建议 |
+| --- | --- | --- | --- |
+| SDK 直接接入 Python | 现有观察、动作及渲染代码 | 重新引入 Python/GI 运行依赖；仍需拆动作/观察、接入取消、快照所有权、输入门控和 worker 清理 | 仅在明确接受这些部署成本且需要短期过渡时采用 |
+| 只给 SDK 补一套 Go 动作 | 现有 SDK 会话和 Go 原生连接 | CLI/MCP 继续 Python，长期维护两套窗口选择、树和动作行为 | 不推荐作为最终结构 |
+| Go 共用引擎，逐步迁移两个入口 | 已有 Go D-Bus/X11 与 Python 的语义设计、工具契约 | 初期需要能力迁移和双入口验收；后续修复只发生在同一引擎 | 推荐 |
+
+这里的复用最终是原生引擎代码复用，不是永久保留 Python 源码，也不是让 CLI 通过 SDK stdio 绕一圈。保留上游归属和许可证；迁移的是有效语义，不固化旧实现的错误行为。
+
+## 范围与分层
+
+- 首批覆盖 Linux AT-SPI/X11 的发现、窗口定位、树、截图和语义动作。Wayland 下可用的 AT-SPI 能力继续独立报告，截图与全局输入另行验证。
+- 拟将现有 Linux 原生实现提取至 `apps/OpenComputerUseLinux/internal/desktop/`；最初只提取两个入口实际需要的接口，不预建跨平台后端框架。
+- Linux 引擎负责 D-Bus/X11 连接、目标/窗口/元素原生引用、树、截图及动作执行回执。原生引用不传给 JS 后重建。
+- SDK 适配负责映射现有 `DesktopDriver` / `ActionDriver`；`runtime-go` 继续持有协议 ID、应用会话、快照有效性和结果编排，避免引擎再建一套 SDK 会话缓存。
+- CLI/MCP service 直接调用同一个引擎，把结果转成现有九个工具的文本/图片；保留 CLI 参数、MCP schema、树预算、文本限制与连续调用的元素索引契约。
+- 每个 runtime 拥有独立引擎实例。代码共用不意味着跨任务共享 daemon、连接或可变快照。
+- 不把多窗口公共 API、GPU 截图修复、Cherry 宿主全局输入授权改动混入首批迁移。窗口枚举和原生身份应留在引擎内，为后续公共窗口选择接口提供基础。
+
+## 能力迁移约束
+
+| 能力 | 迁移方式 | 必须验证的边界 |
+| --- | --- | --- |
+| 应用与观察 | 共用 AT-SPI 枚举、状态、文本/值、边界和树记录 | 稳定进程/总线身份；窗口 ACTIVE/SHOWING 优先；树预算；原生完整身份不使用截断展示文本 |
+| 截图 | 保留现有 Go X11 窗口匹配与截图路径 | 歧义、最小化、像素格式、缩放和不可用状态；不改回 Python 的桌面区域裁剪，也不承诺现有 GetImage 已解决遮挡/GPU 问题 |
+| `click` | 首选 AT-SPI Action | 重新验证目标、窗口、元素和动作；不隐式回退全局点击；坐标/多击/非左键等变体分别报告支持情况 |
+| `performSecondaryAction` | 查询并匹配真实动作名称/描述 | 陈旧动作索引、重名与不可用动作；只执行一次 |
+| `setValue` | EditableText 或 Value | 文本与数值接口区分，数值范围、只读和失败返回；写入后的真实值 |
+| `typeText` | 目标窗口内具有明确焦点的 EditableText，按光标/选区处理 | 不照搬“找到第一个输入框并追加”；两个输入框、中文/emoji 字符偏移、选区、多行；目标不明确时拒绝 |
+| `scroll` | 先验证控件的真实方向动作/滚动条能力；全局翻页归入单独阶段 | `Component.ScrollTo` 是把元素滚入视野，不等于按方向翻 N 页；不能把两者当作等价实现 |
+| `pressKey` / `drag` | 现有 Python 依赖的全局输入另做可行性验证 | 默认禁用；不得为了凑齐七种方法宣称后台执行；键盘布局、按住状态和取消释放是启用前条件 |
+
+能力需同时考虑会话授权、桌面后端和具体目标接口。声明支持一个动作不代表所有控件和参数变体都可执行；不支持的路径必须在产生副作用前返回明确错误。
+
+## 不可退化的行为
+
+1. `allowGlobalInput: false` 时不移动物理指针、不注入全局按键，不自动抢焦点。SDK 策略不能被 CLI 环境变量覆盖。
+2. 全局输入即便显式允许，也要检查目标前台身份；“允许全局输入”不自动等于“允许激活应用”。焦点检查与输入之间存在竞争，不能据此承诺后台隔离，宿主仍需独占协调。
+3. 原生动作与后续观察分开。动作确认完成后，截图失败/取消不改写为动作失败；派发后结果不明保留 `effect: possible`，禁止自动重试。
+4. 应用会话停止、任务关闭和 EOF 都必须使旧引用失效。对可能按住的键鼠，只有确认释放后才能报告清理完成；单纯取消 context 或杀进程不算输入已释放。
+5. 现有 `linuxRuntimeEnvironment` 的桌面会话环境恢复也属于迁移范围：CLI 不能失去它，SDK 不得因提取而全局修改进程环境或连接到其他用户会话。
+
+## 里程碑与验收
+
+### 0. 固定契约与验证难点
+
+- 建立 Python 行为清单，区分必须保留的工具契约与明确修正的行为：文本目标、窗口选择、截图来源、全局回退和动作回执。
+- 从 AT-SPI 官方 D-Bus 定义核对 Action、EditableText、Text、Value 的方法签名、返回值及字符计数；优先沿用现有库，不复制 GI 绑定层。
+- 用 GTK fixture 验证焦点、选区、数值、次级动作与方向滚动。测试必须断言真实控件变化，不能只断言调用了某个 D-Bus 方法。
+- 单独验证键名/布局映射和注入后的清理路径。若无现成 Go 接口足以满足要求，记录具体系统库/绑定成本再决定；不为坚持纯 Go 手写完整键盘布局或输入法。
+- 验收：产出按动作/参数划分的迁移清单；不能安全支持的路径有明确阻断条件，不能用空实现填绿。
+
+### 1. 提取引擎，接通双入口观察
+
+- 提取已有连接、发现、窗口、树和截图代码；SDK 使用薄适配。
+- CLI/MCP 的发现和观察改用同一引擎。过渡期尚未迁移的动作允许继续明确走旧 Python 路径，但必须保留所需记录字段、重新验证目标，不能在失败后自动切换后端重试。
+- 保留入口各自的输出格式；同一真实窗口应得到一致的原生身份、元素语义和可用性。
+- 验收：无 Python 容器中两个入口都能观察；现有 SDK 点击、过期快照、跨会话拒绝、停止、PNG 测试继续通过。仍依赖 Python 的过渡动作不计入无 Python 完成度。
+
+### 2. 迁移语义动作
+
+- 先完成 `click`、次级动作、`setValue`、`typeText`，两个入口同时使用同一实现；通过 `ActionDriver` 接入 SDK。
+- 增加明确支持的语义滚动，仅在方向/范围含义能够成立且效果可验证时开放；否则如实拒绝。
+- 验收：真实 GTK 输入和数值变化、Unicode/选区、两个输入框的正确目标、次级动作、过期/禁用元素、不明确结果不重试。默认策略下前台与物理指针不发生改变。
+
+### 3. 补全剩余 X11 动作与清理
+
+- 在显式允许条件下迁移全局按键、拖拽、坐标点击及翻页路径，保留 CLI 既有授权门控并映射 SDK 策略。
+- 按住输入必须由可清理的资源所有者管理；先验证中途取消、断连和 owner 异常退出，再选择同进程执行或任务私有执行进程。共享引擎不预先限定进程数量。
+- 验收：真实修饰键/拖拽效果、焦点切换拒绝、取消/EOF/进程异常退出后的输入释放，以及多个任务不会替对方释放输入。若不能收敛，保持路径禁用，不宣称七种动作全面迁移完成。
+- 这一阶段不能让 Cherry 当前禁用的全局输入自动可用；宿主是否开放属于独立产品决策。
+
+### 4. 删除 Python 路径并交付
+
+- 仅当仍承诺支持的 CLI/MCP 能力都完成迁移并验证后，删除 `runPython`、嵌入脚本和仅供它使用的数据转换/依赖说明。不能用静默减少 CLI 能力换取删除 Python；主动收缩能力需单独确认。
+- SDK 与 CLI/MCP 都通过无 Python 的真实桌面测试；两个入口共享引擎，取消和关闭不残留连接、进程或按住输入。
+- 验证 Linux x64/arm64 构建和实际平台 tarball 启动；跨架构构建通过不能代替各架构执行证据。
+- 同步架构、SDK 能力表、Linux 部署依赖、发布说明与 changeset；发布后的 Cherry 集成另验，不能由 GTK fixture 代替。
+- 每个里程碑可独立形成 PR；Linux 工作不自动加入现有 Windows 修复 PR。
+
+### 独立后续：Wayland
+
+AT-SPI 语义操作与 Wayland 截图/输入分开报告。后者验证 RemoteDesktop/ScreenCast portal、PipeWire、必要的 EIS 接入、显式用户授权、任务会话寿命及停止清理，在 GNOME 与 KDE 分别执行。优先复用平台库，经过实验再确定绑定和依赖，不能把 X11 注入机械翻译成 Wayland 支持。
+
+## 验证方式与交付边界
+
+- 文档阶段：`make check-docs`、相对链接存在性和 `git diff --check`。本次不改运行时代码，不用已有测试通过来声称迁移完成。
+- 实现阶段：在相应 Go module 运行 `go test ./...`、`go vet ./...`；共享生命周期修改另跑 race 检查；涉及 SDK/协议时运行该包已定义的检查脚本。
+- 复用 [Linux 原型容器](../../../experiments/LinuxNativeProbe/Dockerfile)、[原生协议测试](../../../protocol/native.test.mjs)和[桌面测试](../../../protocol/desktop.test.mjs)扩展契约测试，保留容器无 Python 的硬性断言。
+- 增加真实 GTK fixture 的动作结果和独立焦点/指针/输入状态观测；多窗口、重复标题、进程重启、D-Bus 消失、动作成功但观察失败均需覆盖。
+- 本轮只保存提案；现有 Windows PR 与 Linux 运行行为不变。后续按阶段记录本地验证、远端 CI、真实桌面和发行包覆盖，分别报告。
+
+## 进度记录
+
+- [x] 核对 Go SDK 与 Python CLI/MCP 的调用路径和无 Python 实验。
+- [x] 比较直接复用、SDK 单独迁移与双入口共用三种方案。
+- [x] 记录能力边界、迁移顺序、验收和 Python 删除条件。
+- [ ] 完成里程碑 0 的原生接口/输入清理实验。
+- [ ] 提取共用引擎并接通双入口观察。
+- [ ] 完成语义动作和剩余 X11 动作验收。
+- [ ] 删除 Python 执行路径并完成发行包验证。
+
+## 决策与参考
+
+- 2026-10-09：推荐基于现有 Go 后端迁移 Python 必要能力，并收敛 SDK 与 CLI/MCP；实现尚未启动。Wayland 和全局输入的进程布局由验证结果决定，不预先承诺纯 Go 覆盖全部能力。
+- [AT-SPI EditableText](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/iface.EditableText.html)：文本操作与字符偏移。
+- [AT-SPI Component.ScrollTo](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/method.Component.scroll_to.html)：滚入视野的语义边界。
+- [AT-SPI 键盘合成](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/func.generate_keyboard_event.html)：作用于当前 UI 上下文。
+- [XDG RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)：会话化桌面输入与权限。
