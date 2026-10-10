@@ -5,8 +5,12 @@ TypeScript client for the Cherry Computer Use native runtime, for Node 24+ and E
 **Status: private native app control sessions are implemented on all three platforms.**
 macOS and Windows adapt their existing engines for all seven actions. Windows uses
 UI Automation and window-directed messages, including coordinate clicks; it never
-falls back to global input. Linux currently supports discovery, observation and
-one semantic left element click. Query capabilities and element actions before
+falls back to global input. Linux supports discovery, observation and semantic
+element actions: left click, secondary actions, `setValue`, and `typeText` into the
+one focused editable field. On X11, pointer clicks, drag, key presses, page scrolling
+and typing without a focused field use global input and require
+`allowGlobalInput: true`; keys need the target window to have focus. Wayland reports
+them unsupported. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native

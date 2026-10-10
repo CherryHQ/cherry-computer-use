@@ -1,0 +1,21 @@
+[package]
+name = "open-computer-use-wayland"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Wayland display helper for the Linux open-computer-use runtime"
+
+[[bin]]
+name = "open-computer-use-wayland"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wayland-client = "0.31"
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

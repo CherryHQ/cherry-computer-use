@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
 )
 
 func TestToolDefinitionCount(t *testing.T) {
@@ -255,45 +257,96 @@ func TestCLIHelpMentionsLinuxRuntime(t *testing.T) {
 	}
 }
 
-func TestLinuxRuntimeDocumentsATSPIAndFallbackBoundary(t *testing.T) {
-	if !strings.Contains(linuxRuntimeScript, "Atspi") {
-		t.Fatal("Linux runtime must use AT-SPI")
-	}
-	if !strings.Contains(linuxRuntimeScript, "generate_mouse_event") {
-		t.Fatal("Linux runtime should keep coordinate input explicit and visible in the bridge")
-	}
+func TestLinuxRuntimeDocumentsFallbackBoundary(t *testing.T) {
 	if !strings.Contains(serverInstructions, "not a universal Wayland background input model") {
 		t.Fatal("MCP instructions must document the Linux background-input boundary")
 	}
 }
 
-func TestLinuxRuntimeTextLimitSupportsMaxMode(t *testing.T) {
-	if !strings.Contains(linuxRuntimeScript, "DEFAULT_TEXT_LIMIT = 500") {
-		t.Fatal("Linux runtime should define the shared 500 character text limit")
+func TestInputGuardSubcommandIsInternal(t *testing.T) {
+	if err := runCLI([]string{"input-guard"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("input-guard must require its display argument")
 	}
-	if !strings.Contains(linuxRuntimeScript, "text_limit=parse_text_limit(operation.get(\"text_limit\"), DEFAULT_TEXT_LIMIT)") {
-		t.Fatal("Linux get_app_state should pass text_limit into snapshot rendering")
-	}
-	if !strings.Contains(linuxRuntimeScript, "if isinstance(value, str) and value.lower() == \"max\"") {
-		t.Fatal("Linux runtime should support max text limit mode")
-	}
-	if !strings.Contains(linuxRuntimeScript, "max_tree_nodes=positive_int(operation.get(\"max_tree_nodes\"), MAX_ELEMENTS)") {
-		t.Fatal("Linux get_app_state should pass max_tree_nodes into snapshot rendering")
-	}
-	if !strings.Contains(linuxRuntimeScript, "max_tree_depth=positive_int(operation.get(\"max_tree_depth\"), MAX_DEPTH)") {
-		t.Fatal("Linux get_app_state should pass max_tree_depth into snapshot rendering")
-	}
-	if !strings.Contains(linuxRuntimeScript, "text_limit + 1") {
-		t.Fatal("Linux default truncation should read one extra character so it can append ellipsis")
+	if command := inputGuard(":5"); len(command.Args) != 3 || command.Args[1] != "input-guard" || command.Args[2] != ":5" {
+		t.Fatalf("guard command = %v", command.Args)
 	}
 }
 
-func TestLinuxRuntimeTreeBudgetDefaultsMatchMacOS(t *testing.T) {
-	if !strings.Contains(linuxRuntimeScript, "MAX_ELEMENTS = 1200") {
-		t.Fatal("Linux runtime should default to the shared 1200 node tree budget")
+func TestSnapshotDefaultsMatchMacOS(t *testing.T) {
+	if defaultTextLimit != 500 || defaultMaxTreeNodes != 1200 || defaultMaxTreeDepth != 64 {
+		t.Fatalf("shared snapshot budgets changed: text=%d nodes=%d depth=%d", defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth)
 	}
-	if !strings.Contains(linuxRuntimeScript, "MAX_DEPTH = 64") {
-		t.Fatal("Linux runtime should default to the shared 64 level tree depth")
+}
+
+func TestLimitTextCountsCharactersAndSupportsMax(t *testing.T) {
+	if got := limitText("你好世界🙂", 4); got != "你好世界..." {
+		t.Fatalf("limitText must cut characters, not bytes: %q", got)
+	}
+	if got := limitText("short", 5); got != "short" {
+		t.Fatalf("text within the limit must be unchanged: %q", got)
+	}
+	if got := limitText(strings.Repeat("x", 900), -1); len(got) != 900 {
+		t.Fatalf("max mode must keep all text, got %d characters", len(got))
+	}
+}
+
+func TestRenderSnapshotKeepsTreeContract(t *testing.T) {
+	value := 3.0
+	observation := desktop.Observation{
+		App:    desktop.App{Name: "fixture", PID: 42, Toolkit: "GTK"},
+		Window: desktop.Window{Title: "Fixture", Index: 1, Extents: &desktop.Rect{X: 100, Y: 50, Width: 400, Height: 300}},
+		Nodes: []desktop.Node{
+			{Path: []int{1}, Parent: -1, Role: "frame", Name: "Fixture", Extents: &desktop.Rect{X: 100, Y: 50, Width: 400, Height: 300}},
+			{Path: []int{1, 0}, Parent: 0, Depth: 1, Role: "text", Name: "Notes", Text: "line one\nline two", Actions: []desktop.Action{{Index: 0, Name: "activate"}, {Index: 1, Description: "activate"}}},
+			{Path: []int{1, 1}, Parent: 0, Depth: 1, Role: "spin button", AccessibleID: "level", Value: &value, Extents: &desktop.Rect{X: 110.5, Y: 62.5, Width: 80, Height: 20}},
+		},
+	}
+	snapshot := renderSnapshot(observation, snapshotOptions{defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth})
+	want := []string{
+		"\t0 frame Fixture Frame: {x: 0, y: 0, width: 400, height: 300}",
+		"\t\t1 text Notes Value: line one\\nline two Secondary Actions: activate",
+		"\t\t2 spin button level Value: 3 Frame: {x: 10, y: 12, width: 80, height: 20}",
+	}
+	if strings.Join(snapshot.TreeLines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("tree lines changed:\n%s", strings.Join(snapshot.TreeLines, "\n"))
+	}
+	if got := snapshot.Elements[2].RuntimeID; len(got) != 2 || got[0] != 1 || got[1] != 1 {
+		t.Fatalf("runtimeId must be the child path from the application: %v", got)
+	}
+	if snapshot.Elements[1].ClassName != "GTK" || snapshot.App.PID != 42 || snapshot.WindowBounds.X != 100 {
+		t.Fatalf("snapshot metadata lost: %+v", snapshot)
+	}
+}
+
+func TestCLIRefusesAmbiguousOrUnsupportedSemanticActionsBeforeDispatch(t *testing.T) {
+	svc := newService()
+	snapshot := renderSnapshot(desktop.Observation{
+		App:    desktop.App{Name: "fixture", PID: 7},
+		Window: desktop.Window{Title: "Fixture"},
+		Nodes: []desktop.Node{
+			{Parent: -1, Role: "frame", Name: "Fixture"},
+			{Parent: 0, Depth: 1, Role: "button", Name: "Go", Actions: []desktop.Action{{Index: 0, Name: "click"}, {Index: 1, Name: "menu", Description: "Click"}}},
+			{Parent: 0, Depth: 1, Role: "label", Name: "Static"},
+		},
+	}, snapshotOptions{defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth})
+	svc.rememberSnapshot("fixture", snapshot)
+
+	for name, check := range map[string]struct {
+		result toolCallResult
+		want   string
+	}{
+		"double accessibility click":   {svc.click("fixture", "1", nil, nil, 2, "left", "accessibility"), "click_count must be 1"},
+		"right accessibility click":    {svc.click("fixture", "1", nil, nil, 1, "right", "accessibility"), "only supports mouse_button 'left'"},
+		"no semantic click":            {svc.click("fixture", "2", nil, nil, 1, "left", "accessibility"), "could not find a semantic click action"},
+		"pointer click without bounds": {svc.click("fixture", "2", nil, nil, 1, "left", "auto"), "requires window bounds"},
+		"unknown mouse button":         {svc.click("fixture", "1", nil, nil, 1, "back", "auto"), "Invalid mouse_button"},
+		"ambiguous secondary action":   {svc.performSecondaryAction("fixture", "1", "click"), "ambiguous"},
+		"unknown secondary action":     {svc.performSecondaryAction("fixture", "1", "zoom"), "not a valid secondary action"},
+		"unknown element":              {svc.setValue("fixture", "9", "x"), "unknown element_index"},
+	} {
+		if !check.result.IsError || !strings.Contains(check.result.Content[0].Text, check.want) {
+			t.Fatalf("%s: %#v", name, check.result)
+		}
 	}
 }
 

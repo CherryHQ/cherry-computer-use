@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,17 +16,15 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/x11"
 )
 
 var version = "0.1.1"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
-
-//go:embed runtime.py
-var linuxRuntimeScript string
 
 const serverInstructions = "Computer Use tools let you interact with Linux desktop apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Linux actions use AT-SPI2 semantic actions and editable text APIs first. Coordinate mouse and key synthesis are best-effort fallbacks and are not a universal Wayland background input model."
 
@@ -94,6 +91,9 @@ type appSnapshot struct {
 	FocusedSummary      string          `json:"focusedSummary,omitempty"`
 	SelectedText        string          `json:"selectedText,omitempty"`
 	Elements            []elementRecord `json:"elements,omitempty"`
+
+	observation desktop.Observation
+	options     snapshotOptions
 }
 
 func (s *appSnapshot) renderedText() string {
@@ -136,31 +136,6 @@ func (s *appSnapshot) result() toolCallResult {
 	return result
 }
 
-type linuxRequest struct {
-	Tool         string         `json:"tool"`
-	App          string         `json:"app,omitempty"`
-	Element      *elementRecord `json:"element,omitempty"`
-	X            *float64       `json:"x,omitempty"`
-	Y            *float64       `json:"y,omitempty"`
-	FromX        *float64       `json:"from_x,omitempty"`
-	FromY        *float64       `json:"from_y,omitempty"`
-	ToX          *float64       `json:"to_x,omitempty"`
-	ToY          *float64       `json:"to_y,omitempty"`
-	ClickCount   int            `json:"click_count,omitempty"`
-	MouseButton  string         `json:"mouse_button,omitempty"`
-	ClickMethod  string         `json:"click_method,omitempty"`
-	Action       string         `json:"action,omitempty"`
-	Direction    string         `json:"direction,omitempty"`
-	Pages        float64        `json:"pages,omitempty"`
-	Text         string         `json:"text,omitempty"`
-	Key          string         `json:"key,omitempty"`
-	Value        string         `json:"value,omitempty"`
-	WindowBounds *frame         `json:"windowBounds,omitempty"`
-	TextLimit    any            `json:"text_limit,omitempty"`
-	MaxTreeNodes int            `json:"max_tree_nodes,omitempty"`
-	MaxTreeDepth int            `json:"max_tree_depth,omitempty"`
-}
-
 type textLimit struct {
 	max   bool
 	count int
@@ -173,378 +148,29 @@ func (limit textLimit) runtimeValue() any {
 	return limit.count
 }
 
-type linuxResponse struct {
-	OK       bool         `json:"ok"`
-	Text     string       `json:"text,omitempty"`
-	Error    string       `json:"error,omitempty"`
-	Snapshot *appSnapshot `json:"snapshot,omitempty"`
-}
-
-type service struct {
-	snapshots map[string]*appSnapshot
-}
-
-func newService() *service {
-	return &service{snapshots: map[string]*appSnapshot{}}
-}
-
-func (s *service) callTool(name string, args map[string]any) toolCallResult {
-	switch name {
-	case "list_apps":
-		return s.listApps()
-	case "get_app_state":
-		maxTreeNodes, err := optionalPositiveInt(args, "max_tree_nodes")
-		if err != nil {
-			return textResult(err.Error(), true)
-		}
-		maxTreeDepth, err := optionalPositiveInt(args, "max_tree_depth")
-		if err != nil {
-			return textResult(err.Error(), true)
-		}
-		textLimit, err := optionalTextLimit(args, "text_limit")
-		if err != nil {
-			return textResult(err.Error(), true)
-		}
-		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth)
-	case "click":
-		clickMethod, err := parseClickMethod(optionalString(args, "click_method"))
-		if err != nil {
-			return textResult(err.Error(), true)
-		}
-		return s.click(
-			requiredString(args, "app"),
-			optionalElementIndex(args),
-			optionalFloat(args, "x"),
-			optionalFloat(args, "y"),
-			intValue(optionalFloat(args, "click_count"), 1),
-			defaultString(optionalString(args, "mouse_button"), "left"),
-			clickMethod,
-		)
-	case "perform_secondary_action":
-		return s.performSecondaryAction(
-			requiredString(args, "app"),
-			requiredElementIndex(args),
-			requiredString(args, "action"),
-		)
-	case "scroll":
-		return s.scroll(
-			requiredString(args, "app"),
-			requiredString(args, "direction"),
-			requiredElementIndex(args),
-			floatValue(optionalFloat(args, "pages"), 1),
-		)
-	case "drag":
-		return s.drag(
-			requiredString(args, "app"),
-			requiredFloat(args, "from_x"),
-			requiredFloat(args, "from_y"),
-			requiredFloat(args, "to_x"),
-			requiredFloat(args, "to_y"),
-		)
-	case "type_text":
-		return s.typeText(requiredString(args, "app"), requiredString(args, "text"))
-	case "press_key":
-		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"))
-	case "set_value":
-		return s.setValue(requiredString(args, "app"), requiredElementIndex(args), requiredString(args, "value"))
-	default:
-		return textResult(fmt.Sprintf("unsupportedTool(%q)", name), true)
-	}
-}
-
-func (s *service) listApps() toolCallResult {
-	response, err := runPython(linuxRequest{Tool: "list_apps"})
+// inputGuard starts this executable's guard, which releases held global input if
+// the runtime dies; see x11.RunInputGuard.
+func inputGuard(display string) *exec.Cmd {
+	executable, err := os.Executable()
 	if err != nil {
-		return textResult(err.Error(), true)
+		executable = os.Args[0]
 	}
-	if !response.OK {
-		return textResult(response.Error, true)
-	}
-	if strings.TrimSpace(response.Text) == "" {
-		response.Text = "No running top-level apps are visible to this Linux runtime."
-	}
-	return textResult(response.Text, false)
+	command := exec.Command(executable, "input-guard", display)
+	command.Stderr = os.Stderr
+	return command
 }
 
-func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, maxTreeDepth *int) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
+// waylandHelperPath is the Rust Wayland helper shipped next to this executable;
+// OPEN_COMPUTER_USE_WAYLAND_HELPER overrides it for development.
+func waylandHelperPath() string {
+	if path := os.Getenv("OPEN_COMPUTER_USE_WAYLAND_HELPER"); path != "" {
+		return path
 	}
-	request := linuxRequest{Tool: "get_app_state", App: app}
-	if textLimit != nil {
-		request.TextLimit = textLimit.runtimeValue()
-	}
-	if maxTreeNodes != nil {
-		request.MaxTreeNodes = *maxTreeNodes
-	}
-	if maxTreeDepth != nil {
-		request.MaxTreeDepth = *maxTreeDepth
-	}
-	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
-		return result
-	}
-	return snapshot.result()
-}
-
-func (s *service) click(app, elementIndex string, x, y *float64, clickCount int, mouseButton, clickMethod string) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if elementIndex == "" && (x == nil || y == nil) {
-		return textResult("click requires either element_index or x/y", true)
-	}
-	if clickMethod == "accessibility" && elementIndex == "" {
-		return textResult("click_method 'accessibility' requires element_index", true)
-	}
-	if clickMethod == "app_post" {
-		return textResult("click_method 'app_post' is not supported on Linux", true)
-	}
-	if clickMethod == "sky_click" {
-		return textResult("click_method 'sky_click' is not supported on Linux", true)
-	}
-	if clickMethod == "global" && !globalPointerFallbacksEnabled() {
-		return textResult("click_method 'global' requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it may move the system pointer and change foreground focus", true)
-	}
-	snapshot := s.currentSnapshot(app)
-	if snapshot == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	request := linuxRequest{
-		Tool:         "click",
-		App:          app,
-		X:            x,
-		Y:            y,
-		ClickCount:   clickCount,
-		MouseButton:  mouseButton,
-		ClickMethod:  clickMethod,
-		WindowBounds: snapshot.WindowBounds,
-	}
-	if elementIndex != "" {
-		record, err := lookupElement(snapshot, elementIndex)
-		if err != nil {
-			return textResult(err.Error(), true)
-		}
-		request.Element = record
-	}
-	return s.actionResult(app, request)
-}
-
-func (s *service) performSecondaryAction(app, elementIndex, action string) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if elementIndex == "" {
-		return textResult("Missing required argument: element_index", true)
-	}
-	if action == "" {
-		return textResult("Missing required argument: action", true)
-	}
-	snapshot := s.currentSnapshot(app)
-	if snapshot == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	record, err := lookupElement(snapshot, elementIndex)
+	executable, err := os.Executable()
 	if err != nil {
-		return textResult(err.Error(), true)
+		return ""
 	}
-	return s.actionResult(app, linuxRequest{Tool: "perform_secondary_action", App: app, Element: record, Action: action})
-}
-
-func (s *service) scroll(app, direction, elementIndex string, pages float64) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if elementIndex == "" {
-		return textResult("Missing required argument: element_index", true)
-	}
-	normalized := strings.ToLower(direction)
-	if normalized != "up" && normalized != "down" && normalized != "left" && normalized != "right" {
-		return textResult("Invalid scroll direction: "+direction, true)
-	}
-	if pages <= 0 {
-		return textResult("pages must be > 0", true)
-	}
-	snapshot := s.currentSnapshot(app)
-	if snapshot == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	record, err := lookupElement(snapshot, elementIndex)
-	if err != nil {
-		return textResult(err.Error(), true)
-	}
-	return s.actionResult(app, linuxRequest{Tool: "scroll", App: app, Element: record, Direction: normalized, Pages: pages})
-}
-
-func (s *service) drag(app string, fromX, fromY, toX, toY *float64) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if fromX == nil {
-		return textResult("Missing required argument: from_x", true)
-	}
-	if fromY == nil {
-		return textResult("Missing required argument: from_y", true)
-	}
-	if toX == nil {
-		return textResult("Missing required argument: to_x", true)
-	}
-	if toY == nil {
-		return textResult("Missing required argument: to_y", true)
-	}
-	snapshot := s.currentSnapshot(app)
-	if snapshot == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	return s.actionResult(app, linuxRequest{Tool: "drag", App: app, FromX: fromX, FromY: fromY, ToX: toX, ToY: toY, WindowBounds: snapshot.WindowBounds})
-}
-
-func (s *service) typeText(app, text string) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if text == "" {
-		return textResult("Missing required argument: text", true)
-	}
-	if s.currentSnapshot(app) == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	return s.actionResult(app, linuxRequest{Tool: "type_text", App: app, Text: text})
-}
-
-func (s *service) pressKey(app, key string) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if key == "" {
-		return textResult("Missing required argument: key", true)
-	}
-	if s.currentSnapshot(app) == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	return s.actionResult(app, linuxRequest{Tool: "press_key", App: app, Key: key})
-}
-
-func (s *service) setValue(app, elementIndex, value string) toolCallResult {
-	if app == "" {
-		return textResult("Missing required argument: app", true)
-	}
-	if elementIndex == "" {
-		return textResult("Missing required argument: element_index", true)
-	}
-	snapshot := s.currentSnapshot(app)
-	if snapshot == nil {
-		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
-	}
-	record, err := lookupElement(snapshot, elementIndex)
-	if err != nil {
-		return textResult(err.Error(), true)
-	}
-	return s.actionResult(app, linuxRequest{Tool: "set_value", App: app, Element: record, Value: value})
-}
-
-func (s *service) actionResult(app string, request linuxRequest) toolCallResult {
-	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
-		return result
-	}
-	return snapshot.result()
-}
-
-func (s *service) currentSnapshot(app string) *appSnapshot {
-	return s.snapshots[strings.ToLower(app)]
-}
-
-func (s *service) refreshSnapshot(app string, request linuxRequest) (*appSnapshot, toolCallResult) {
-	response, err := runPython(request)
-	if err != nil {
-		return nil, textResult(err.Error(), true)
-	}
-	if !response.OK {
-		return nil, textResult(response.Error, true)
-	}
-	if response.Snapshot == nil {
-		return nil, textResult("Linux runtime did not return an app snapshot.", true)
-	}
-	s.rememberSnapshot(app, response.Snapshot)
-	return response.Snapshot, toolCallResult{}
-}
-
-func (s *service) rememberSnapshot(query string, snapshot *appSnapshot) {
-	keys := []string{query, snapshot.App.Name, snapshot.App.BundleIdentifier, strconv.Itoa(snapshot.App.PID)}
-	for _, key := range keys {
-		key = strings.ToLower(strings.TrimSpace(key))
-		if key != "" {
-			s.snapshots[key] = snapshot
-		}
-	}
-}
-
-func lookupElement(snapshot *appSnapshot, elementIndex string) (*elementRecord, error) {
-	index, err := strconv.Atoi(elementIndex)
-	if err != nil {
-		return nil, fmt.Errorf("unknown element_index %q", elementIndex)
-	}
-	for _, record := range snapshot.Elements {
-		if record.Index == index {
-			copy := record
-			return &copy, nil
-		}
-	}
-	return nil, fmt.Errorf("unknown element_index %q", elementIndex)
-}
-
-func runPython(request linuxRequest) (*linuxResponse, error) {
-	if runtime.GOOS != "linux" {
-		return nil, errors.New("Linux Computer Use runtime requires python3 on Linux")
-	}
-
-	tempDir, err := os.MkdirTemp("", "open-computer-use-linux-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tempDir)
-
-	scriptPath := filepath.Join(tempDir, "runtime.py")
-	operationPath := filepath.Join(tempDir, "operation.json")
-	if err := os.WriteFile(scriptPath, []byte(linuxRuntimeScript), 0o600); err != nil {
-		return nil, err
-	}
-	operationData, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(operationPath, operationData, 0o600); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "python3", scriptPath, operationPath)
-	cmd.Env = linuxRuntimeEnvironment(os.Environ())
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, errors.New("Linux runtime timed out after 30s")
-	}
-	if err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if text == "" {
-			text = strings.TrimSpace(string(output))
-		}
-		if text == "" {
-			text = err.Error()
-		}
-		return nil, fmt.Errorf("Linux runtime failed: %s", text)
-	}
-
-	var response linuxResponse
-	if err := json.Unmarshal(output, &response); err != nil {
-		return nil, fmt.Errorf("Linux runtime returned invalid JSON: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return &response, nil
+	return filepath.Join(filepath.Dir(executable), "open-computer-use-wayland")
 }
 
 func linuxRuntimeEnvironment(base []string) []string {
@@ -1313,6 +939,13 @@ func runCLI(args []string, stdout io.Writer) error {
 		return nil
 	case "mcp":
 		return runMCP(os.Stdin, stdout)
+	case "input-guard":
+		// Internal: started by this runtime for global input; not a user command.
+		if len(args) != 2 {
+			return errors.New("input-guard is internal")
+		}
+		x11.GuardMain(args[1])
+		return nil
 	case "serve":
 		sessionID, err := sdkruntime.ParseServeArgs(args[1:])
 		if err != nil {
@@ -1322,10 +955,19 @@ func runCLI(args []string, stdout io.Writer) error {
 			return errors.New("Linux SDK runtime requires Linux")
 		}
 		return sdkruntime.Serve(os.Stdin, os.Stdout, sdkruntime.Config{
-			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(&linuxDesktop{}),
+			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(newLinuxDesktop()),
 		})
 	case "doctor":
-		fmt.Fprintln(stdout, "Linux runtime: AT-SPI2 and GDK run against the signed-in desktop user's accessibility session. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes.")
+		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) and X11 engine runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) uses X11 XTEST, reaches only X11/XWayland windows, and requires the target window to have keyboard focus or lie under the pointer.")
+		svc := newService()
+		defer svc.engine.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+		defer cancel()
+		report, err := json.MarshalIndent(svc.engine.Report(ctx), "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "\nSession report:\n%s\n", report)
 		return nil
 	case "list-apps":
 		result := newService().callTool("list_apps", map[string]any{})
@@ -1698,6 +1340,8 @@ Commands:
 Notes:
   The Linux runtime uses AT-SPI2 semantic actions first, then best-effort
   coordinate/key synthesis. Run it in the signed-in desktop session.
+  Global pointer and keyboard input uses X11 XTEST and only reaches
+  X11/XWayland windows.
 `
 	}
 }

@@ -104,6 +104,33 @@ jobs:
         run: |
           go test ./...
           go build -o ../../dist/native/open-computer-use .
+      - if: runner.os == 'Linux'
+        name: Linux Wayland helper (Rust)
+        working-directory: apps/OpenComputerUseLinux/wayland-helper
+        run: |
+          cargo --version
+          cargo test --locked
+          cargo build --locked --release
+          ls -l target/release/open-computer-use-wayland
+      - if: runner.os == 'Linux'
+        name: Linux X11 engine, global input and SDK actions (isolated Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          session=apps/OpenComputerUseLinux/testdata/x11-session.sh
+          (cd apps/OpenComputerUseLinux && OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 testdata/x11-session.sh go test -count=1 -run 'X11|Guard|RealDesktop' -v ./internal/...)
+          $session sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Fixture" & fixture=$!
+            sleep 2
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_FIXTURE_APP=cherry-linux-fixture COMPUTER_USE_REQUIRE_SCREENSHOT=1
+            node --test protocol/desktop.test.mjs; code=$?
+            kill $fixture; exit $code'
+          $session sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Actions" & fixture=$!
+            sleep 2
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+            node --test protocol/linux-desktop.test.mjs; code=$?
+            kill $fixture; exit $code'
       - if: runner.os == 'Windows'
         working-directory: apps/OpenComputerUseWindows
         run: |

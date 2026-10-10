@@ -67,6 +67,19 @@ That runner builds a GTK fixture and executes both native lifecycle and desktop
 tests before the standalone probe. SDK capture discovers the window by PID/title;
 it does not receive the probe's fixture window ID. Wayland capture is unsupported.
 
+### Linux semantic actions (signed-in desktop)
+
+`apps/OpenComputerUseLinux/testdata/gtk_fixture.py` needs python3 with GTK 3; the
+runtime under test is Python-free. Global input tests must run inside
+`apps/OpenComputerUseLinux/testdata/x11-session.sh`, an isolated Xephyr or Xvfb
+session, so that keys and pointer motion never reach a desktop in use; CI runs them
+under Xvfb. On Wayland, `linux-desktop.test.mjs` checks that global input is refused. Start the fixture, then run
+`node --test protocol/linux-desktop.test.mjs` with
+`COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture` and the runtime path set,
+or `OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 go test ./internal/desktop/` in
+`apps/OpenComputerUseLinux` (which starts the fixture itself). Typing assertions
+need the fixture window to keep focus. The fixture briefly takes focus.
+
 ## macOS (manual permissions)
 
 Build the complete development app with a stable certificate signing identity, and explicitly grant that app

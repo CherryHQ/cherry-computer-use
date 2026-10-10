@@ -7,7 +7,7 @@
 ## 当前目录结构
 
 - `packages/sdk` / `protocol`
-  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 保留单次元素语义点击。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux 其余动作与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
+  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 与 CLI/MCP 共用原生 AT-SPI/X11 引擎，语义动作默认可用，其余动作需显式 `allowGlobalInput` 且仅限 X11。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux Wayland 输入与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
   协议 v2 已实现任务内每应用控制上下文、状态查询与原生停止；观察/动作必须绑定应用会话。Cherry 控制归属、用户停止状态、Tray 与软件光标尚未接入；资源归属及验收顺序见 [runtime 设计](design-docs/computer-use-runtime.md)。
 - `experiments/LinuxNativeProbe/`
   Go 直接接入 AT-SPI D-Bus/X11 的隔离原型，已在无 Python 的 Linux 容器内完成 GTK 计数按钮操作与窗口截图；独立 probe 保留实验边界，同一容器另运行已接入的 Linux SDK 桌面测试；不证明 Wayland 支持。复现步骤见 [实验说明](../experiments/LinuxNativeProbe/README.md)。
@@ -19,9 +19,9 @@
   端到端 smoke runner，会拉起 fixture 和 MCP server，并通过 JSON-RPC 真实调用 9 个 tools；同时也支持单独的 visual cursor idle smoke，用跨进程 observation file 断言等待下一次 move 时是 anchored tip + tiny rotate wobble，而不是横向漂移。
 - `apps/OpenComputerUseWindows`
   实验性 Windows runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 PowerShell UI Automation bridge，构建产物是 `open-computer-use.exe`，并随已有 npm 包的 `dist/windows/<arch>/` bundled artifacts 分发。
-  SDK 的 `sdk.ps1` 复用 `runtime.ps1` 的树记录和 `Invoke-Operation` 动作分发，仅保留会话目标校验、窗口截图和错误协议；不再维护只支持点击的平行实现。共享 Go 层通过可选 `ActionDriver` 接入七种动作，Linux 保持原有能力。SDK 输入固定 UTF-8，解析失败返回无副作用错误；未知执行结果仍禁止后续桌面操作。
+  SDK 的 `sdk.ps1` 复用 `runtime.ps1` 的树记录和 `Invoke-Operation` 动作分发，仅保留会话目标校验、窗口截图和错误协议；不再维护只支持点击的平行实现。共享 Go 层通过可选 `ActionDriver` 接入动作；Linux 的全局输入受 `allowGlobalInput` 约束。SDK 输入固定 UTF-8，解析失败返回无副作用错误；未知执行结果仍禁止后续桌面操作。
 - `apps/OpenComputerUseLinux`
-  实验性 Linux runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 Python AT-SPI bridge，构建产物是 `open-computer-use`，并随已有 npm 包的 `dist/linux/<arch>/` bundled artifacts 分发。
+  实验性 Linux runtime。它不依赖 Swift 或 `.app` bundle；SDK `serve` 与 CLI/MCP 共用 `internal/desktop` 中的 Go AT-SPI/X11 引擎，运行时不需要 Python 或 cgo。构建产物是 `open-computer-use`，并随已有 npm 包的 `dist/linux/<arch>/` bundled artifacts 分发。
 - `packages/OpenComputerUseKit`
   核心库，包含：
   - MCP stdio transport 与 tool registry
@@ -129,13 +129,15 @@
 
 - Linux runtime 位于 `apps/OpenComputerUseLinux`，以 Go 维护 CLI、`call --calls` sequence、MCP JSON-RPC、tool schema 和进程内 snapshot cache。
 - 构建入口是 `scripts/build-open-computer-use-linux.sh --arch arm64|amd64`，默认输出到 `dist/linux/<arch>/open-computer-use`；npm release package 会把两个 Linux artifact 内置到已有 root/alias packages，Node launcher 按 `process.platform/process.arch` 自动选择。
-- Go runtime 通过 `go:embed` 带上 `runtime.py`，执行 tool call 时临时落盘并调用 `python3`。Python bridge 使用 GNOME/GObject Introspection 暴露的 AT-SPI2 接口做 app/window discovery、accessibility tree rendering、semantic action、editable text、value set，以及 best-effort 的 key/mouse fallback；文本能力通过 `Accessible.get_interfaces()` 检测 `Text` / `EditableText`，不依赖不同 PyGObject 版本未必存在的便捷属性。
-- Linux 上最接近 macOS AX 的是 AT-SPI2/D-Bus accessibility，而不是一套统一的后台键鼠输入模型。第一版优先使用元素暴露的 AT-SPI action、EditableText 和 Value 接口；coordinate `click` / `drag` 与 `press_key` 使用 AT-SPI event synthesis fallback，在 Wayland 下只能按 best-effort 处理。
-- Linux runtime 需要运行在已登录桌面用户 session 里。缺少 `XDG_RUNTIME_DIR`、`DBUS_SESSION_BUS_ADDRESS` 或 display 环境时，Go runtime 会在启动 Python AT-SPI bridge 前尝试从 `/run/user/<uid>` 和常见桌面进程自动发现当前用户的 session bus、display / Wayland 值；纯 SSH tty 如果找不到已登录桌面 session，可以启动二进制，但不能直接 inspect 或操作 GUI session。
-- `get_app_state` 的 accessibility tree 在 GTK/GNOME app 上可能很深，Linux bridge 使用与 macOS / Windows 一致的 1200 节点、64 层默认 tree budget，并支持显式提高 `max_tree_nodes` / `max_tree_depth`。截图通过 GDK root window best-effort capture；GNOME Wayland 可能返回黑图，bridge 会检测全黑采样并省略 image block。
+- 显示后端按 [Linux 显示后端架构](design-docs/linux-display-backends.md) 分层：`internal/display` 定义共享类型与 provider 接口，`internal/display/x11` 实现 X11 截图、XTEST 与 guard，`internal/display/wayland` 是 Rust 辅助进程 `wayland-helper/`（`open-computer-use-wayland`）的客户端；辅助进程只在 Wayland 会话中按需启动，目前只做握手与只读探测，`doctor` 输出会话报告。
+- `internal/desktop` 是 SDK 与 CLI/MCP 共用的原生引擎：直接通过 D-Bus 读取 AT-SPI2 的应用、窗口、深度优先树、Action/Text/EditableText/Value，按 PID 与标题在 X11 截取唯一窗口。引擎持有原生引用和执行前重新校验，不持有协议 ID 或快照缓存；每个 runtime 各有一个实例和连接。SDK 适配见 `sdk.go`，CLI/MCP 适配见 `cli_engine.go`，后者保持原有文本树格式、`runtimeId` 路径与元素索引。
+- 语义动作只派发一次、不重试，也不在失败后改用指针：`click` 选择 click/press/activate 等动作；次级动作按名称或描述匹配，重名即拒绝；`set_value` 对 Value 做数值与范围校验，对 EditableText 要求可编辑，并读回结果；`type_text` 只写入窗口中唯一获得焦点的可编辑文本，替换选区或插入光标处，Unicode 以字符偏移、UTF-8 字节长度提交并读回确认。
+- Linux 上最接近 macOS AX 的是 AT-SPI2/D-Bus accessibility，而不是一套统一的后台键鼠输入模型。坐标/非左键/多击 `click`、`drag`、`press_key`、`scroll`（翻页键），以及找不到焦点文本框时的 `type_text`，经 X11 XTEST 发送全局输入：键盘要求目标 X 窗口持有焦点，指针要求落点下方正是目标窗口，否则在发送前拒绝；键位按当前映射查找，缺少的字符临时映射到空闲 keycode 后恢复。X server 不会在 XTEST 客户端断开时释放按键，所以每个 runtime 启动私有的 `input-guard` 子进程，按下前先登记；runtime 以任何方式退出时 guard 读到 EOF，只释放该 runtime 仍按住的键、按钮和临时映射。SDK 需要 `allowGlobalInput: true`，Wayland 下报告 unsupported；CLI 沿用原有门控（仅 `click_method=global` 需要环境变量），在 Wayland 中只能到达 XWayland 窗口，原生 Wayland 窗口会被拒绝而不是假装成功。
+- Linux runtime 需要运行在已登录桌面用户 session 里。缺少 `XDG_RUNTIME_DIR`、`DBUS_SESSION_BUS_ADDRESS` 或 display 环境时，CLI 会从 `/run/user/<uid>` 和常见桌面进程自动发现当前用户的 session bus、display / Wayland 值并显式传给引擎；SDK 使用自身进程环境，不修改它。纯 SSH tty 如果找不到已登录桌面 session，可以启动二进制，但不能直接 inspect 或操作 GUI session。
+- `get_app_state` 的 accessibility tree 在 GTK/GNOME app 上可能很深，Linux 使用与 macOS / Windows 一致的 1200 节点、64 层默认 tree budget，并支持显式提高 `max_tree_nodes` / `max_tree_depth`。截图只在 X11 中按窗口截取；Wayland 下省略 image block，不再截取桌面区域。
 - 这 9 个 tool 的协议面与 macOS / Windows 保持一致：`list_apps`、`get_app_state`、`click`、`perform_secondary_action`、`scroll`、`drag`、`type_text`、`press_key`、`set_value`。其中 element-targeted action 会优先复用上一轮 `get_app_state` 的 runtime path metadata，coordinate action 使用 screenshot/window-relative 坐标。
 - Linux `click_method=accessibility` 映射到 AT-SPI action，`global` 映射到 AT-SPI mouse synthesis 并要求全局指针环境变量；AT-SPI 没有等价的进程定向 mouse dispatch，因此 `app_post` 和 macOS-only 的 `sky_click` 会在 snapshot lookup 前明确返回 unsupported。`auto` 仍保持 AT-SPI action 优先、mouse synthesis fallback 的现有行为。
-- 当前 Linux 侧仍是功能性第一版：没有 visual cursor overlay、没有 installer/desktop entry，也没有独立 Linux fixture。后续 TODO 记录在 `docs/exec-plans/active/20260422-linux-computer-use-runtime.md`。
+- 当前 Linux 侧仍是功能性第一版：没有 visual cursor overlay、没有 installer/desktop entry；`testdata/gtk_fixture.py` 与 `testdata/x11-session.sh`（嵌套 Xephyr 或 Xvfb 的隔离 X11/D-Bus/AT-SPI 会话）只供测试使用，全局输入测试只在隔离会话中运行。共用引擎的后续阶段见 `docs/exec-plans/active/20261009-linux-shared-engine.md`。后续 TODO 记录在 `docs/exec-plans/active/20260422-linux-computer-use-runtime.md`。
 
 ## 关键边界
 
