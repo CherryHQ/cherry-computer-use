@@ -104,3 +104,99 @@ Scope: `apps/OpenComputerUseLinux`、协议测试、CI 与相关文档。
 
 - 隔离 X11 中引擎全局输入测试、SDK 两个桌面测试与 CLI 无 Python 运行通过；CI 步骤主体本地照跑通过。
 - 真实 Wayland 桌面只验证了拒绝路径与语义动作，未向其注入全局输入。x64、平台 tarball、带窗口管理器的 X11 与非 GTK 应用未验证。
+
+## [2026-10-09 16:45] | Task: 规划 Linux X11/Wayland 显示后端架构
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 决定自研；从架构上支持 X11 与 Wayland，并考虑不同合成器和桌面环境，先给出架构概览。
+
+### Changes Overview
+
+Scope: 设计文档，仅文档。
+
+- 新增 Linux 显示后端架构：引擎保持 AT-SPI 部分不变，截图、窗口定位、输入与授权拆为按会话能力组合的 provider。
+- 给出 X11、XWayland、wlroots、GNOME、KDE 的后端矩阵，探测顺序、坐标模型、输入安全契约、门户授权映射、依赖与测试策略，以及 W0–W5 分阶段和待确认问题。
+
+### Design Intent
+
+Wayland 下各合成器提供的协议不同，不能写成单一后端；按能力拼装并逐项报告可用性，才能在不支持的组合上如实拒绝。门户坐标只对显示器流给出位置，所以指针输入被列为需要实验确认的部分，键盘和语义动作先行。
+
+### Files Modified
+
+- [Linux 显示后端架构](../../design-docs/linux-display-backends.md)
+- [设计文档索引](../../design-docs/index.md)、[执行计划](../../exec-plans/active/20261009-linux-shared-engine.md)
+
+### Validation
+
+- 文档检查与相对链接检查；门户接口细节已对照官方文档核对，未经实验的结论在文中标注为待确认。
+
+## [2026-10-09 17:00] | Task: 确定 Linux Wayland 后端的语言分工
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> Wayland 的具体细节不适合用 Go 实现，按"Go 保留现有部分、Wayland 用 Rust 辅助进程"修改架构。
+
+### Changes Overview
+
+Scope: 设计文档，仅文档。
+
+- 架构文档新增"语言与进程边界"：Go 保留协议、会话、AT-SPI、X11 与 `input-guard`；Wayland 协议、门户、libei、PipeWire 与合成器 IPC 由按需启动的 Rust 辅助进程实现。
+- 定义辅助进程的启动时机、stdio 私有协议、所有权与 EOF 清理、系统库处理、构建分发与供应链要求；更新依赖表、测试策略、W0/W1 与待确认问题。
+
+### Design Intent
+
+Go 缺少成熟的 Wayland、libei、PipeWire 实现，cgo 会让 X11 用户也依赖这些库并破坏交叉编译。独立进程沿用 Windows PowerShell 引擎与 `input-guard` 的模式，同时把会话清理和崩溃隔离放在进程边界上。
+
+### Files Modified
+
+- [Linux 显示后端架构](../../design-docs/linux-display-backends.md)、[设计文档索引](../../design-docs/index.md)
+
+### Validation
+
+- 文档检查与相对链接检查；Go 侧库的现状来自检索，成熟度未逐一核实。
+
+## [2026-10-10 09:30] | Task: Linux Wayland W0 只读实验
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> libpipewire 缺失就不加载；开始实现（W0），用户在授权对话框中确认。
+
+### Changes Overview
+
+Scope: Rust 实验原型与设计文档。
+
+- 新增 `experiments/LinuxWaylandProbe`：门户 RemoteDesktop + 窗口 ScreenCast 会话、`ConnectToEIS`、读取设备与区域，不模拟输入。
+- 在 GNOME 50 上确认窗口源可用、libei 绝对指针区域与窗口流共享 `mapping_id` 且以窗口为参照系；XWayland 窗口可用 `GetImage` 截取；记录对话框无父窗口不前置、`mutter-x11-frames` 干扰按标题解析两个问题。
+- 设计文档写入 W0 结论，更新待确认问题与 GNOME 行；libpipewire 缺失时截图可执行文件不启动、其余能力不受影响。
+
+### Design Intent
+
+先只读验证最大的不确定项（Wayland 指针坐标参照系），再决定是否需要 GNOME Shell 扩展。结果表明 GNOME 上不需要扩展即可按窗口坐标寻址，但目标绑定与遮挡送达仍需在隔离会话中验证。
+
+### Files Modified
+
+- [W0 原型](../../../experiments/LinuxWaylandProbe/README.md)
+- [Linux 显示后端架构](../../design-docs/linux-display-backends.md)
+
+### Validation
+
+- 原型在真实 GNOME Wayland 会话中运行三次（一次因未找到对话框超时），第三次完整输出；未发送任何输入。Rust release 构建只依赖 libc/libm/libgcc。
