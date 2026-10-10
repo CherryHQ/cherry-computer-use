@@ -12,24 +12,17 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/wayland"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/x11"
 )
 
 // Error carries a stable code and whether the desktop may already have changed.
-type Error struct {
-	Code, Message string
-	// Effect is "none" when nothing was dispatched, "possible" when the outcome is unknown.
-	Effect string
-}
+type Error = display.Error
 
-func (e *Error) Error() string { return e.Message }
+func fail(code, format string, args ...any) *Error { return display.Fail(code, format, args...) }
 
-func fail(code, format string, args ...any) *Error {
-	return &Error{Code: code, Message: fmt.Sprintf(format, args...), Effect: "none"}
-}
-
-func uncertain(format string, args ...any) *Error {
-	return &Error{Code: "TARGET_UNAVAILABLE", Message: fmt.Sprintf(format, args...), Effect: "possible"}
-}
+func uncertain(format string, args ...any) *Error { return display.Uncertain(format, args...) }
 
 // Ref is an AT-SPI object: a unique bus name and an object path on it.
 type Ref struct {
@@ -42,15 +35,18 @@ type Ref struct {
 type Config struct {
 	Env map[string]string
 	// InputGuard starts the guard process for global input on a display; nil
-	// leaves global input unavailable. See RunInputGuard.
+	// leaves global input unavailable. See x11.RunInputGuard.
 	InputGuard func(display string) *exec.Cmd
+	// WaylandHelper is the path of the Rust Wayland helper; empty means not installed.
+	WaylandHelper string
 }
 
 // Engine is private to one runtime: code is shared, connections and references are not.
 type Engine struct {
 	config Config
 	bus    *dbus.Conn
-	input  *input
+	x11    *x11.Backend
+	helper *wayland.Helper
 }
 
 func New(config Config) *Engine { return &Engine{config: config} }
@@ -117,10 +113,7 @@ func (e *Engine) accessibilityBusAddress(ctx context.Context) (string, error) {
 }
 
 func (e *Engine) Close() error {
-	if e.input != nil {
-		e.input.close()
-		e.input = nil
-	}
+	e.closeDisplay()
 	if e.bus == nil {
 		return nil
 	}

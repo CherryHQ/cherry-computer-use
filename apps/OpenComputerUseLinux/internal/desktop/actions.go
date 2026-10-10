@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 	"math"
 	"strconv"
 	"time"
@@ -140,7 +141,7 @@ func (e *Engine) setNumber(ctx context.Context, node Node, value string) error {
 	return nil
 }
 
-func cancelled() *Error { return fail("CANCELLED", "Action cancelled before dispatch") }
+func cancelled() *Error { return display.Cancelled() }
 
 func formatNumber(value float64) string { return strconv.FormatFloat(value, 'f', -1, 64) }
 

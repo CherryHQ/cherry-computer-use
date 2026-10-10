@@ -16,7 +16,7 @@ import (
 type linuxDesktop struct{ engine *desktop.Engine }
 
 func newLinuxDesktop() *linuxDesktop {
-	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard})}
+	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard, WaylandHelper: waylandHelperPath()})}
 }
 
 // globalInput reports whether X11 global input can be offered, and why not.

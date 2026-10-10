@@ -1,10 +1,11 @@
-package desktop
+package x11
 
 import (
 	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 	"io"
 	"math"
 	"os/exec"
@@ -17,16 +18,6 @@ import (
 	"github.com/jezek/xgb/xtest"
 )
 
-// GlobalTarget names the X11 window that global input must reach: the window of
-// PID whose title equals the observed accessible window title.
-type GlobalTarget struct {
-	PID   uint32
-	Title string
-}
-
-// Point is in X root (screen) coordinates.
-type Point struct{ X, Y float64 }
-
 // input is one runtime's XTEST connection, its guard and what it currently holds.
 type input struct {
 	conn   *xgb.Conn
@@ -37,31 +28,53 @@ type input struct {
 	held   []held
 }
 
-func (e *Engine) globalInput(ctx context.Context) (*input, error) {
+// Backend is one runtime's X11 display: window capture and XTEST input. It
+// implements display.Capturer and display.Injector.
+type Backend struct {
+	display string
+	guard   func(display string) *exec.Cmd
+	input   *input
+}
+
+// New uses the X11 display name; guard starts the input guard (see RunInputGuard),
+// and nil leaves global input unavailable.
+func New(name string, guard func(display string) *exec.Cmd) *Backend {
+	return &Backend{display: name, guard: guard}
+}
+
+// Close releases held input and stops the guard.
+func (e *Backend) Close() {
+	if e.input != nil {
+		e.input.close()
+		e.input = nil
+	}
+}
+
+func (e *Backend) globalInput(ctx context.Context) (*input, error) {
 	if in := e.input; in != nil {
 		select {
 		case <-in.exited:
-			return nil, fail("TARGET_UNAVAILABLE", "The input guard exited; start a new session before using global input")
+			return nil, display.Fail("TARGET_UNAVAILABLE", "The input guard exited; start a new session before using global input")
 		default:
 			return in, nil
 		}
 	}
-	display := e.Display()
-	if display == "" {
-		return nil, fail("DEPENDENCY_MISSING", "Global input needs an X11 display")
+	name := e.display
+	if name == "" {
+		return nil, display.Fail("DEPENDENCY_MISSING", "Global input needs an X11 display")
 	}
-	if e.config.InputGuard == nil {
-		return nil, fail("DEPENDENCY_MISSING", "Global input needs an input guard")
+	if e.guard == nil {
+		return nil, display.Fail("DEPENDENCY_MISSING", "Global input needs an input guard")
 	}
-	conn, err := xgb.NewConnDisplay(display)
+	conn, err := xgb.NewConnDisplay(name)
 	if err != nil {
-		return nil, fail("DEPENDENCY_MISSING", "Cannot connect to the X11 display")
+		return nil, display.Fail("DEPENDENCY_MISSING", "Cannot connect to the X11 display")
 	}
 	if err := xtest.Init(conn); err != nil {
 		conn.Close()
-		return nil, fail("DEPENDENCY_MISSING", "The X11 display does not offer XTEST input")
+		return nil, display.Fail("DEPENDENCY_MISSING", "The X11 display does not offer XTEST input")
 	}
-	in := &input{conn: conn, root: xproto.Setup(conn).DefaultScreen(conn).Root, guard: e.config.InputGuard(display), exited: make(chan struct{})}
+	in := &input{conn: conn, root: xproto.Setup(conn).DefaultScreen(conn).Root, guard: e.guard(name), exited: make(chan struct{})}
 	in.report, err = in.guard.StdinPipe()
 	var ready io.ReadCloser
 	if err == nil {
@@ -72,7 +85,7 @@ func (e *Engine) globalInput(ctx context.Context) (*input, error) {
 	}
 	if err != nil {
 		conn.Close()
-		return nil, fail("DEPENDENCY_MISSING", "Cannot start the input guard: %v", err)
+		return nil, display.Fail("DEPENDENCY_MISSING", "Cannot start the input guard: %v", err)
 	}
 	go func() { _ = in.guard.Wait(); close(in.exited) }()
 	started := make(chan bool, 1)
@@ -92,7 +105,7 @@ func (e *Engine) globalInput(ctx context.Context) (*input, error) {
 	_ = in.report.Close()
 	_ = in.guard.Process.Kill()
 	conn.Close()
-	return nil, fail("DEPENDENCY_MISSING", "The input guard did not start")
+	return nil, display.Fail("DEPENDENCY_MISSING", "The input guard did not start")
 }
 
 // close releases anything still held, then lets the guard exit with nothing to do.
@@ -111,7 +124,7 @@ func (in *input) close() {
 // if this process dies between the press and its release.
 func (in *input) press(item held, event byte, x, y int16) error {
 	if _, err := fmt.Fprintf(in.report, "+%c %d\n", item.kind, item.detail); err != nil {
-		return fail("TARGET_UNAVAILABLE", "The input guard is not running")
+		return display.Fail("TARGET_UNAVAILABLE", "The input guard is not running")
 	}
 	in.held = append(in.held, item)
 	xtest.FakeInput(in.conn, event, item.detail, 0, in.root, x, y, 0)
@@ -150,7 +163,7 @@ func (in *input) keymap() (*keymap, error) {
 	setup := xproto.Setup(in.conn)
 	reply, err := xproto.GetKeyboardMapping(in.conn, setup.MinKeycode, byte(setup.MaxKeycode-setup.MinKeycode+1)).Reply()
 	if err != nil {
-		return nil, fail("TARGET_UNAVAILABLE", "Cannot read the keyboard mapping")
+		return nil, display.Fail("TARGET_UNAVAILABLE", "Cannot read the keyboard mapping")
 	}
 	return &keymap{min: setup.MinKeycode, perCode: int(reply.KeysymsPerKeycode), keysyms: reply.Keysyms, assigned: map[xproto.Keysym]xproto.Keycode{}}, nil
 }
@@ -159,7 +172,7 @@ func (in *input) keymap() (*keymap, error) {
 func (in *input) assign(m *keymap, code xproto.Keycode, keysym xproto.Keysym) error {
 	item := held{'m', byte(code)}
 	if _, err := fmt.Fprintf(in.report, "+m %d\n", code); err != nil {
-		return fail("TARGET_UNAVAILABLE", "The input guard is not running")
+		return display.Fail("TARGET_UNAVAILABLE", "The input guard is not running")
 	}
 	in.held = append(in.held, item)
 	symbols := make([]xproto.Keysym, m.perCode)
@@ -196,25 +209,25 @@ type globalAction struct {
 	sent   bool
 }
 
-func (e *Engine) withGlobalInput(ctx context.Context, target GlobalTarget, run func(*globalAction) error) (err error) {
+func (e *Backend) withGlobalInput(ctx context.Context, target display.Target, run func(*globalAction) error) (err error) {
 	if ctx.Err() != nil {
-		return cancelled()
+		return display.Cancelled()
 	}
 	in, err := e.globalInput(ctx)
 	if err != nil {
 		return err
 	}
-	window, err := findX11Window(in.conn, target.PID, target.Title)
+	window, err := FindWindow(in.conn, target.PID, target.Title)
 	if err != nil {
-		return fail("TARGET_UNAVAILABLE", "%s", err.Error())
+		return display.Fail("TARGET_UNAVAILABLE", "%s", err.Error())
 	}
 	action := &globalAction{ctx: ctx, in: in, window: window}
 	defer func() {
 		in.releaseAll()
 		in.sync()
-		var native *Error
+		var native *display.Error
 		if err != nil && action.sent && (!errors.As(err, &native) || native.Effect == "none") {
-			err = uncertain("Global input stopped part way: %v", err)
+			err = display.Uncertain("Global input stopped part way: %v", err)
 		}
 	}()
 	return run(action)
@@ -222,7 +235,7 @@ func (e *Engine) withGlobalInput(ctx context.Context, target GlobalTarget, run f
 
 func (a *globalAction) checkCancelled() error {
 	if a.ctx.Err() != nil {
-		return fail("CANCELLED", "Global input cancelled")
+		return display.Fail("CANCELLED", "Global input cancelled")
 	}
 	return nil
 }
@@ -247,13 +260,13 @@ func (a *globalAction) within(window xproto.Window) bool {
 func (a *globalAction) requireFocus() error {
 	focus, err := xproto.GetInputFocus(a.in.conn).Reply()
 	if err != nil || focus.Focus <= xproto.InputFocusPointerRoot || !a.within(focus.Focus) {
-		return fail("TARGET_UNAVAILABLE", "The target window does not have keyboard focus; keys would reach another window")
+		return display.Fail("TARGET_UNAVAILABLE", "The target window does not have keyboard focus; keys would reach another window")
 	}
 	return nil
 }
 
 // contains reports whether point lies inside the target window's area.
-func (a *globalAction) contains(point Point) bool {
+func (a *globalAction) contains(point display.Point) bool {
 	geometry, err := xproto.GetGeometry(a.in.conn, xproto.Drawable(a.window)).Reply()
 	if err != nil {
 		return false
@@ -263,7 +276,7 @@ func (a *globalAction) contains(point Point) bool {
 }
 
 // pointAt moves the pointer and confirms the target window is what lies under it.
-func (a *globalAction) pointAt(point Point) error {
+func (a *globalAction) pointAt(point display.Point) error {
 	if err := a.checkCancelled(); err != nil {
 		return err
 	}
@@ -274,7 +287,7 @@ func (a *globalAction) pointAt(point Point) error {
 	for depth := 0; depth < 64; depth++ {
 		reply, err := xproto.QueryPointer(a.in.conn, window).Reply()
 		if err != nil {
-			return fail("TARGET_UNAVAILABLE", "Cannot read the pointer position")
+			return display.Fail("TARGET_UNAVAILABLE", "Cannot read the pointer position")
 		}
 		if reply.Child == 0 {
 			break
@@ -282,7 +295,7 @@ func (a *globalAction) pointAt(point Point) error {
 		window = reply.Child
 	}
 	if !a.within(window) {
-		return fail("TARGET_UNAVAILABLE", "Another window covers the point; the input would reach it instead")
+		return display.Fail("TARGET_UNAVAILABLE", "Another window covers the point; the input would reach it instead")
 	}
 	return nil
 }
@@ -312,27 +325,27 @@ func (a *globalAction) key(code xproto.Keycode, shift xproto.Keycode) error {
 
 // WindowRect is the X window for target in root coordinates; SDK coordinates are
 // relative to it because its capture is the screenshot callers see.
-func (e *Engine) WindowRect(ctx context.Context, target GlobalTarget) (Rect, error) {
-	var rect Rect
+func (e *Backend) WindowRect(ctx context.Context, target display.Target) (display.Rect, error) {
+	var rect display.Rect
 	err := e.withGlobalInput(ctx, target, func(a *globalAction) error {
 		geometry, err := xproto.GetGeometry(a.in.conn, xproto.Drawable(a.window)).Reply()
 		if err != nil {
-			return fail("TARGET_UNAVAILABLE", "Window geometry is unavailable")
+			return display.Fail("TARGET_UNAVAILABLE", "Window geometry is unavailable")
 		}
 		origin, err := xproto.TranslateCoordinates(a.in.conn, a.window, a.in.root, 0, 0).Reply()
 		if err != nil {
-			return fail("TARGET_UNAVAILABLE", "Window position is unavailable")
+			return display.Fail("TARGET_UNAVAILABLE", "Window position is unavailable")
 		}
-		rect = Rect{float64(origin.DstX), float64(origin.DstY), float64(geometry.Width), float64(geometry.Height)}
+		rect = display.Rect{X: float64(origin.DstX), Y: float64(origin.DstY), Width: float64(geometry.Width), Height: float64(geometry.Height)}
 		return nil
 	})
 	return rect, err
 }
 
 // PointerClick clicks button 1 (left), 2 (middle) or 3 (right) count times at point.
-func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Point, button byte, count int) error {
+func (e *Backend) PointerClick(ctx context.Context, target display.Target, point display.Point, button byte, count int) error {
 	if button < 1 || button > 3 || count < 1 || count > 3 {
-		return fail("INVALID_ARGUMENT", "Unsupported click button or count")
+		return display.Fail("INVALID_ARGUMENT", "Unsupported click button or count")
 	}
 	return e.withGlobalInput(ctx, target, func(a *globalAction) error {
 		if err := a.pointAt(point); err != nil {
@@ -355,10 +368,10 @@ func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Po
 }
 
 // Drag holds the left button from one point to another inside the target window.
-func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) error {
+func (e *Backend) Drag(ctx context.Context, target display.Target, from, to display.Point) error {
 	return e.withGlobalInput(ctx, target, func(a *globalAction) error {
 		if !a.contains(to) {
-			return fail("INVALID_ARGUMENT", "The drag must end inside the target window")
+			return display.Fail("INVALID_ARGUMENT", "The drag must end inside the target window")
 		}
 		if err := a.pointAt(from); err != nil {
 			return err
@@ -385,7 +398,7 @@ func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) 
 }
 
 // PressKey sends one chord to the focused target window.
-func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, value string) error {
+func (e *Backend) PressKey(ctx context.Context, target display.Target, value string) error {
 	chord, err := parseKeyChord(value)
 	if err != nil {
 		return err
@@ -399,7 +412,7 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, value string
 		for _, keysym := range chord.modifiers {
 			code, _, ok := m.lookup(keysym)
 			if !ok {
-				return fail("UNSUPPORTED_CAPABILITY", "The keyboard has no modifier key %#x", keysym)
+				return display.Fail("UNSUPPORTED_CAPABILITY", "The keyboard has no modifier key %#x", keysym)
 			}
 			modifiers = append(modifiers, code)
 		}
@@ -407,7 +420,7 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, value string
 		if !ok {
 			spare := m.spare()
 			if len(spare) == 0 {
-				return fail("UNSUPPORTED_CAPABILITY", "No free keycode can carry key %q", value)
+				return display.Fail("UNSUPPORTED_CAPABILITY", "No free keycode can carry key %q", value)
 			}
 			if err := a.in.assign(m, spare[0], chord.key); err != nil {
 				return err
@@ -442,9 +455,9 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, value string
 
 // TypeKeys types text into the focused target window, temporarily mapping
 // characters the keyboard layout lacks.
-func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string) error {
+func (e *Backend) TypeKeys(ctx context.Context, target display.Target, text string) error {
 	if !utf8.ValidString(text) {
-		return fail("INVALID_ARGUMENT", "Text is not valid UTF-8")
+		return display.Fail("INVALID_ARGUMENT", "Text is not valid UTF-8")
 	}
 	return e.withGlobalInput(ctx, target, func(a *globalAction) error {
 		m, err := a.in.keymap()
@@ -472,7 +485,7 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 				free = free[1:]
 			}
 			if end == start {
-				return fail("UNSUPPORTED_CAPABILITY", "No free keycode can carry %q", string(runes[start]))
+				return display.Fail("UNSUPPORTED_CAPABILITY", "No free keycode can carry %q", string(runes[start]))
 			}
 			a.in.sync()
 			time.Sleep(30 * time.Millisecond)
@@ -501,10 +514,10 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 
 // PageScroll sends page keys to the focused target: up/down page vertically and
 // left/right move horizontally, ceil(pages) times.
-func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction string, pages float64) error {
+func (e *Backend) PageScroll(ctx context.Context, target display.Target, direction string, pages float64) error {
 	key := map[string]string{"up": "Page_Up", "down": "Page_Down", "left": "Left", "right": "Right"}[direction]
 	if key == "" || pages <= 0 || pages > 100 {
-		return fail("INVALID_ARGUMENT", "Invalid scroll direction or page count")
+		return display.Fail("INVALID_ARGUMENT", "Invalid scroll direction or page count")
 	}
 	chord, _ := parseKeyChord(key)
 	return e.withGlobalInput(ctx, target, func(a *globalAction) error {
@@ -514,7 +527,7 @@ func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction 
 		}
 		code, _, ok := m.lookup(chord.key)
 		if !ok {
-			return fail("UNSUPPORTED_CAPABILITY", "The keyboard has no %s key", key)
+			return display.Fail("UNSUPPORTED_CAPABILITY", "The keyboard has no %s key", key)
 		}
 		for i := 0; i < int(math.Ceil(pages)); i++ {
 			if err := a.key(code, 0); err != nil {

@@ -200,3 +200,38 @@ Scope: Rust 实验原型与设计文档。
 ### Validation
 
 - 原型在真实 GNOME Wayland 会话中运行三次（一次因未找到对话框超时），第三次完整输出；未发送任何输入。Rust release 构建只依赖 libc/libm/libgcc。
+
+## [2026-10-10 10:30] | Task: Linux 显示后端 W1 结构
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 提交并推送到 PR，然后开始 W1。
+
+### Changes Overview
+
+Scope: `apps/OpenComputerUseLinux`、CI、文档。
+
+- Go：新增 `internal/display`（错误、目标、几何、可用性与 `Capturer`/`Injector` 接口），X11 截图、XTEST 输入与 guard 移入 `internal/display/x11` 的 `Backend`；引擎按会话组合后端，对外 API 与行为不变。测试随代码拆分，guard 与 owner 退出测试归入 x11 包。
+- Rust：新增 `wayland-helper/`（`open-computer-use-wayland`），Content-Length 分帧、`hello` 握手与只读探测（Wayland 全局对象、门户版本、合成器提示），EOF 时清理退出，畸形帧结束会话。
+- Go 端 `internal/display/wayland` 客户端：启动与握手超时、串行调用、取消、崩溃后不重启、关闭时先结束输入再等待退出。
+- `doctor` 输出会话报告；Wayland 会话中启动辅助进程并附上探测结果。CI 新增 Rust 测试与构建，Xvfb 步骤覆盖移动后的测试。
+
+### Design Intent
+
+先把"按会话组合后端"的结构和跨语言进程边界建好并测稳，再在 W2/W3 往里加能力，避免能力实现与结构调整混在一起。辅助进程不自动重启，因为它持有的门户会话与按键状态随进程消失，必须如实报告。
+
+### Files Modified
+
+- [显示层类型](../../../apps/OpenComputerUseLinux/internal/display/display.go)、[X11 后端](../../../apps/OpenComputerUseLinux/internal/display/x11/input.go)、[辅助进程客户端](../../../apps/OpenComputerUseLinux/internal/display/wayland/helper.go)、[引擎组合](../../../apps/OpenComputerUseLinux/internal/desktop/display.go)
+- [Rust 辅助进程](../../../apps/OpenComputerUseLinux/wayland-helper/src/main.rs)
+- [CI](../../../.github/workflows/sdk-check.yml)、[Linux 显示后端架构](../../design-docs/linux-display-backends.md)、架构文档与执行计划
+
+### Validation
+
+- `go vet`、`go test -race`；隔离 X11 中 X11 全局输入与 guard 测试通过；`cargo test` 6 项通过；真实 GNOME 会话中 `doctor` 启动辅助进程并返回探测、退出后无残留进程；缺少辅助进程与 X11 会话两种情况的报告正确。辅助进程 release 体积 1.9 MB（arm64），只依赖 libc/libgcc。

@@ -40,7 +40,7 @@ func newService() *service {
 	if os.Getenv("XAUTHORITY") == "" && env["XAUTHORITY"] != "" {
 		_ = os.Setenv("XAUTHORITY", env["XAUTHORITY"])
 	}
-	return &service{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard}), snapshots: map[string]*appSnapshot{}}
+	return &service{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard, WaylandHelper: waylandHelperPath()}), snapshots: map[string]*appSnapshot{}}
 }
 func (s *service) callTool(name string, args map[string]any) toolCallResult {
 	switch name {

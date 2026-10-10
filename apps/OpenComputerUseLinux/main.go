@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/x11"
 )
 
 var version = "0.1.1"
@@ -147,7 +149,7 @@ func (limit textLimit) runtimeValue() any {
 }
 
 // inputGuard starts this executable's guard, which releases held global input if
-// the runtime dies; see desktop.RunInputGuard.
+// the runtime dies; see x11.RunInputGuard.
 func inputGuard(display string) *exec.Cmd {
 	executable, err := os.Executable()
 	if err != nil {
@@ -156,6 +158,19 @@ func inputGuard(display string) *exec.Cmd {
 	command := exec.Command(executable, "input-guard", display)
 	command.Stderr = os.Stderr
 	return command
+}
+
+// waylandHelperPath is the Rust Wayland helper shipped next to this executable;
+// OPEN_COMPUTER_USE_WAYLAND_HELPER overrides it for development.
+func waylandHelperPath() string {
+	if path := os.Getenv("OPEN_COMPUTER_USE_WAYLAND_HELPER"); path != "" {
+		return path
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(executable), "open-computer-use-wayland")
 }
 
 func linuxRuntimeEnvironment(base []string) []string {
@@ -929,7 +944,7 @@ func runCLI(args []string, stdout io.Writer) error {
 		if len(args) != 2 {
 			return errors.New("input-guard is internal")
 		}
-		desktop.GuardMain(args[1])
+		x11.GuardMain(args[1])
 		return nil
 	case "serve":
 		sessionID, err := sdkruntime.ParseServeArgs(args[1:])
@@ -944,6 +959,15 @@ func runCLI(args []string, stdout io.Writer) error {
 		})
 	case "doctor":
 		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) and X11 engine runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) uses X11 XTEST, reaches only X11/XWayland windows, and requires the target window to have keyboard focus or lie under the pointer.")
+		svc := newService()
+		defer svc.engine.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+		defer cancel()
+		report, err := json.MarshalIndent(svc.engine.Report(ctx), "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "\nSession report:\n%s\n", report)
 		return nil
 	case "list-apps":
 		result := newService().callTool("list_apps", map[string]any{})

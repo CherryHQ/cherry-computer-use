@@ -98,7 +98,7 @@
 
 ### 独立后续：Wayland
 
-架构与分阶段（W0–W5）见 [Linux 显示后端架构](../../design-docs/linux-display-backends.md)。
+架构与分阶段（W0–W5）见 [Linux 显示后端架构](../../design-docs/linux-display-backends.md)。2026-10-10：W0 只读实验与 W1 结构（Go 显示层拆分、Rust 辅助进程骨架、`doctor` 会话报告）完成，Wayland 能力尚未开放。
 
 AT-SPI 语义操作与 Wayland 截图/输入分开报告。后者验证 RemoteDesktop/ScreenCast portal、PipeWire、必要的 EIS 接入、显式用户授权、任务会话寿命及停止清理，在 GNOME 与 KDE 分别执行。优先复用平台库，经过实验再确定绑定和依赖，不能把 X11 注入机械翻译成 Wayland 支持。
 

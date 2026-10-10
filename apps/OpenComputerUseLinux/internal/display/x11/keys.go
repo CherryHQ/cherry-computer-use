@@ -1,6 +1,7 @@
-package desktop
+package x11
 
 import (
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -56,7 +57,7 @@ func parseKeyChord(value string) (keyChord, error) {
 	for _, part := range parts[:len(parts)-1] {
 		keysym, ok := modifierKeysyms[strings.ToLower(strings.TrimSpace(part))]
 		if !ok {
-			return keyChord{}, fail("INVALID_ARGUMENT", "Unsupported modifier %q", part)
+			return keyChord{}, display.Fail("INVALID_ARGUMENT", "Unsupported modifier %q", part)
 		}
 		chord.modifiers = append(chord.modifiers, keysym)
 	}
@@ -70,7 +71,7 @@ func parseKeyChord(value string) (keyChord, error) {
 	case len(lower) >= 2 && lower[0] == 'f':
 		number, err := strconv.Atoi(lower[1:])
 		if err != nil || number < 1 || number > 24 {
-			return keyChord{}, fail("INVALID_ARGUMENT", "Unsupported key %q", main)
+			return keyChord{}, display.Fail("INVALID_ARGUMENT", "Unsupported key %q", main)
 		}
 		chord.key = xproto.Keysym(0xffbe + number - 1)
 	case utf8.RuneCountInString(main) == 1:
@@ -81,7 +82,7 @@ func parseKeyChord(value string) (keyChord, error) {
 		}
 		chord.key = runeKeysym(r)
 	default:
-		return keyChord{}, fail("INVALID_ARGUMENT", "Unsupported key %q", main)
+		return keyChord{}, display.Fail("INVALID_ARGUMENT", "Unsupported key %q", main)
 	}
 	return chord, nil
 }

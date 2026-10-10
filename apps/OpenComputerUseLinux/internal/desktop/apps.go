@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ type App struct {
 }
 
 // Rect is in screen coordinates as reported by AT-SPI.
-type Rect struct{ X, Y, Width, Height float64 }
+type Rect = display.Rect
 
 // Window is a top-level child of an application.
 type Window struct {
@@ -175,5 +176,5 @@ func (e *Engine) extents(ctx context.Context, ref Ref) *Rect {
 	if box.Width <= 0 || box.Height <= 0 || box.Width > 100000 || box.Height > 100000 {
 		return nil
 	}
-	return &Rect{float64(box.X), float64(box.Y), float64(box.Width), float64(box.Height)}
+	return &Rect{X: float64(box.X), Y: float64(box.Y), Width: float64(box.Width), Height: float64(box.Height)}
 }

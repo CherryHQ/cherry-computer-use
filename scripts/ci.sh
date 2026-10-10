@@ -27,4 +27,11 @@ if command -v go >/dev/null 2>&1; then
   )
 fi
 
+if command -v cargo >/dev/null 2>&1; then
+  (
+    cd "${repo_root}/apps/OpenComputerUseLinux/wayland-helper"
+    cargo test --locked
+  )
+fi
+
 echo "基础 CI 检查通过"
