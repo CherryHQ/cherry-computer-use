@@ -297,14 +297,8 @@ pub fn active_window() -> Result<Option<ActiveWindow>, Failure> {
         let tree = sway_request(&path, 4).map_err(unavailable)?;
         return Ok(Some(focused_sway_node(&tree).unwrap_or(ActiveWindow { pid: None, title: String::new(), rect: None })));
     }
-    if let (Ok(signature), Ok(runtime)) = (std::env::var("HYPRLAND_INSTANCE_SIGNATURE"), std::env::var("XDG_RUNTIME_DIR")) {
-        let path = format!("{runtime}/hypr/{signature}/.socket.sock");
-        let mut stream = UnixStream::connect(&path).map_err(|e| unavailable(e.to_string()))?;
-        stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
-        stream.write_all(b"j/activewindow").map_err(|e| unavailable(e.to_string()))?;
-        let mut reply = String::new();
-        stream.read_to_string(&mut reply).map_err(|e| unavailable(e.to_string()))?;
-        let window: Value = serde_json::from_str(&reply).map_err(|e| unavailable(e.to_string()))?;
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+        let window = hyprland_request("j/activewindow").map_err(unavailable)?;
         let pair = |name: &str| window.get(name).and_then(Value::as_array).filter(|v| v.len() == 2).map(|v| (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0)));
         return Ok(Some(ActiveWindow {
             pid: window.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()),
@@ -315,8 +309,20 @@ pub fn active_window() -> Result<Option<ActiveWindow>, Failure> {
     Ok(None)
 }
 
+/// One Hyprland IPC request on the instance's control socket.
+pub fn hyprland_request(command: &str) -> Result<Value, String> {
+    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|e| e.to_string())?;
+    let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|e| e.to_string())?;
+    let mut stream = UnixStream::connect(format!("{runtime}/hypr/{signature}/.socket.sock")).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+    stream.write_all(command.as_bytes()).map_err(|e| e.to_string())?;
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).map_err(|e| e.to_string())?;
+    serde_json::from_str(&reply).map_err(|e| e.to_string())
+}
+
 /// One i3/Sway IPC request: "i3-ipc", payload length, message type, payload.
-fn sway_request(path: &str, kind: u32) -> Result<Value, String> {
+pub fn sway_request(path: &str, kind: u32) -> Result<Value, String> {
     let mut stream = UnixStream::connect(path).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
     let mut request = b"i3-ipc".to_vec();

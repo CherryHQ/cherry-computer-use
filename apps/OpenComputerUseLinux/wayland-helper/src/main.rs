@@ -12,6 +12,7 @@ mod frame;
 mod keyboard;
 mod keymap;
 mod probe;
+mod window;
 mod wlr;
 
 use std::io::{self, BufReader, Write};
@@ -101,6 +102,14 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
                 });
             }
             Ok(json!({ "granted": true }))
+        }
+        "window.find" => {
+            let pid = request.params.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).ok_or_else(|| refuse("INVALID_ARGUMENT", "pid is required"))?;
+            Ok(window::describe(&window::find(pid, text("title")?)?))
+        }
+        "window.capture" => {
+            let pid = request.params.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).ok_or_else(|| refuse("INVALID_ARGUMENT", "pid is required"))?;
+            Ok(window::capture(&window::find(pid, text("title")?)?)?.to_json())
         }
         "window.active" => match wlr::active_window()? {
             None => Ok(json!({ "available": false })),

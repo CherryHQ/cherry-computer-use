@@ -141,6 +141,7 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends sway
           sway --version
+          cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
           session="$PWD/apps/OpenComputerUseLinux/testdata/wlroots-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" sway go test -count=1 -run Wlroots -v ./internal/desktop/)
@@ -217,7 +218,7 @@ jobs:
       - name: Wayland keyboard in an isolated headless GNOME
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0 wayland-utils
           gnome-shell --version
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
           session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"

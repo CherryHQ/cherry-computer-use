@@ -87,10 +87,14 @@ call("keyboard.grant", via="mutter-test")
 # activates windows only on keyboard focus. Shift alone types nothing.
 call("keyboard.chord", modifiers=[], key=0xffe1)
 open(sys.argv[1]).read()
-' "$log.keyboard" | OPEN_COMPUTER_USE_WAYLAND_TEST=1 "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
+' "$log.keyboard" | OPEN_COMPUTER_USE_WAYLAND_TEST=1 "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >"$log.keyboard-replies" 2>&1 &
   keyboard=$!
   trap 'echo > "$log.keyboard"; cleanup' EXIT
-  sleep 1
+  sleep 2
+  # Report the warm-up result: without a seat keyboard GTK never activates a window.
+  if ! grep -q '"granted":true' "$log.keyboard-replies" 2>/dev/null; then
+    echo "gnome-session.sh: the warm-up keyboard was not granted: $(tr -d '\r' < "$log.keyboard-replies" 2>/dev/null | tail -c 400)" >&2
+  fi
 fi
 env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland \
   OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"

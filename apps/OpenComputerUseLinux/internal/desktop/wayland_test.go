@@ -108,6 +108,8 @@ func TestGNOMEWaylandKeyboard(t *testing.T) {
 		shell, _ := exec.Command("gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
 			"--method", "org.gnome.Shell.Eval", "global.display.focus_window ? global.display.focus_window.title + ' pid ' + global.display.focus_window.get_pid() : 'no focus window'").CombinedOutput()
 		t.Logf("shell focus window: %s", strings.TrimSpace(string(shell)))
+		seat, _ := exec.Command("sh", "-c", "wayland-info 2>&1 | grep -A2 'wl_seat'").CombinedOutput()
+		t.Logf("seat: %s", strings.Join(strings.Fields(string(seat)), " "))
 		windows, _ := engine.Windows(ctx, app)
 		for _, w := range windows {
 			t.Logf("accessible window %q role=%s states=%v active=%v", w.Title, w.Role, w.States, w.States.Has(StateActive))
