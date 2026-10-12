@@ -137,21 +137,6 @@ jobs:
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
       - if: runner.os == 'Linux'
-        name: Linux Wayland keyboard (isolated headless GNOME)
-        run: |
-          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin
-          gnome-shell --version
-          cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
-          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
-          session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
-          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOME -v ./internal/desktop/)
-          "$session" sh -c '
-            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
-            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
-            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
-            node --test protocol/linux-desktop.test.mjs; code=$?
-            kill $fixture; exit $code'
-      - if: runner.os == 'Linux'
         name: Linux wlroots virtual keyboard (isolated headless Sway)
         run: |
           sudo apt-get install -y --no-install-recommends sway
@@ -204,3 +189,42 @@ jobs:
       - name: Test SDK client and package consumers
         if: ${{ !cancelled() && steps.sdk-build.outcome == 'success' }}
         run: npm run test:built --workspace @cherrystudio/computer-use
+
+  # GNOME 46 on ubuntu-24.04 focuses a headless fixture without GTK ever reporting
+  # it active, so the GNOME portal keyboard runs on a GNOME 50 image instead.
+  linux-gnome:
+    name: Linux Wayland keyboard (headless GNOME, ubuntu-26.04)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: "1.23.4"
+          cache-dependency-path: apps/OpenComputerUseLinux/go.sum
+      - run: npm ci --ignore-scripts
+      - run: npm run sdk:build
+      - name: Build the Linux runtime and Wayland helper
+        run: |
+          mkdir -p dist/native
+          (cd apps/OpenComputerUseLinux && go build -o ../../dist/native/open-computer-use .)
+          (cd apps/OpenComputerUseLinux/wayland-helper && cargo --version && cargo build --locked --release)
+          cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
+      - name: Wayland keyboard in an isolated headless GNOME
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          gnome-shell --version
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
+          session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOME -v ./internal/desktop/)
+          "$session" sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
+            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+            node --test protocol/linux-desktop.test.mjs; code=$?
+            kill $fixture; exit $code'

@@ -78,8 +78,9 @@ before any grant and never opens the portal dialog. Inside
 `apps/OpenComputerUseLinux/testdata/gnome-session.sh` (a headless GNOME Shell with
 private runtime and config directories; set `OPEN_COMPUTER_USE_WAYLAND_HELPER` to a
 built helper) the same test also grants `remoteDesktop` through Mutter's API and sends
-keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. CI runs both in the Linux
-job after installing `gnome-shell`. Session services may mount FUSE filesystems in the
+keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. CI runs both in a separate
+`ubuntu-26.04` job (GNOME 50): on `ubuntu-24.04` (GNOME 46) the shell focuses the headless
+fixture but GTK never reports it active, so keys are correctly refused there. Session services may mount FUSE filesystems in the
 private runtime directory; the scripts unmount them on exit and never let cleanup change
 the command's exit status.
 

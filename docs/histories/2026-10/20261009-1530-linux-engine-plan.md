@@ -356,3 +356,19 @@ wlroots 合成器开放虚拟键盘和带 PID 的 IPC，能把输入绑定到具
 
 - 隔离 X11、GNOME、Sway、Hyprland 中引擎与 SDK 测试全部通过；Sway 与 Hyprland 各 3 次重复通过；真实桌面的 SDK 与原生协议测试通过；真实会话前后不变、无残留。
 - 修饰键实测：最初的 `modifiers` 请求与键位表 `modifier_map` 都未生效（GTK 记录到状态 0），改为先按修饰键再上报后生效；跨设备的键码复用会让 Ctrl+A 失效，固定基础键码后通过。
+
+## [2026-10-12 18:10] | Task: 修复无头 GNOME CI
+
+### User Query
+
+> 等 CI 结果，失败了就修；之后改用 ubuntu-26.04 运行 GNOME 键盘测试。
+
+### Changes Overview
+
+- 辅助进程在 `ei_seat.done` 之后才绑定键盘能力，并在等待超时时报告缺少的环节；GNOME 46 上授权因此成功。
+- 隔离 GNOME 会话以 unsafe mode 启动并通过 `Shell.Eval` 让新窗口获得焦点，预热键盘在授权后轻按 Shift；测试在窗口未激活时输出外壳与 AT-SPI 的焦点信息。
+- 诊断显示 GNOME 46（`ubuntu-24.04`）的外壳已聚焦夹具窗口，但 GTK 始终不报告 ACTIVE，按键按设计被拒绝；GNOME 键盘测试移到独立的 `ubuntu-26.04` 任务（GNOME 50，与本地一致）。
+
+### Validation
+
+- GNOME 50 本地照跑新任务的步骤通过；远端 `ubuntu-26.04` 任务待首次运行确认镜像可用。
