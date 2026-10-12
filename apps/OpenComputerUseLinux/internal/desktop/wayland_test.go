@@ -106,7 +106,7 @@ func TestGNOMEWaylandKeyboard(t *testing.T) {
 		// Tell a compositor that did not focus the window from an AT-SPI state that
 		// was not reported.
 		shell, _ := exec.Command("gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
-			"--method", "org.gnome.Shell.Eval", "global.display.focus_window ? global.display.focus_window.title + ' pid ' + global.display.focus_window.get_pid() : 'no focus window'").CombinedOutput()
+			"--method", "org.gnome.Shell.Eval", "(global.display.focus_window ? global.display.focus_window.title + ' pid ' + global.display.focus_window.get_pid() : 'no focus window') + '; overview ' + Main.overview.visible + '; stage key focus ' + global.stage.key_focus").CombinedOutput()
 		t.Logf("shell focus window: %s", strings.TrimSpace(string(shell)))
 		seat, _ := exec.Command("sh", "-c", "wayland-info 2>&1 | grep -A2 'wl_seat'").CombinedOutput()
 		t.Logf("seat: %s", strings.Join(strings.Fields(string(seat)), " "))

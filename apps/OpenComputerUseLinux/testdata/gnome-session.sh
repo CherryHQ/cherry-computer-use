@@ -57,10 +57,13 @@ for _ in $(seq 100); do
 done
 # Give each new window focus once it is shown, as a desktop does when the user
 # starts an app. Without an activation token, some GNOME versions (46) leave a
-# test fixture unfocused, and keys are then correctly refused.
+# test fixture unfocused, and keys are then correctly refused. The shell may
+# start in the overview, which keeps keyboard focus on its own search entry even
+# while a window is the focus window; leave it first, as activating from the
+# overview does.
 for _ in $(seq 50); do
   result=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval \
-    "global.display.connect('window-created', (display, window) => window.connect('shown', w => w.activate(global.get_current_time()))); 'ok'" 2>/dev/null) && break
+    "global.display.connect('window-created', (display, window) => window.connect('shown', w => { Main.overview.hide(); w.activate(global.get_current_time()); })); 'ok'" 2>/dev/null) && break
   sleep 0.2
 done
 case "${result:-}" in
