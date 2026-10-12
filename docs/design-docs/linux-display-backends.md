@@ -167,7 +167,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | x11 | Xvfb / Xephyr（已有 `x11-session.sh`） | ✅ 已接入 |
 | 辅助进程协议与清理 | `cargo test` 加 Go 端假辅助进程测试（EOF、崩溃、超时） | 可接入 |
 | wlroots | 无头 Sway 或 labwc（`WLR_BACKENDS=headless`） | 可接入 |
-| GNOME | 🧪 `mutter --headless` 加会话内门户后端；授权对话框如何在测试中确认待实验 | 待定 |
+| GNOME | `testdata/gnome-session.sh`：无头 GNOME Shell、私有 XDG 目录，用 Mutter RemoteDesktop API 代替无人点击的门户对话框 | ✅ 已接入（GitHub `ubuntu-24.04` 为 GNOME 46） |
 | KDE | 🧪 `kwin_wayland --virtual` | 待定 |
 
 任何后端的全局输入测试都只在隔离会话中运行，不向开发者正在使用的桌面注入。
@@ -207,7 +207,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 测试环境：无头 GNOME 起初没有键盘，第一个 EIS 键盘出现后客户端才异步绑定键盘，这段时间内的按键会丢失；`testdata/gnome-session.sh` 在会话开始时保持一个键盘，模拟有物理键盘的桌面。
 - 测试隔离事故：最初的会话脚本与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket，并写入了真实的 GNOME Shell 状态文件。脚本现为每个会话创建私有的运行时、配置、数据、缓存与状态目录，并验证真实目录前后不变。
 - CLI：X11 与 XWayland 窗口仍走 XTEST；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
-- 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、CI（GitHub 运行器上运行无头 GNOME 尚未尝试）、门户授权持久化。
+- 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、门户授权持久化。CI 在无头 GNOME 中运行引擎与 SDK 键盘测试。
 
 ## 待确认问题
 

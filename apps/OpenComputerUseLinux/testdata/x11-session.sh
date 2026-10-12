@@ -23,7 +23,20 @@ else
   exit 1
 fi
 server=$!
-trap 'kill "$server" 2>/dev/null || true; rm -rf "$root"; (for _ in 1 2 3 4 5; do sleep 1; rm -rf "$root"; done) &' EXIT
+# Cleanup must never change the command's exit status.
+cleanup() {
+  set +e
+  kill "$server" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    mounts=$(awk -v root="$root/" 'index($2, root) == 1 { print $2 }' /proc/mounts)
+    [ -z "$mounts" ] && break
+    for mount in $mounts; do fusermount3 -u -z "$mount" 2>/dev/null || fusermount -u -z "$mount" 2>/dev/null; done
+    sleep 0.5
+  done
+  rm -rf "$root" 2>/dev/null
+  (for _ in 1 2 3 4 5; do sleep 1; rm -rf "$root" 2>/dev/null; done) &
+}
+trap cleanup EXIT
 socket="/tmp/.X11-unix/X${display#:}"
 for _ in $(seq 50); do [ -S "$socket" ] && break; sleep 0.1; done
 [ -S "$socket" ] || { echo "X server did not start on $display" >&2; exit 1; }

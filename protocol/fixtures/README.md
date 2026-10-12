@@ -78,7 +78,10 @@ before any grant and never opens the portal dialog. Inside
 `apps/OpenComputerUseLinux/testdata/gnome-session.sh` (a headless GNOME Shell with
 private runtime and config directories; set `OPEN_COMPUTER_USE_WAYLAND_HELPER` to a
 built helper) the same test also grants `remoteDesktop` through Mutter's API and sends
-keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. Start the fixture, then run
+keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. CI runs both in the Linux
+job after installing `gnome-shell`. Session services may mount FUSE filesystems in the
+private runtime directory; the scripts unmount them on exit and never let cleanup change
+the command's exit status. Start the fixture, then run
 `node --test protocol/linux-desktop.test.mjs` with
 `COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture` and the runtime path set,
 or `OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 go test ./internal/desktop/` in

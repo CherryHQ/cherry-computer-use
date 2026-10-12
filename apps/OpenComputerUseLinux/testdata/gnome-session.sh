@@ -30,12 +30,24 @@ display="wayland-ocu-test"
 log="$OCU_GNOME_SESSION_ROOT/shell.log"
 gnome-shell --headless --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
 shell=$!
+# Session services (document portal, gvfs) may mount FUSE filesystems in the
+# private runtime directory. Cleanup must never change the command's exit status.
 cleanup() {
-  kill "$shell" 2>/dev/null || true
-  wait "$shell" 2>/dev/null || true
-  rm -rf "$OCU_GNOME_SESSION_ROOT"
-  # Session services can still recreate their runtime directory while exiting.
-  (for _ in 1 2 3 4 5; do sleep 1; rm -rf "$OCU_GNOME_SESSION_ROOT"; done) &
+  set +e
+  kill "$shell" 2>/dev/null
+  wait "$shell" 2>/dev/null
+  remove_root "$OCU_GNOME_SESSION_ROOT"
+}
+remove_root() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    mounts=$(awk -v root="$1/" 'index($2, root) == 1 { print $2 }' /proc/mounts)
+    [ -z "$mounts" ] && break
+    for mount in $mounts; do fusermount3 -u -z "$mount" 2>/dev/null || fusermount -u -z "$mount" 2>/dev/null; done
+    sleep 0.5
+  done
+  rm -rf "$1" 2>/dev/null
+  # Exiting services can recreate their runtime directories briefly.
+  (for _ in 1 2 3 4 5; do sleep 1; rm -rf "$1" 2>/dev/null; done) &
 }
 trap cleanup EXIT
 for _ in $(seq 100); do

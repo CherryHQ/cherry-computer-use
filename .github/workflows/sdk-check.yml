@@ -136,6 +136,21 @@ jobs:
         run: |
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
+      - if: runner.os == 'Linux'
+        name: Linux Wayland keyboard (isolated headless GNOME)
+        run: |
+          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin
+          gnome-shell --version
+          cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
+          session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOME -v ./internal/desktop/)
+          "$session" sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
+            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+            node --test protocol/linux-desktop.test.mjs; code=$?
+            kill $fixture; exit $code'
       - run: node --test protocol/native.test.mjs
       - if: runner.os == 'Windows'
         shell: powershell

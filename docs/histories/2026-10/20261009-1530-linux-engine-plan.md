@@ -276,3 +276,26 @@ libei 只能送达合成器焦点，因此把目标绑定放在每次按键前�
 
 - 隔离 GNOME：引擎 Wayland 键盘测试 6 次、SDK 动作测试 3 次通过；辅助进程被 SIGKILL 后按键已释放。隔离 X11、原生协议测试、`go test -race`、`cargo test` 通过。
 - 真实 Wayland 桌面上的 SDK 测试待辅助功能总线恢复后补跑；CI 未接入无头 GNOME。
+
+## [2026-10-12 10:35] | Task: CI 接入无头 GNOME Wayland 测试
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 先补充 CI。
+
+### Changes Overview
+
+Scope: CI 与测试脚本。
+
+- Linux job 新增步骤：安装 `gnome-shell`，在 `testdata/gnome-session.sh` 中运行 `TestGNOMEWaylandKeyboard` 与 SDK 动作测试。
+- 两个隔离会话脚本的清理改为先卸载私有运行时目录中会话服务挂载的 FUSE 文件系统、再删除，且清理不再覆盖命令自身的退出码（此前 `set -e` 下的清理失败会让通过的测试报告失败）。
+
+### Validation
+
+- 本地照跑两个 CI 步骤主体（GNOME 50、Xephyr）均通过；真实运行时目录前后不变，无残留目录与挂载，真实会话辅助功能正常。远端 `ubuntu-24.04`（GNOME 46）尚未运行。
