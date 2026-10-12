@@ -166,7 +166,8 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | --- | --- | --- |
 | x11 | Xvfb / Xephyr（已有 `x11-session.sh`） | ✅ 已接入 |
 | 辅助进程协议与清理 | `cargo test` 加 Go 端假辅助进程测试（EOF、崩溃、超时） | 可接入 |
-| wlroots | 无头 Sway 或 labwc（`WLR_BACKENDS=headless`） | 可接入 |
+| wlroots | `testdata/wlroots-session.sh sway`：无头 Sway、软件渲染、私有 XDG 目录 | 可接入（无需 GPU） |
+| Hyprland | `testdata/wlroots-session.sh hyprland`：Hyprland 0.53 无无头模式，嵌套在无头 labwc 中（需要 GPU render node 提供 dmabuf） | GitHub 运行器无 `/dev/dri`，预计无法接入 |
 | GNOME | `testdata/gnome-session.sh`：无头 GNOME Shell、私有 XDG 目录，用 Mutter RemoteDesktop API 代替无人点击的门户对话框 | ✅ 已接入（GitHub `ubuntu-24.04` 为 GNOME 46） |
 | KDE | 🧪 `kwin_wayland --virtual` | 待定 |
 
@@ -208,6 +209,13 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 测试隔离事故：最初的会话脚本与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket，并写入了真实的 GNOME Shell 状态文件。脚本现为每个会话创建私有的运行时、配置、数据、缓存与状态目录，并验证真实目录前后不变。
 - CLI：X11 与 XWayland 窗口仍走 XTEST；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
 - 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、门户授权持久化。CI 在无头 GNOME 中运行引擎与 SDK 键盘测试。
+
+## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
+
+- Sway：虚拟键盘/指针、`zwp_input_method_manager_v2`（可提交任意 Unicode，包括中文）、`ext-foreign-toplevel-list` 与 `wlr-foreign-toplevel`、`swaymsg` IPC。截图只有输出级的 screencopy 与 `ext-image-copy-capture`（无按窗口来源），按窗口截图只能裁剪输出，会包含遮挡内容。
+- Hyprland：同样的输入与窗口列表协议，另有 `hyprland_toplevel_export_manager_v1`（按窗口导出，不受遮挡影响）与 `hyprctl` IPC；没有 `ext-image-copy-capture`。
+- Hyprland 0.53 只能使用 DRM 或嵌套 Wayland 后端；嵌套要求父合成器提供 `xdg_wm_base` v6 与 dmabuf：Sway 1.11 只有 v5，labwc 与 GNOME 满足。`Hyprland` 会脱离启动它的进程，清理必须按会话标记查找进程，而不能只按 PID。
+- 隔离事故：早期临时探测脚本在 `dbus-run-session` 内部才设置私有 XDG 目录，私有总线激活的服务仍使用真实运行时与配置目录（辅助功能 socket 未受损，个别状态文件是否被写入无法区分）；失败的无头 Hyprland 尝试还留下了 `/var/crash` 崩溃报告与未退出的进程。`wlroots-session.sh` 在启动总线前设置私有目录、只加载自己的合成器配置（Sway 的系统配置会把会话环境导入用户 systemd），并验证真实目录、systemd 用户环境与 `/var/crash` 前后不变。
 
 ## 待确认问题
 

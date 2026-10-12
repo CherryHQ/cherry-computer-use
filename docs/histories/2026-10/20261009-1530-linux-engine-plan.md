@@ -299,3 +299,30 @@ Scope: CI 与测试脚本。
 ### Validation
 
 - 本地照跑两个 CI 步骤主体（GNOME 50、Xephyr）均通过；真实运行时目录前后不变，无残留目录与挂载，真实会话辅助功能正常。远端 `ubuntu-24.04`（GNOME 46）尚未运行。
+
+## [2026-10-12 13:55] | Task: Sway/Hyprland 隔离测试会话
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 用户已安装 Sway 与 Hyprland；先写 `wlroots-session.sh`。
+
+### Changes Overview
+
+Scope: 测试脚本与文档。
+
+- 新增 `testdata/wlroots-session.sh`：无头 Sway（软件渲染），或嵌套在无头 labwc 中的 Hyprland；启动 D-Bus 前设置私有 XDG 目录，只加载自带的合成器配置，按会话标记清理全部进程，保留命令退出码。
+- 记录 W2 前置探测结果：两者都有虚拟键盘/指针、输入法 v2 与窗口列表；Sway 只有输出级截图，Hyprland 有按窗口导出；Hyprland 无无头模式。
+
+### Incident
+
+写脚本前的临时探测在私有总线启动后才切换 XDG 目录，私有总线激活的服务看到了真实运行时与配置目录；失败的无头 Hyprland 尝试留下了未退出的进程（已结束）和 `/var/crash/_usr_bin_Hyprland.1000.crash`（交由用户删除）。真实会话的辅助功能 socket 未受损。
+
+### Validation
+
+- 两种合成器各运行多次：探测正常、退出码透传；真实运行时目录、辅助功能 socket、dconf 与 GNOME Shell 状态文件、systemd 用户环境、`/var/crash` 前后不变，无残留进程与临时目录。

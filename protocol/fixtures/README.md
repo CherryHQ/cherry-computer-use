@@ -81,7 +81,13 @@ built helper) the same test also grants `remoteDesktop` through Mutter's API and
 keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. CI runs both in the Linux
 job after installing `gnome-shell`. Session services may mount FUSE filesystems in the
 private runtime directory; the scripts unmount them on exit and never let cleanup change
-the command's exit status. Start the fixture, then run
+the command's exit status.
+
+`apps/OpenComputerUseLinux/testdata/wlroots-session.sh sway|hyprland <command>` provides
+the same isolation for headless Sway, or Hyprland nested in a headless labwc (needs a
+GPU render node). It loads only its own compositor configuration and stops every
+process that carries the session's private root, including compositors that re-exec
+away from their parent. Start the fixture, then run
 `node --test protocol/linux-desktop.test.mjs` with
 `COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture` and the runtime path set,
 or `OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 go test ./internal/desktop/` in
