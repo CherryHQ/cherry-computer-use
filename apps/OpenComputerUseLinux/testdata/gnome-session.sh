@@ -28,7 +28,8 @@ case "${OCU_GNOME_SESSION_ROOT:-}" in
 esac
 display="wayland-ocu-test"
 log="$OCU_GNOME_SESSION_ROOT/shell.log"
-gnome-shell --headless --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
+# Unsafe mode allows org.gnome.Shell.Eval, used below only inside this session.
+gnome-shell --headless --unsafe-mode --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
 shell=$!
 # Session services (document portal, gvfs) may mount FUSE filesystems in the
 # private runtime directory. Cleanup must never change the command's exit status.
@@ -54,6 +55,18 @@ for _ in $(seq 100); do
   gdbus introspect --session --dest org.gnome.Mutter.RemoteDesktop --object-path /org/gnome/Mutter/RemoteDesktop >/dev/null 2>&1 && break
   sleep 0.1
 done
+# Give each new window focus once it is shown, as a desktop does when the user
+# starts an app. Without an activation token, some GNOME versions (46) leave a
+# test fixture unfocused, and keys are then correctly refused.
+for _ in $(seq 50); do
+  result=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval \
+    "global.display.connect('window-created', (display, window) => window.connect('shown', w => w.activate(global.get_current_time()))); 'ok'" 2>/dev/null) && break
+  sleep 0.2
+done
+case "${result:-}" in
+  *true*) ;;
+  *) echo "gnome-session.sh: could not install the focus handler: ${result:-no reply}" >&2 ;;
+esac
 launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launcher)
 "$launcher" --launch-immediately >/dev/null 2>&1 &
 sleep 1
