@@ -51,6 +51,10 @@ pub struct Keyboard {
     held: Vec<u32>,
     last_time: u64,
     callbacks: HashMap<ei::callback::Callback, bool>,
+    /// Seat capabilities offered and the keyboard mask to bind once the seat is done.
+    capabilities: Vec<String>,
+    keyboard_mask: Option<u64>,
+    bound: bool,
 }
 
 impl Keyboard {
@@ -114,11 +118,24 @@ impl Keyboard {
             held: Vec::new(),
             last_time: 0,
             callbacks: HashMap::new(),
+            capabilities: Vec::new(),
+            keyboard_mask: None,
+            bound: false,
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(15);
         while !(keyboard.resumed && keyboard.keyboard.is_some() && keyboard.keymap.is_some()) {
             if Instant::now() > deadline {
-                return Err(failure("TARGET_UNAVAILABLE", "The compositor did not provide a keyboard device"));
+                return Err(failure(
+                    "TARGET_UNAVAILABLE",
+                    format!(
+                        "The compositor did not provide a keyboard device (seat capabilities {:?}, bound {}, keyboard {}, keymap {}, resumed {})",
+                        keyboard.capabilities,
+                        keyboard.bound,
+                        keyboard.keyboard.is_some(),
+                        keyboard.keymap.is_some(),
+                        keyboard.resumed
+                    ),
+                ));
             }
             keyboard.pump(Duration::from_millis(100))?;
         }
@@ -146,21 +163,26 @@ impl Keyboard {
             ei::Event::Connection(_, ei::connection::Event::Disconnected { explanation, .. }) => {
                 return Err(failure("TARGET_UNAVAILABLE", format!("The compositor ended remote input: {}", explanation.unwrap_or_default())));
             }
-            ei::Event::Seat(seat, ei::seat::Event::Capability { mask, interface }) if interface == "ei_keyboard" => {
-                self.callbacks.clear();
-                seat.bind(mask);
+            ei::Event::Seat(_, ei::seat::Event::Capability { mask, interface }) => {
+                if interface == "ei_keyboard" {
+                    self.keyboard_mask = Some(mask);
+                }
+                self.capabilities.push(interface);
             }
-            ei::Event::Seat(_, ei::seat::Event::Device { device }) => {
-                if self.device.is_none() {
+            // Bind only once the seat has announced all capabilities, as libei expects.
+            ei::Event::Seat(seat, ei::seat::Event::Done) => {
+                if let Some(mask) = self.keyboard_mask.filter(|_| !self.bound) {
+                    seat.bind(mask);
+                    self.bound = true;
+                }
+            }
+            ei::Event::Device(device, ei::device::Event::Interface { object }) if self.device.is_none() => {
+                if let Some(keyboard) = object.downcast::<ei::Keyboard>() {
                     self.device = Some(device);
+                    self.keyboard = Some(keyboard);
                 }
             }
             ei::Event::Device(device, event) if Some(&device) == self.device.as_ref() => match event {
-                ei::device::Event::Interface { object } => {
-                    if let Some(keyboard) = object.downcast::<ei::Keyboard>() {
-                        self.keyboard = Some(keyboard);
-                    }
-                }
                 ei::device::Event::Resumed { serial } => {
                     self.serial = serial;
                     self.resumed = true;
