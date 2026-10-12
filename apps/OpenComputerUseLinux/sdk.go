@@ -19,15 +19,57 @@ func newLinuxDesktop() *linuxDesktop {
 	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard, WaylandHelper: waylandHelperPath()})}
 }
 
-// globalInput reports whether X11 global input can be offered, and why not.
-func (d *linuxDesktop) globalInput() sdkruntime.Availability {
+// pointerInput reports whether pointer input can be offered: X11 only.
+func (d *linuxDesktop) pointerInput() sdkruntime.Availability {
 	if d.engine.Wayland() {
-		return sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland global input is not connected"}}
+		return sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland pointer input is not connected"}}
 	}
 	if d.engine.Display() == "" {
 		return sdkruntime.Unavailable("DEPENDENCY_MISSING", "Global input needs an X11 display")
 	}
 	return sdkruntime.Availability{Status: "available"}
+}
+
+// keyboardInput reports whether keys can be sent: XTEST on X11, and on Wayland
+// libei through the RemoteDesktop portal, which also needs the remoteDesktop permission.
+func (d *linuxDesktop) keyboardInput(ctx context.Context) sdkruntime.Availability {
+	if !d.engine.Wayland() {
+		return d.pointerInput()
+	}
+	availability := d.engine.KeyboardAvailability(ctx)
+	if availability.Status == "available" {
+		return sdkruntime.Availability{Status: "available"}
+	}
+	return sdkruntime.Availability{Status: availability.Status, Reason: &sdkruntime.Reason{Code: availability.Code, Message: availability.Message}}
+}
+
+const remoteDesktopPermission = "remoteDesktop"
+
+// Permissions reports the Wayland remoteDesktop grant; X11 sessions need none.
+func (d *linuxDesktop) Permissions(ctx context.Context) ([]sdkruntime.Permission, error) {
+	if !d.engine.Wayland() {
+		return []sdkruntime.Permission{}, nil
+	}
+	status, _ := d.engine.KeyboardPermission(ctx)
+	return []sdkruntime.Permission{{ID: remoteDesktopPermission, Label: "Remote keyboard input", Status: status, Interaction: "systemPrompt"}}, nil
+}
+
+// RequestPermissions shows the RemoteDesktop portal dialog and reports the result;
+// declining is a "denied" status, not an error.
+func (d *linuxDesktop) RequestPermissions(ctx context.Context, ids []string) ([]sdkruntime.Permission, error) {
+	for _, id := range ids {
+		if id != remoteDesktopPermission || !d.engine.Wayland() {
+			return nil, sdkruntime.Error("INVALID_ARGUMENT", "Unknown permission for this Linux session: "+id)
+		}
+	}
+	if err := d.engine.RequestKeyboard(ctx); err != nil {
+		var native *desktop.Error
+		if !errors.As(err, &native) || native.Code != "PERMISSION_REQUIRED" {
+			return nil, sdkError(err)
+		}
+		return []sdkruntime.Permission{{ID: remoteDesktopPermission, Label: "Remote keyboard input", Status: "denied", Interaction: "systemPrompt"}}, nil
+	}
+	return d.Permissions(ctx)
 }
 
 func sdkError(err error) error {
@@ -52,11 +94,11 @@ func (d *linuxDesktop) Capabilities(ctx context.Context) map[string]sdkruntime.A
 	} else if d.engine.Display() != "" {
 		capture = sdkruntime.Availability{Status: "available"}
 	}
-	globalInput := d.globalInput()
+	keyboard := d.keyboardInput(ctx)
 	return map[string]sdkruntime.Availability{
 		"accessibility": available, "screenshot": capture,
 		"click": available, "performSecondaryAction": available, "setValue": available, "typeText": available,
-		"scroll": globalInput, "drag": globalInput, "pressKey": globalInput,
+		"scroll": keyboard, "drag": d.pointerInput(), "pressKey": keyboard,
 	}
 }
 
@@ -97,7 +139,7 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 	if native.DepthTruncated {
 		tree.Truncated = append(tree.Truncated, "depth")
 	}
-	pointer := d.globalInput().Status == "available"
+	pointer := d.pointerInput().Status == "available"
 	for index, node := range native.Nodes {
 		element := sdkruntime.Element{ID: strconv.Itoa(index), Role: node.Role, Name: options.LimitText(node.Name, &tree), Native: node}
 		if node.Parent >= 0 {
@@ -158,22 +200,22 @@ func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, obse
 }
 
 // Act prefers semantic actions. Pointer and keyboard variants need
-// allowGlobalInput and X11, and are checked against the observed window before
-// any input is sent.
+// allowGlobalInput; pointer input needs X11, keys need X11 or the Wayland
+// remoteDesktop permission. Targets are checked before any input is sent.
 func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
 	native := observation.Native.(desktop.Observation)
 	var node desktop.Node
 	if element != nil {
 		node = element.Native.(desktop.Node)
 	}
-	target := desktop.GlobalTarget{PID: native.App.PID, Title: native.Window.Title}
+	target := desktop.GlobalTarget{PID: native.App.PID, Title: native.Window.Title, Window: native.Window.Ref}
 	switch action.Type {
 	case "click":
 		click, semantic := desktop.ClickAction(node.Actions)
 		if element != nil && semantic && action.Button == "left" && action.Count == 1 {
 			return sdkError(d.engine.DoAction(ctx, native.Window, node, click))
 		}
-		if err := d.requireGlobalInput(action); err != nil {
+		if err := d.requireGlobalInput(action, d.pointerInput()); err != nil {
 			return err
 		}
 		button := map[string]byte{"left": 1, "middle": 2, "right": 3}[action.Button]
@@ -211,22 +253,24 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 		if !errors.As(err, &engineError) || engineError.Code != desktop.ErrNoFocusedText {
 			return sdkError(err)
 		}
-		if err := d.requireGlobalInput(action); err != nil {
-			return sdkruntime.Error("TARGET_UNAVAILABLE", engineError.Message+"; typing without one needs global input: "+err.Error())
+		if err := d.requireGlobalInput(action, d.keyboardInput(ctx)); err != nil {
+			var domain *sdkruntime.DomainError
+			errors.As(err, &domain)
+			return sdkruntime.Error(domain.Code, engineError.Message+"; typing without one needs global input: "+domain.Message)
 		}
 		return sdkError(d.engine.TypeKeys(ctx, target, action.Text))
 	case "pressKey":
-		if err := d.requireGlobalInput(action); err != nil {
+		if err := d.requireGlobalInput(action, d.keyboardInput(ctx)); err != nil {
 			return err
 		}
 		return sdkError(d.engine.PressKey(ctx, target, action.Key))
 	case "scroll":
-		if err := d.requireGlobalInput(action); err != nil {
+		if err := d.requireGlobalInput(action, d.keyboardInput(ctx)); err != nil {
 			return err
 		}
 		return sdkError(d.engine.PageScroll(ctx, target, action.Direction, action.Pages))
 	case "drag":
-		if err := d.requireGlobalInput(action); err != nil {
+		if err := d.requireGlobalInput(action, d.pointerInput()); err != nil {
 			return err
 		}
 		from, err := d.windowPoint(ctx, target, *action.From)
@@ -245,8 +289,8 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 
 // requireGlobalInput refuses before dispatch unless the caller allowed global
 // input and the session can deliver it.
-func (d *linuxDesktop) requireGlobalInput(action sdkruntime.Action) error {
-	if availability := d.globalInput(); availability.Status != "available" {
+func (d *linuxDesktop) requireGlobalInput(action sdkruntime.Action, availability sdkruntime.Availability) error {
+	if availability.Status != "available" {
 		return sdkruntime.Error(availability.Reason.Code, availability.Reason.Message)
 	}
 	if !action.AllowGlobalInput {

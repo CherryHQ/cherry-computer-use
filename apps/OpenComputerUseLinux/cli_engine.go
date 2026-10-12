@@ -40,7 +40,7 @@ func newService() *service {
 	if os.Getenv("XAUTHORITY") == "" && env["XAUTHORITY"] != "" {
 		_ = os.Setenv("XAUTHORITY", env["XAUTHORITY"])
 	}
-	return &service{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard, WaylandHelper: waylandHelperPath()}), snapshots: map[string]*appSnapshot{}}
+	return &service{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard, WaylandHelper: waylandHelperPath(), XWaylandInput: true, GrantOnDemand: true}), snapshots: map[string]*appSnapshot{}}
 }
 func (s *service) callTool(name string, args map[string]any) toolCallResult {
 	switch name {
@@ -350,7 +350,7 @@ func (s *service) act(app string, snapshot *appSnapshot, action func(context.Con
 }
 
 func globalTarget(snapshot *appSnapshot) desktop.GlobalTarget {
-	return desktop.GlobalTarget{PID: snapshot.observation.App.PID, Title: snapshot.observation.Window.Title}
+	return desktop.GlobalTarget{PID: snapshot.observation.App.PID, Title: snapshot.observation.Window.Title, Window: snapshot.observation.Window.Ref}
 }
 
 // screenPoint maps an element centre or window-relative x/y to the screen using

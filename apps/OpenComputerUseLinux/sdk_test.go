@@ -48,7 +48,7 @@ func TestSDKGlobalInputNeedsExplicitPermissionOnX11(t *testing.T) {
 	}
 }
 
-func TestSDKRefusesGlobalInputOnWayland(t *testing.T) {
+func TestSDKOnWaylandRefusesPointerAndNeedsTheHelperForKeys(t *testing.T) {
 	driver := testDesktop(map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"})
 	observation := sdk.Observation{Native: desktop.Observation{}}
 	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}}}
@@ -58,11 +58,35 @@ func TestSDKRefusesGlobalInputOnWayland(t *testing.T) {
 			element = nil
 		}
 		testCase.action.AllowGlobalInput = true
+		// Pointer input is never translated into XWayland input; keys need the helper.
+		want := "UNSUPPORTED_CAPABILITY"
+		if testCase.action.Type == "pressKey" || testCase.action.Type == "scroll" {
+			want = "DEPENDENCY_MISSING"
+		}
 		err := driver.Act(context.Background(), sdk.Target{}, observation, element, testCase.action)
 		var domain *sdk.DomainError
-		if !errors.As(err, &domain) || domain.Code != "UNSUPPORTED_CAPABILITY" || domain.Effect != "none" {
-			t.Fatalf("%s must not be translated into XWayland input: %v", name, err)
+		if !errors.As(err, &domain) || domain.Code != want || domain.Effect != "none" {
+			t.Fatalf("%s: %v, want %s", name, err, want)
 		}
+	}
+}
+
+func TestSDKWaylandPermissionsNeedTheSession(t *testing.T) {
+	x11 := testDesktop(map[string]string{"DISPLAY": ":99"})
+	if permissions, _ := x11.Permissions(context.Background()); len(permissions) != 0 {
+		t.Fatalf("X11 sessions have no OS permission flow: %+v", permissions)
+	}
+	var domain *sdk.DomainError
+	if _, err := x11.RequestPermissions(context.Background(), []string{"remoteDesktop"}); !errors.As(err, &domain) || domain.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("remoteDesktop does not apply to X11: %v", err)
+	}
+	wayland := testDesktop(map[string]string{"XDG_SESSION_TYPE": "wayland"})
+	permissions, _ := wayland.Permissions(context.Background())
+	if len(permissions) != 1 || permissions[0].ID != "remoteDesktop" || permissions[0].Status != "unavailable" {
+		t.Fatalf("without the helper the permission is unavailable: %+v", permissions)
+	}
+	if _, err := wayland.RequestPermissions(context.Background(), []string{"screenRecording"}); !errors.As(err, &domain) || domain.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("unknown permission: %v", err)
 	}
 }
 
@@ -74,8 +98,13 @@ func TestSDKCapabilitiesFollowTheDisplayServer(t *testing.T) {
 		}
 		capabilities := testDesktop(vars).Capabilities(context.Background())
 		for _, name := range []string{"scroll", "drag", "pressKey"} {
-			if capabilities[name].Status != want {
-				t.Fatalf("%s with %q = %+v, want %s", name, env, capabilities[name], want)
+			expected := want
+			if env == "wayland" && name != "drag" {
+				// Keys go through the Wayland helper, which this test does not install.
+				expected = "unavailable"
+			}
+			if capabilities[name].Status != expected {
+				t.Fatalf("%s with %q = %+v, want %s", name, env, capabilities[name], expected)
 			}
 		}
 	}

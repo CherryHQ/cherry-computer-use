@@ -73,7 +73,12 @@ it does not receive the probe's fixture window ID. Wayland capture is unsupporte
 runtime under test is Python-free. Global input tests must run inside
 `apps/OpenComputerUseLinux/testdata/x11-session.sh`, an isolated Xephyr or Xvfb
 session, so that keys and pointer motion never reach a desktop in use; CI runs them
-under Xvfb. On Wayland, `linux-desktop.test.mjs` checks that global input is refused. Start the fixture, then run
+under Xvfb. On a real Wayland desktop, `linux-desktop.test.mjs` checks the refusals
+before any grant and never opens the portal dialog. Inside
+`apps/OpenComputerUseLinux/testdata/gnome-session.sh` (a headless GNOME Shell with
+private runtime and config directories; set `OPEN_COMPUTER_USE_WAYLAND_HELPER` to a
+built helper) the same test also grants `remoteDesktop` through Mutter's API and sends
+keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. Start the fixture, then run
 `node --test protocol/linux-desktop.test.mjs` with
 `COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture` and the runtime path set,
 or `OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 go test ./internal/desktop/` in

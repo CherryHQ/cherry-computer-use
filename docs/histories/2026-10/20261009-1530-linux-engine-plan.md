@@ -235,3 +235,44 @@ Scope: `apps/OpenComputerUseLinux`、CI、文档。
 ### Validation
 
 - `go vet`、`go test -race`；隔离 X11 中 X11 全局输入与 guard 测试通过；`cargo test` 6 项通过；真实 GNOME 会话中 `doctor` 启动辅助进程并返回探测、退出后无残留进程；缺少辅助进程与 X11 会话两种情况的报告正确。辅助进程 release 体积 1.9 MB（arm64），只依赖 libc/libgcc。
+
+## [2026-10-10 18:55] | Task: Linux Wayland W3 键盘输入
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 提交并推送 W1，然后开始 W3（GNOME 键盘/文本输入）。
+
+### Changes Overview
+
+Scope: Rust 辅助进程、Go 引擎与 SDK 适配、`runtime-go`、测试脚本与文档。
+
+- 辅助进程新增键盘：门户 RemoteDesktop（或仅限隔离测试的 Mutter API）→ `ConnectToEIS` → libei 键盘；运行时加载 `libxkbcommon` 按合成器键位表查找按键，布局缺失字符发送前拒绝；每次发送等待合成器确认；退出时释放按键并停止模拟。
+- 引擎：Wayland 下按键前用 AT-SPI 确认目标窗口 ACTIVE；CLI 对 XWayland 窗口仍用 XTEST、首次使用时弹出对话框；SDK 要求先取得 `remoteDesktop` 权限。按键解析移入共享的 `display` 包。
+- `runtime-go` 新增 `PermissionDriver`，转发 `getPermissionStatus` 与 `requestPermissions`；Linux SDK 在 Wayland 会话报告并申请 `remoteDesktop`。
+- 新增 `testdata/gnome-session.sh` 无头 GNOME 隔离会话、引擎级 Wayland 键盘测试，并更新 SDK 动作测试与原生协议测试的 Wayland 预期。
+
+### Design Intent
+
+libei 只能送达合成器焦点，因此把目标绑定放在每次按键前的 AT-SPI 检查上，无法确认就拒绝；无法输入的字符整体拒绝而不是部分发送。SDK 不在动作中弹窗，授权走显式的权限接口，与 macOS 一致。
+
+### Incident
+
+最初的无头 GNOME 测试会话与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket（新启动的应用无法连接辅助功能），并写入了 `~/.local/share/gnome-shell/` 下的状态文件。已改为每个隔离会话使用私有 XDG 目录并验证真实目录前后不变；真实会话的辅助功能需要注销重新登录或重启 `at-spi-dbus-bus.service` 才能恢复。
+
+### Files Modified
+
+- [辅助进程键盘](../../../apps/OpenComputerUseLinux/wayland-helper/src/keyboard.rs)、[键位表](../../../apps/OpenComputerUseLinux/wayland-helper/src/keymap.rs)
+- [引擎 Wayland 路由](../../../apps/OpenComputerUseLinux/internal/desktop/display.go)、[SDK 适配](../../../apps/OpenComputerUseLinux/sdk.go)、[runtime-go 权限](../../../packages/runtime-go/desktop.go)
+- [隔离 GNOME 会话](../../../apps/OpenComputerUseLinux/testdata/gnome-session.sh)、[SDK 动作测试](../../../protocol/linux-desktop.test.mjs)
+- [Linux 显示后端架构](../../design-docs/linux-display-backends.md)、SDK/协议 README、changeset
+
+### Validation
+
+- 隔离 GNOME：引擎 Wayland 键盘测试 6 次、SDK 动作测试 3 次通过；辅助进程被 SIGKILL 后按键已释放。隔离 X11、原生协议测试、`go test -race`、`cargo test` 通过。
+- 真实 Wayland 桌面上的 SDK 测试待辅助功能总线恢复后补跑；CI 未接入无头 GNOME。

@@ -39,6 +39,12 @@ type Config struct {
 	InputGuard func(display string) *exec.Cmd
 	// WaylandHelper is the path of the Rust Wayland helper; empty means not installed.
 	WaylandHelper string
+	// XWaylandInput lets a Wayland session send XTEST keys to XWayland windows
+	// without the portal, as the CLI always has. The SDK leaves it off.
+	XWaylandInput bool
+	// GrantOnDemand shows the RemoteDesktop dialog on the first Wayland keyboard
+	// action. Otherwise the caller requests the permission first.
+	GrantOnDemand bool
 }
 
 // Engine is private to one runtime: code is shared, connections and references are not.

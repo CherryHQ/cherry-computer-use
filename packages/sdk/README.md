@@ -9,8 +9,11 @@ falls back to global input. Linux supports discovery, observation and semantic
 element actions: left click, secondary actions, `setValue`, and `typeText` into the
 one focused editable field. On X11, pointer clicks, drag, key presses, page scrolling
 and typing without a focused field use global input and require
-`allowGlobalInput: true`; keys need the target window to have focus. Wayland reports
-them unsupported. Query capabilities and element actions before
+`allowGlobalInput: true`; keys need the target window to have focus. On Wayland, key
+presses, page scrolling and typing without a focused field go through the
+RemoteDesktop portal: request the `remoteDesktop` permission (the system shows a
+dialog) and pass `allowGlobalInput: true`; the target window must be active and
+characters the keyboard layout lacks are refused. Wayland pointer input is unsupported. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native
@@ -48,7 +51,7 @@ try {
 }
 ```
 
-macOS permission queries use non-interactive preflight under the private app agent's identity. Windows/Linux return an empty permission list because this slice has no OS permission flow; this does not imply authorization. `requestPermissions` is unsupported on Windows/Linux. On macOS, an explicit request validates all IDs before interaction and opens the existing native onboarding window with a draggable helper app tile beside System Settings. The request stays pending until a drag is accepted, the requested permissions are observed as granted, or the user selects **Done** or closes the window. An accepted drag ends this interaction even if macOS still needs confirmation; recheck and request any remaining permissions in a new session. It returns observed preflight state, not a promise of approval; dismissing without granting is allowed. Cancellation closes the onboarding window and drag panel before acknowledging cleanup. Windows requires Windows PowerShell and an interactive desktop; Linux uses Go directly with the desktop AT-SPI D-Bus service and X11 for capture, without Python or cgo.
+macOS permission queries use non-interactive preflight under the private app agent's identity. Windows and Linux X11 return an empty permission list because they have no OS permission flow; this does not imply authorization. Linux Wayland reports `remoteDesktop`, and `requestPermissions({ ids: ['remoteDesktop'] })` shows the RemoteDesktop portal dialog, resolving to `granted` or `denied`; cancelling returns early but cannot close the dialog. `requestPermissions` is unsupported on Windows and Linux X11. On macOS, an explicit request validates all IDs before interaction and opens the existing native onboarding window with a draggable helper app tile beside System Settings. The request stays pending until a drag is accepted, the requested permissions are observed as granted, or the user selects **Done** or closes the window. An accepted drag ends this interaction even if macOS still needs confirmation; recheck and request any remaining permissions in a new session. It returns observed preflight state, not a promise of approval; dismissing without granting is allowed. Cancellation closes the onboarding window and drag panel before acknowledging cleanup. Windows requires Windows PowerShell and an interactive desktop; Linux uses Go directly with the desktop AT-SPI D-Bus service and X11 for capture, without Python or cgo.
 
 For permission onboarding, keep the client alive while awaiting `requestPermissions`, then close it in `finally`. Query again with a fresh client after onboarding ends, because macOS can cache grants in the old process. The SDK window does not relaunch or terminate the protocol process; the host owns that lifecycle. Keep the signed helper bundle identity stable; the host’s own permissions do not substitute for helper grants.
 
@@ -81,7 +84,7 @@ try {
 
 - `ComputerUse.start(options?, callOptions?)`: explicitly resolve, launch and initialize a private runtime. Importing the package does not start a process or request permissions.
 - `getCapabilities()` / `getPermissionStatus()`: query implemented capabilities and OS permission state. They do not replace the host's user authorization.
-- `requestPermissions({ ids })`: explicit macOS OS permission flow for `accessibility` and `screenRecording`; unsupported on Windows/Linux.
+- `requestPermissions({ ids })`: explicit OS permission flow for macOS `accessibility` and `screenRecording`, and Linux Wayland `remoteDesktop`; unsupported on Windows and Linux X11.
 - `listApps()` / `openAppSession({ appId })`: discover targets and create per-app control contexts. Opening an active target reuses its context.
 - `listAppSessions()`: query native control status (`active`, `stopping`, `stopped`) independently of queued desktop work.
 - `stopAppSession({ appSessionId })`: block new/queued work for that context, cancel its active request, and wait for native cleanup. It does not quit the app or close other contexts.

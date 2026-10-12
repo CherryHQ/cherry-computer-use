@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"time"
 
@@ -12,11 +13,18 @@ import (
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/x11"
 )
 
-// GlobalTarget and Point are the display package's types.
-type (
-	GlobalTarget = display.Target
-	Point        = display.Point
-)
+// Point is in screen coordinates.
+type Point = display.Point
+
+// GlobalTarget is the observed window that global input must reach. X11 matches
+// it by PID and title; Wayland checks the accessible window's ACTIVE state.
+type GlobalTarget struct {
+	PID    uint32
+	Title  string
+	Window Ref
+}
+
+func (t GlobalTarget) native() display.Target { return display.Target{PID: t.PID, Title: t.Title} }
 
 // Capture is a PNG of one window, or the reason none is available.
 type Capture struct {
@@ -147,25 +155,180 @@ func (e *Engine) Capture(ctx context.Context, pid uint32, title string) Capture 
 }
 
 func (e *Engine) WindowRect(ctx context.Context, target GlobalTarget) (Rect, error) {
-	return e.injector().WindowRect(ctx, target)
+	return e.injector().WindowRect(ctx, target.native())
 }
 
 func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Point, button byte, count int) error {
-	return e.injector().PointerClick(ctx, target, point, button, count)
+	return e.injector().PointerClick(ctx, target.native(), point, button, count)
 }
 
 func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) error {
-	return e.injector().Drag(ctx, target, from, to)
+	return e.injector().Drag(ctx, target.native(), from, to)
+}
+
+// x11Keys reports whether keys for target go through XTEST: always in X11, and in
+// Wayland only for XWayland windows when the caller allows it.
+func (e *Engine) x11Keys(ctx context.Context, target GlobalTarget) bool {
+	return !e.Wayland() || (e.config.XWaylandInput && e.x11Backend().HasWindow(ctx, target.native()))
 }
 
 func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) error {
-	return e.injector().PressKey(ctx, target, key)
+	if e.x11Keys(ctx, target) {
+		return e.injector().PressKey(ctx, target.native(), key)
+	}
+	chord, err := display.ParseKeyChord(key)
+	if err != nil {
+		return err
+	}
+	return e.waylandKeys(ctx, target, 1, func(_ int, keyboard *wayland.Helper) error { return keyboard.Chord(ctx, chord) })
 }
 
 func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string) error {
-	return e.injector().TypeKeys(ctx, target, text)
+	if e.x11Keys(ctx, target) {
+		return e.injector().TypeKeys(ctx, target.native(), text)
+	}
+	keyboard, err := e.keyboard(ctx)
+	if err != nil {
+		return err
+	}
+	missing, err := keyboard.MissingCharacters(ctx, text)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return fail("UNSUPPORTED_CAPABILITY", "The keyboard layout cannot type %q; Wayland input has no way to enter it", missing)
+	}
+	characters := []rune(text)
+	return e.waylandKeys(ctx, target, len(characters), func(i int, keyboard *wayland.Helper) error { return keyboard.Text(ctx, string(characters[i])) })
 }
 
 func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction string, pages float64) error {
-	return e.injector().PageScroll(ctx, target, direction, pages)
+	if e.x11Keys(ctx, target) {
+		return e.injector().PageScroll(ctx, target.native(), direction, pages)
+	}
+	key := map[string]string{"up": "Page_Up", "down": "Page_Down", "left": "Left", "right": "Right"}[direction]
+	if key == "" || pages <= 0 || pages > 100 {
+		return fail("INVALID_ARGUMENT", "Invalid scroll direction or page count")
+	}
+	chord, _ := display.ParseKeyChord(key)
+	count := int(math.Ceil(pages))
+	return e.waylandKeys(ctx, target, count, func(_ int, keyboard *wayland.Helper) error { return keyboard.Chord(ctx, chord) })
+}
+
+// waylandKeys sends count key steps through the libei keyboard, confirming
+// before each one that the target window is active. A refusal after the first
+// step reports a possible effect.
+func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int, step func(int, *wayland.Helper) error) error {
+	keyboard, err := e.keyboard(ctx)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < count; i++ {
+		err := e.requireActive(ctx, target)
+		if err == nil && ctx.Err() != nil {
+			err = cancelled()
+		}
+		if err == nil {
+			err = step(i, keyboard)
+		}
+		if err != nil {
+			var native *Error
+			if i > 0 && (!errors.As(err, &native) || native.Effect == "none") {
+				return uncertain("Wayland keyboard input stopped part way: %v", err)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// requireActive refuses keys unless the observed window is the active one.
+// Focus can still change between this check and delivery.
+func (e *Engine) requireActive(ctx context.Context, target GlobalTarget) error {
+	if target.Window.Bus == "" {
+		return fail("TARGET_UNAVAILABLE", "The target window is unknown")
+	}
+	states, err := e.states(ctx, target.Window)
+	title, titleErr := e.name(ctx, target.Window)
+	if err != nil || titleErr != nil || title != target.Title {
+		return fail("STALE_SNAPSHOT", "The target window changed since observation")
+	}
+	if !states.Has(StateActive) {
+		return fail("TARGET_UNAVAILABLE", "The target window is not active; keys would reach another window")
+	}
+	return nil
+}
+
+// grantRoute picks the portal, or Mutter's API in an isolated test session.
+func (e *Engine) grantRoute() string {
+	if e.env("OPEN_COMPUTER_USE_WAYLAND_TEST") == "1" {
+		return wayland.GrantMutterTest
+	}
+	return wayland.GrantPortal
+}
+
+// keyboard returns the helper once remote keyboard input is granted.
+func (e *Engine) keyboard(ctx context.Context) (*wayland.Helper, error) {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if availability := helper.Probe().KeyboardAvailable(); availability.Status != "available" {
+		return nil, fail(availability.Code, "%s", availability.Message)
+	}
+	granted, err := helper.KeyboardGranted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !granted {
+		if !e.config.GrantOnDemand {
+			return nil, fail("PERMISSION_REQUIRED", "Wayland keyboard input needs the remoteDesktop permission; request it first")
+		}
+		if err := helper.GrantKeyboard(ctx, e.grantRoute()); err != nil {
+			return nil, err
+		}
+	}
+	return helper, nil
+}
+
+// KeyboardAvailability reports whether Wayland keyboard input can be offered at
+// all, before any permission: the helper must run and the portal must support EIS.
+func (e *Engine) KeyboardAvailability(ctx context.Context) display.Availability {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		var native *Error
+		if !errors.As(err, &native) {
+			native = fail("TARGET_UNAVAILABLE", "%v", err)
+		}
+		return display.Unavailable(native.Code, native.Message)
+	}
+	return helper.Probe().KeyboardAvailable()
+}
+
+// KeyboardPermission reports the remoteDesktop permission in a Wayland session.
+func (e *Engine) KeyboardPermission(ctx context.Context) (status string, err error) {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return "unavailable", err
+	}
+	if helper.Probe().KeyboardAvailable().Status != "available" {
+		return "unavailable", nil
+	}
+	granted, err := helper.KeyboardGranted(ctx)
+	if err != nil {
+		return "unavailable", err
+	}
+	if granted {
+		return "granted", nil
+	}
+	return "notDetermined", nil
+}
+
+// RequestKeyboard asks for remote keyboard input; the portal shows its dialog.
+func (e *Engine) RequestKeyboard(ctx context.Context) error {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return err
+	}
+	return helper.GrantKeyboard(ctx, e.grantRoute())
 }

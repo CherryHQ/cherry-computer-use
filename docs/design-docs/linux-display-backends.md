@@ -1,6 +1,6 @@
 # Linux 显示后端架构：X11 与 Wayland
 
-状态：2026-10-09 架构提案；W0 实验与 W1 结构已于 2026-10-10 完成，Wayland 能力尚未开放。X11 后端已作为[共用引擎](../exec-plans/active/20261009-linux-shared-engine.md)的一部分实现；本文定义如何在同一引擎内加入 Wayland 及其不同合成器，不改变 SDK 协议语义。语言分工（2026-10-09 决定）：Go 保持协议、会话、AT-SPI 与 X11；Wayland 平台细节由 Rust 辅助进程实现。决定自研，不嵌入第三方驱动；[trycua/cua](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux) 的 Linux 驱动只作参考。
+状态：2026-10-09 架构提案；W0 实验、W1 结构与 W3（GNOME/门户键盘）已于 2026-10-10 完成，Wayland 指针与截图尚未开放。X11 后端已作为[共用引擎](../exec-plans/active/20261009-linux-shared-engine.md)的一部分实现；本文定义如何在同一引擎内加入 Wayland 及其不同合成器，不改变 SDK 协议语义。语言分工（2026-10-09 决定）：Go 保持协议、会话、AT-SPI 与 X11；Wayland 平台细节由 Rust 辅助进程实现。决定自研，不嵌入第三方驱动；[trycua/cua](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux) 的 Linux 驱动只作参考。
 
 ## 目标与非目标
 
@@ -144,7 +144,8 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 
 ## 授权与会话生命周期
 
-- 门户授权映射到现有协议：Linux 的 `getPermissionStatus` 报告 `remoteDesktop`、`screenCast` 等，`requestPermissions` 发起门户会话（弹出系统对话框）。动作调用本身不触发弹窗，未授权时返回 `PERMISSION_REQUIRED`。
+- 门户授权映射到现有协议：Wayland 会话中 `getPermissionStatus` 报告 `remoteDesktop`（`granted`/`notDetermined`/`unavailable`），`requestPermissions` 发起门户会话并弹出系统对话框，用户拒绝返回 `denied` 而不是错误；X11 会话不报告任何权限。SDK 的动作调用本身不触发弹窗，未授权时返回 `PERMISSION_REQUIRED`；CLI 在第一次需要 Wayland 键盘时按需弹窗（CLI 每次进程都会重新询问）。`screenCast` 随截图（W4）加入。
+- 已知限制：辅助进程等待对话框时是阻塞的，SDK 取消 `requestPermissions` 只会让 Go 端返回，对话框仍然打开、辅助进程在用户回答前不处理其他请求。对话框没有父窗口，GNOME 不会把它提到前台。
 - 持久化：门户 restore token 为一次性，需要每次会话后更新。token 的存放位置属于宿主（Cherry）的产品决定；runtime 只通过协议接收与返回，不自行在用户目录写入隐藏状态。
 - 门户会话归 runtime 的 `display.Session` 所有，任务结束、EOF、`stop` 时关闭；不跨任务共享。
 
@@ -178,7 +179,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | W0 | 用 Rust 原型（`experiments/` 下）实验：GNOME 门户会话（只读，不发输入）与窗口流坐标；XWayland 下 XTEST/GetImage；libei 与门户会话断开时是否松键；无头 mutter/sway 能否跑门户。同时验证 Rust 在 CI 中构建 x64/arm64 与产物大小 | 结论写入本文与执行计划 |
 | W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；辅助进程尚未打包进平台 npm 包，安装包中 `doctor` 会报告其缺失，打包随 W2 首个实际能力一起做 |
 | W2 | wlroots 后端：toplevel 定位、按窗口截图、虚拟键盘/指针 | 无头 Sway 中通过与 x11 相同的输入测试集，接入 CI |
-| W3 | 门户 + libei 键盘/文本（GNOME、KDE），授权映射到 `requestPermissions` | 焦点校验与拒绝路径、清理实验通过；隔离环境或人工验收记录 |
+| W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 | 截图：门户 ScreenCast + PipeWire 辅助二进制，或 GNOME 扩展 | 依赖方案经确认后实现 |
 | W5 | GNOME/KDE 指针：依赖 W0 的坐标结论与助手方案 | 落点校验可证明时才开放 |
 
@@ -197,11 +198,22 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - W1 辅助进程在同一会话的探测：40 个 Wayland 全局对象，没有 wlroots 虚拟输入、foreign-toplevel、screencopy，也没有 `ext-image-copy-capture`。GNOME 50 只能走门户与（可选的）Shell 扩展。
 - 尚未验证（需要发送输入，只能在隔离会话中做）：遮挡时窗口坐标输入是否仍送达该窗口；断开 EIS/门户会话时是否松开按住的键；XWayland 上 XTEST 的送达范围；无头 GNOME 能否运行门户。
 
+## W3 结论（2026-10-10，GNOME Shell 50.1）
+
+- 路径：门户 RemoteDesktop（仅键盘）→ `ConnectToEIS` → libei 键盘。GNOME 50 的 EIS（libei 1.5）不提供 `ei_text`，文本通过合成器下发的 XKB 键位表查找（`libxkbcommon` 运行时加载，缺失时键盘报告不可用）；只用前两级（无修饰/Shift），布局无法输入的字符（如中文）在发送前整体拒绝，Caps Lock 打开时拒绝输入字母。
+- 目标绑定：libei 只送达合成器焦点。Go 端在每个键/字符之前通过 AT-SPI 确认目标窗口仍为 ACTIVE 且标题未变；检查与送达之间的竞争仍然存在，宿主需协调。
+- 每次发送后用 `ei_connection.sync` 等待合成器确认，字符之间留 5 ms；合成器确认不代表客户端已读取。
+- 清理：在隔离会话中让辅助进程按住 Shift 后被 SIGKILL，新会话输入的仍是小写，即 Mutter 在 EIS 客户端断开时释放其按键，GNOME 上不需要额外 guard。辅助进程正常退出时也会先释放并停止模拟。
+- 测试环境：无头 GNOME 起初没有键盘，第一个 EIS 键盘出现后客户端才异步绑定键盘，这段时间内的按键会丢失；`testdata/gnome-session.sh` 在会话开始时保持一个键盘，模拟有物理键盘的桌面。
+- 测试隔离事故：最初的会话脚本与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket，并写入了真实的 GNOME Shell 状态文件。脚本现为每个会话创建私有的运行时、配置、数据、缓存与状态目录，并验证真实目录前后不变。
+- CLI：X11 与 XWayland 窗口仍走 XTEST；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
+- 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、CI（GitHub 运行器上运行无头 GNOME 尚未尝试）、门户授权持久化。
+
 ## 待确认问题
 
 1. ~~GNOME 是否允许 RemoteDesktop 搭配窗口源~~：允许（见 W0 结论）。仍需确认：窗口被遮挡时输入是否送达该窗口；如何把用户选择的窗口绑定到 AT-SPI 目标。
 2. ~~libei 区域能否与门户流对应~~：能，区域 `mapping_id` 与窗口流一致，参照系为窗口。KDE 尚未验证。
-3. 客户端断开时，Mutter/KWin 的 EIS 实现与 wlroots 虚拟键盘是否释放按住的键。
+3. 客户端断开时是否释放按住的键：Mutter 会释放（W3 已验证）；KWin 与 wlroots 虚拟键盘待验证。
 4. XWayland：`GetImage` 已确认可用；XTEST 的送达范围待在隔离会话中验证。
 5. 是否提供 GNOME Shell 扩展 / KWin 脚本（安装体验、签名与升级、只读或可输入）。
 6. ~~libpipewire 缺失时的处理~~：不加载，截图放在单独的可执行文件中（见"辅助进程"）。仍需决定该文件是否进入默认发行包。

@@ -95,7 +95,7 @@ If desktop access is missing, ask the user to run the command from the logged-in
 
 If a Linux release reports that `Accessible` has no `is_text` or `is_editable_text` attribute, upgrade. Current releases need no Python: they read the tree and run actions natively over D-Bus and X11.
 
-Coordinate clicks, `drag`, `press_key`, `scroll`, and `type_text` without a focused editable field send X11 input. Keys are refused unless the target window has keyboard focus, and clicks are refused when another window covers the point; bring the target forward first. Under Wayland they only reach XWayland windows; a native Wayland window reports that it cannot be matched to an X11 window.
+Coordinate clicks, `drag`, `press_key`, `scroll`, and `type_text` without a focused editable field send X11 input. Keys are refused unless the target window has keyboard focus, and clicks are refused when another window covers the point; bring the target forward first. Under Wayland, XWayland windows still use X11 input. For native Wayland windows, `press_key`, `scroll` and `type_text` without a focused field ask for remote input in a system dialog the first time (it may open behind other windows; look in the overview); keys are refused unless the target window is active, and characters the keyboard layout cannot type (for example Chinese) are refused. Coordinate clicks and `drag` are not available for native Wayland windows.
 
 `type_text` writes into the one focused editable field of the target window. If two fields report focus it refuses; focus the intended field first.
 

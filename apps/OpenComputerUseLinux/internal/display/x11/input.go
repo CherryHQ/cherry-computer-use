@@ -50,6 +50,21 @@ func (e *Backend) Close() {
 	}
 }
 
+// HasWindow reports whether target has exactly one X window, as XWayland windows
+// do in a Wayland session. It sends no input.
+func (e *Backend) HasWindow(ctx context.Context, target display.Target) bool {
+	if e.display == "" {
+		return false
+	}
+	conn, err := xgb.NewConnDisplay(e.display)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_, err = FindWindow(conn, target.PID, target.Title)
+	return err == nil
+}
+
 func (e *Backend) globalInput(ctx context.Context) (*input, error) {
 	if in := e.input; in != nil {
 		select {
@@ -399,7 +414,7 @@ func (e *Backend) Drag(ctx context.Context, target display.Target, from, to disp
 
 // PressKey sends one chord to the focused target window.
 func (e *Backend) PressKey(ctx context.Context, target display.Target, value string) error {
-	chord, err := parseKeyChord(value)
+	chord, err := display.ParseKeyChord(value)
 	if err != nil {
 		return err
 	}
@@ -409,26 +424,26 @@ func (e *Backend) PressKey(ctx context.Context, target display.Target, value str
 			return err
 		}
 		modifiers := []xproto.Keycode{}
-		for _, keysym := range chord.modifiers {
-			code, _, ok := m.lookup(keysym)
+		for _, keysym := range chord.Modifiers {
+			code, _, ok := m.lookup(xproto.Keysym(keysym))
 			if !ok {
 				return display.Fail("UNSUPPORTED_CAPABILITY", "The keyboard has no modifier key %#x", keysym)
 			}
 			modifiers = append(modifiers, code)
 		}
-		code, shifted, ok := m.lookup(chord.key)
+		code, shifted, ok := m.lookup(xproto.Keysym(chord.Key))
 		if !ok {
 			spare := m.spare()
 			if len(spare) == 0 {
 				return display.Fail("UNSUPPORTED_CAPABILITY", "No free keycode can carry key %q", value)
 			}
-			if err := a.in.assign(m, spare[0], chord.key); err != nil {
+			if err := a.in.assign(m, spare[0], xproto.Keysym(chord.Key)); err != nil {
 				return err
 			}
 			a.in.sync()
 			code = spare[0]
 		}
-		if shifted && !slices.Contains(chord.modifiers, shiftKeysym) {
+		if shifted && !slices.Contains(chord.Modifiers, display.ShiftKeysym) {
 			shift, _, _ := m.lookup(shiftKeysym)
 			modifiers = append(modifiers, shift)
 		}
@@ -472,7 +487,7 @@ func (e *Backend) TypeKeys(ctx context.Context, target display.Target, text stri
 			end := start
 			free := slices.Clone(spare)
 			for ; end < len(runes); end++ {
-				keysym := runeKeysym(runes[end])
+				keysym := xproto.Keysym(display.RuneKeysym(runes[end]))
 				if _, _, ok := m.lookup(keysym); ok {
 					continue
 				}
@@ -490,7 +505,7 @@ func (e *Backend) TypeKeys(ctx context.Context, target display.Target, text stri
 			a.in.sync()
 			time.Sleep(30 * time.Millisecond)
 			for _, r := range runes[start:end] {
-				code, shifted, _ := m.lookup(runeKeysym(r))
+				code, shifted, _ := m.lookup(xproto.Keysym(display.RuneKeysym(r)))
 				withShift := xproto.Keycode(0)
 				if shifted {
 					withShift = shift
@@ -519,13 +534,13 @@ func (e *Backend) PageScroll(ctx context.Context, target display.Target, directi
 	if key == "" || pages <= 0 || pages > 100 {
 		return display.Fail("INVALID_ARGUMENT", "Invalid scroll direction or page count")
 	}
-	chord, _ := parseKeyChord(key)
+	chord, _ := display.ParseKeyChord(key)
 	return e.withGlobalInput(ctx, target, func(a *globalAction) error {
 		m, err := a.in.keymap()
 		if err != nil {
 			return err
 		}
-		code, _, ok := m.lookup(chord.key)
+		code, _, ok := m.lookup(xproto.Keysym(chord.Key))
 		if !ok {
 			return display.Fail("UNSUPPORTED_CAPABILITY", "The keyboard has no %s key", key)
 		}

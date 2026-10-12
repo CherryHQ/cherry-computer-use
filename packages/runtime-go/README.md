@@ -7,7 +7,9 @@ It supports initialization, capability/permission queries, app control sessions,
 observation with snapshot-scoped actions. Windows implements `ActionDriver` through
 the existing PowerShell engine for all seven actions, including window-relative
 coordinate clicks. Linux implements `ActionDriver` with its shared AT-SPI/X11 engine;
-its global-input actions require `allowGlobalInput` and X11. Drivers keep
+its global-input actions require `allowGlobalInput`, and Wayland keys also its
+`remoteDesktop` permission. Drivers that implement `PermissionDriver` answer
+`getPermissionStatus` and `requestPermissions`; others report no permissions. Drivers keep
 native references outside wire data. Permission requests remain unsupported.
 
 Each app control context owns its snapshots and cancellation state. Observation
