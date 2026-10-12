@@ -83,6 +83,9 @@ def call(method, **params):
     sys.stdout.buffer.flush()
 call("hello", protocol=1)
 call("keyboard.grant", via="mutter-test")
+# GNOME 46 adds the keyboard to the seat only once it has sent a key, and GTK
+# activates windows only on keyboard focus. Shift alone types nothing.
+call("keyboard.chord", modifiers=[], key=0xffe1)
 open(sys.argv[1]).read()
 ' "$log.keyboard" | OPEN_COMPUTER_USE_WAYLAND_TEST=1 "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
   keyboard=$!
