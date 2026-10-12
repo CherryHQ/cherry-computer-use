@@ -326,3 +326,33 @@ Scope: 测试脚本与文档。
 ### Validation
 
 - 两种合成器各运行多次：探测正常、退出码透传；真实运行时目录、辅助功能 socket、dconf 与 GNOME Shell 状态文件、systemd 用户环境、`/var/crash` 前后不变，无残留进程与临时目录。
+
+## [2026-10-12 15:40] | Task: W2 wlroots 虚拟键盘
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 提交并推送到 PR，然后开始 W2。
+
+### Changes Overview
+
+Scope: Rust 辅助进程、Go 引擎与 SDK、测试脚本、CI 与文档。
+
+- 辅助进程新增 `wlr.rs`：虚拟键盘（自生成键位表、固定的基础键码、修饰键按下后上报修饰状态、创建与输入前清零修饰状态、释放按键）与 Sway/Hyprland IPC 焦点窗口查询。
+- 引擎：合成器提供虚拟键盘时走该路由，不需要授权；每次按键前要求 IPC 的焦点窗口为目标 PID 与标题，无 IPC 时回退 AT-SPI ACTIVE。SDK 在该路由下不报告 `remoteDesktop` 权限。
+- `wlroots-session.sh` 保持一个座位键盘并缩短私有根目录；新增 `TestWlrootsVirtualKeyboard`；GNOME 与 X11 测试改为在无选区文本上验证 Ctrl+A；SDK 动作测试适配无授权路由；CI 新增无头 Sway 步骤。
+- 修正测试路由：隔离测试会话使用 Mutter 授权时，键盘可用性不再要求门户（远端 GNOME 46 运行器上因此失败）。
+
+### Design Intent
+
+wlroots 合成器开放虚拟键盘和带 PID 的 IPC，能把输入绑定到具体窗口，比 GNOME 门户更强也不需要对话框。键位表固定基础键码，是因为实验证明客户端会用旧键位表解析快捷键。
+
+### Validation
+
+- 隔离 X11、GNOME、Sway、Hyprland 中引擎与 SDK 测试全部通过；Sway 与 Hyprland 各 3 次重复通过；真实桌面的 SDK 与原生协议测试通过；真实会话前后不变、无残留。
+- 修饰键实测：最初的 `modifiers` 请求与键位表 `modifier_map` 都未生效（GTK 记录到状态 0），改为先按修饰键再上报后生效；跨设备的键码复用会让 Ctrl+A 失效，固定基础键码后通过。

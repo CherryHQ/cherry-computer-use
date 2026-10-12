@@ -106,7 +106,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | --- | --- | --- | --- | --- | --- |
 | X11 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ✅ XTEST + guard | ✅ XTEST，校验落点 | 无 |
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
-| wlroots（Sway、labwc、Hyprland 等） | `ext-foreign-toplevel-list` / `wlr-foreign-toplevel`；几何与焦点用 Sway/Hyprland IPC | `ext-image-copy-capture`（按窗口）/ `wlr-screencopy` | `virtual-keyboard` | `wlr-virtual-pointer` | 无 |
+| wlroots（Sway、labwc、Hyprland 等） | Sway/Hyprland IPC 给出焦点窗口的 PID、标题与几何 ✅（焦点）；其他合成器回退到 AT-SPI ACTIVE | Sway 只有输出级截图；Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | `wlr-virtual-pointer` | 无 |
 | GNOME（Mutter） | 🧪 AT-SPI `ACTIVE`；窗口由用户在门户中选择 | 门户 ScreenCast（窗口源）+ PipeWire，或 Shell 扩展按窗口截取 | 门户 RemoteDesktop + libei，只发给焦点窗口 | libei 绝对坐标以所选窗口为参照（W0 已确认）；🧪 遮挡时的送达与目标绑定 | 门户弹窗，可持久 |
 | KDE（KWin） | 🧪 KWin 脚本/effect 提供几何与焦点 | 门户 ScreenCast + PipeWire | 门户 + libei | 🧪 同 GNOME | 门户弹窗，可持久 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
@@ -179,7 +179,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | --- | --- | --- |
 | W0 | 用 Rust 原型（`experiments/` 下）实验：GNOME 门户会话（只读，不发输入）与窗口流坐标；XWayland 下 XTEST/GetImage；libei 与门户会话断开时是否松键；无头 mutter/sway 能否跑门户。同时验证 Rust 在 CI 中构建 x64/arm64 与产物大小 | 结论写入本文与执行计划 |
 | W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；辅助进程尚未打包进平台 npm 包，安装包中 `doctor` 会报告其缺失，打包随 W2 首个实际能力一起做 |
-| W2 | wlroots 后端：toplevel 定位、按窗口截图、虚拟键盘/指针 | 无头 Sway 中通过与 x11 相同的输入测试集，接入 CI |
+| W2 🟡 | wlroots 后端：虚拟键盘 ✅（Sway、Hyprland）；toplevel 定位、按窗口截图、虚拟指针未做 | 键盘：无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过，Sway 接入 CI |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 | 截图：门户 ScreenCast + PipeWire 辅助二进制，或 GNOME 扩展 | 依赖方案经确认后实现 |
 | W5 | GNOME/KDE 指针：依赖 W0 的坐标结论与助手方案 | 落点校验可证明时才开放 |
@@ -209,6 +209,16 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 测试隔离事故：最初的会话脚本与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket，并写入了真实的 GNOME Shell 状态文件。脚本现为每个会话创建私有的运行时、配置、数据、缓存与状态目录，并验证真实目录前后不变。
 - CLI：X11 与 XWayland 窗口仍走 XTEST；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
 - 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、门户授权持久化。CI 在无头 GNOME 中运行引擎与 SDK 键盘测试。
+
+## W2 键盘结论（2026-10-12，Sway 1.11 / Hyprland 0.53.3）
+
+- 路由：合成器提供 `zwp_virtual_keyboard_manager_v1` 时，Wayland 按键走辅助进程的虚拟键盘，不弹对话框、不需要 `remoteDesktop` 权限（SDK 的权限列表为空）；否则走门户 + libei。SDK 仍要求 `allowGlobalInput`。
+- 目标绑定：每个键/字符之前，Sway（`GET_TREE`）或 Hyprland（`j/activewindow`）IPC 报告的焦点窗口必须是目标的 PID 与观察到的标题；没有已知 IPC 的合成器回退到 AT-SPI ACTIVE。比 GNOME 上只能依赖 AT-SPI 更强，但检查与送达之间仍有竞争。
+- 键位表：辅助进程自己生成 XKB 键位表，键符以数字写出，因此任意 Unicode（包括中文）都能输入，不需要 libxkbcommon。修饰键、可打印 ASCII、命名键与 F1–F24 在每个设备上占用固定键码，其他字符追加在后面且键码不复用：客户端可能用旧的（甚至上一个设备的）键位表解析快捷键，键码改变含义时 Ctrl+A 会被解析成别的键。
+- 修饰键：wlroots 不从虚拟键盘的按键推导修饰状态，需要先按下修饰键使设备成为座位当前键盘，再通过 `modifiers` 请求上报，最后反向撤销。
+- 清理：持有 Control 与一个键时 SIGKILL 辅助进程，Sway 与 Hyprland 都会在设备销毁时释放；Hyprland 会把修饰状态留在座位上直到某个键盘重新上报，因此辅助进程在创建设备与输入文本前先清零修饰状态。
+- 测试发现：此前 GNOME 与 X11 的引擎测试在已全选的输入框上按 Ctrl+A，无法证明修饰键生效；现在先设置文本、按 End 再按 Ctrl+A。SDK 桌面测试一直在无选区的文本上验证。
+- 隔离会话：`wlroots-session.sh` 与 GNOME 一样在会话开始时保持一个键盘；Hyprland 的 IPC socket 位于运行时目录深处，私有根目录必须足够短（Unix socket 路径上限 108 字节）。
 
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 

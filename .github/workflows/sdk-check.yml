@@ -151,6 +151,20 @@ jobs:
             export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
             node --test protocol/linux-desktop.test.mjs; code=$?
             kill $fixture; exit $code'
+      - if: runner.os == 'Linux'
+        name: Linux wlroots virtual keyboard (isolated headless Sway)
+        run: |
+          sudo apt-get install -y --no-install-recommends sway
+          sway --version
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
+          session="$PWD/apps/OpenComputerUseLinux/testdata/wlroots-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" sway go test -count=1 -run Wlroots -v ./internal/desktop/)
+          "$session" sway sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Sway" & fixture=$!
+            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+            node --test protocol/linux-desktop.test.mjs; code=$?
+            kill $fixture; exit $code'
       - run: node --test protocol/native.test.mjs
       - if: runner.os == 'Windows'
         shell: powershell

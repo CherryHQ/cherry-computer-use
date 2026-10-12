@@ -12,6 +12,7 @@ mod frame;
 mod keyboard;
 mod keymap;
 mod probe;
+mod wlr;
 
 use std::io::{self, BufReader, Write};
 
@@ -33,6 +34,7 @@ struct Request {
 #[derive(Default)]
 struct Helper {
     keyboard: Option<keyboard::Keyboard>,
+    virtual_keyboard: Option<wlr::VirtualKeyboard>,
 }
 
 fn main() {
@@ -99,6 +101,33 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
                 });
             }
             Ok(json!({ "granted": true }))
+        }
+        "window.active" => match wlr::active_window()? {
+            None => Ok(json!({ "available": false })),
+            Some(window) => Ok(json!({ "available": true, "pid": window.pid, "title": window.title, "rect": window.rect })),
+        },
+        method if method.starts_with("vkeyboard.") => {
+            if helper.virtual_keyboard.is_none() {
+                helper.virtual_keyboard = Some(wlr::VirtualKeyboard::connect()?);
+            }
+            let keyboard = helper.virtual_keyboard.as_mut().unwrap();
+            let result = match method {
+                "vkeyboard.prepare" => Ok(json!({})),
+                "vkeyboard.chord" => {
+                    let modifiers = request.params.get("modifiers").and_then(Value::as_array).cloned().unwrap_or_default();
+                    let modifiers = modifiers.iter().map(keysym).collect::<Result<Vec<_>, _>>()?;
+                    let key = keysym(request.params.get("key").unwrap_or(&Value::Null))?;
+                    keyboard.chord(&modifiers, key).map(|()| json!({}))
+                }
+                "vkeyboard.text" => keyboard.text(text("text")?).map(|()| json!({})),
+                "vkeyboard.hold" if test_session() => keyboard.hold_for_test(keysym(request.params.get("key").unwrap_or(&Value::Null))?).map(|()| json!({})),
+                other => return Err(refuse("UNSUPPORTED_CAPABILITY", format!("unknown helper method {other:?}"))),
+            };
+            // A lost Wayland connection takes the device with it; create a new one next time.
+            if result.as_ref().is_err_and(|f| f.message.contains("Wayland connection lost")) {
+                helper.virtual_keyboard = None;
+            }
+            result
         }
         method if method.starts_with("keyboard.") => {
             let keyboard = helper.keyboard.as_mut().ok_or_else(|| refuse("PERMISSION_REQUIRED", "Remote keyboard input has not been granted"))?;

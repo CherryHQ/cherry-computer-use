@@ -61,3 +61,37 @@ func (h *Helper) Chord(ctx context.Context, chord display.KeyChord) error {
 func (h *Helper) Text(ctx context.Context, text string) error {
 	return h.Call(ctx, "keyboard.text", map[string]any{"text": text}, nil)
 }
+
+// VirtualKeyboardAvailable reports whether the compositor offers the wlroots
+// virtual keyboard, which needs no dialog and types any character.
+func (p Probe) VirtualKeyboardAvailable() bool {
+	return p.HasGlobal("zwp_virtual_keyboard_manager_v1") && p.HasGlobal("wl_seat")
+}
+
+// ActiveWindow is the compositor's focused window from its IPC.
+type ActiveWindow struct {
+	Available bool    `json:"available"`
+	PID       *uint32 `json:"pid"`
+	Title     string  `json:"title"`
+	Rect      []int64 `json:"rect"`
+}
+
+// ActiveWindow asks the compositor which window has focus; Available is false
+// when the compositor has no IPC the helper knows.
+func (h *Helper) ActiveWindow(ctx context.Context) (ActiveWindow, error) {
+	var window ActiveWindow
+	err := h.Call(ctx, "window.active", nil, &window)
+	return window, err
+}
+
+func (h *Helper) VirtualChord(ctx context.Context, chord display.KeyChord) error {
+	modifiers := make([]uint32, 0, len(chord.Modifiers))
+	for _, modifier := range chord.Modifiers {
+		modifiers = append(modifiers, uint32(modifier))
+	}
+	return h.Call(ctx, "vkeyboard.chord", map[string]any{"modifiers": modifiers, "key": uint32(chord.Key)}, nil)
+}
+
+func (h *Helper) VirtualText(ctx context.Context, text string) error {
+	return h.Call(ctx, "vkeyboard.text", map[string]any{"text": text}, nil)
+}

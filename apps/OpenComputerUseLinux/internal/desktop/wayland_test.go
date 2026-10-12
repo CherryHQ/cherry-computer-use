@@ -103,6 +103,22 @@ func TestGNOMEWaylandKeyboard(t *testing.T) {
 	}
 	time.Sleep(time.Second)
 
+	// Existing text with the caret at its end and no selection: Ctrl+A must select it.
+	observation, err := engine.Observe(ctx, app, TreeOptions{MaxNodes: 200, MaxDepth: 20, TextReadLimit: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range observation.Nodes {
+		if node.Name == "Second field" {
+			if err := engine.SetValue(ctx, observation.Window, node, "abc"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	eventually("abc")
+	if err := engine.PressKey(ctx, target, "End"); err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.PressKey(ctx, target, "ctrl+a"); err != nil {
 		t.Fatal(err)
 	}

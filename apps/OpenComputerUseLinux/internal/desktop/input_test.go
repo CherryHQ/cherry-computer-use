@@ -144,6 +144,20 @@ func TestX11GlobalInput(t *testing.T) {
 	spareBefore := spareCodes()
 
 	focus(window)
+	// Existing text with the caret at its end and no selection: Ctrl+A must select it.
+	if observation := observe(); true {
+		for _, candidate := range observation.Nodes {
+			if candidate.Name == "Second field" {
+				if err := engine.SetValue(ctx, observation.Window, candidate, "abc"); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	eventually("text set", func() bool { return node("Second field").Text == "abc" })
+	if err := engine.PressKey(ctx, target, "End"); err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.PressKey(ctx, target, "ctrl+a"); err != nil {
 		t.Fatal(err)
 	}

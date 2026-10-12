@@ -10,10 +10,13 @@ element actions: left click, secondary actions, `setValue`, and `typeText` into 
 one focused editable field. On X11, pointer clicks, drag, key presses, page scrolling
 and typing without a focused field use global input and require
 `allowGlobalInput: true`; keys need the target window to have focus. On Wayland, key
-presses, page scrolling and typing without a focused field go through the
-RemoteDesktop portal: request the `remoteDesktop` permission (the system shows a
-dialog) and pass `allowGlobalInput: true`; the target window must be active and
-characters the keyboard layout lacks are refused. Wayland pointer input is unsupported. Query capabilities and element actions before
+presses, page scrolling and typing without a focused field need
+`allowGlobalInput: true`. wlroots compositors such as Sway and Hyprland use a
+virtual keyboard with no dialog, can type any character, and require the
+compositor to report the target as the focused window. Elsewhere (GNOME, KDE) keys go
+through the RemoteDesktop portal: request the `remoteDesktop` permission (the system
+shows a dialog); the target window must be active and characters the keyboard
+layout lacks are refused. Wayland pointer input is unsupported. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native

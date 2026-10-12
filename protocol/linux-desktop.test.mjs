@@ -81,18 +81,21 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
       await state(() => true)
       await assert.rejects(global(action), refused('UNSUPPORTED_CAPABILITY'))
     }
+    // Portal sessions (GNOME, KDE) list remoteDesktop; the wlroots virtual keyboard needs no grant.
     const permissions = (await client.getPermissionStatus()).permissions
-    assert.deepEqual(permissions.map(permission => permission.id), ['remoteDesktop'])
+    const portal = permissions.some(permission => permission.id === 'remoteDesktop')
     if (keyboard.status !== 'available') return
-    // Keys wait for the remoteDesktop permission. The grant needs the portal dialog,
-    // so it only runs where the session can answer it (testdata/gnome-session.sh).
-    await state(() => true)
-    await assert.rejects(global({ type: 'pressKey', key: 'Return' }), refused('PERMISSION_REQUIRED'))
-    if (process.env.OPEN_COMPUTER_USE_WAYLAND_TEST !== '1') return
-    const granted = await client.requestPermissions({ ids: ['remoteDesktop'] })
-    assert.equal(granted.permissions[0].status, 'granted')
-    // The headless compositor's first keyboard is this grant; let clients bind it.
-    await delay(1500)
+    if (portal) {
+      // Keys wait for the remoteDesktop permission. The grant needs the portal dialog,
+      // so it only runs where the session can answer it (testdata/gnome-session.sh).
+      await state(() => true)
+      await assert.rejects(global({ type: 'pressKey', key: 'Return' }), refused('PERMISSION_REQUIRED'))
+      if (process.env.OPEN_COMPUTER_USE_WAYLAND_TEST !== '1') return
+      const granted = await client.requestPermissions({ ids: ['remoteDesktop'] })
+      assert.equal(granted.permissions[0].status, 'granted')
+    } else {
+      assert.deepEqual(permissions, [])
+    }
   }
   // With explicit permission, keys reach the focused fixture field.
   await state(() => true)

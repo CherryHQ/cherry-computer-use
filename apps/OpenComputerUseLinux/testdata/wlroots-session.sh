@@ -22,7 +22,9 @@ if [ "${OCU_WLROOTS_SESSION_INNER:-}" != 1 ]; then
   # The private directories must be set before dbus-run-session starts: services
   # it activates inherit its environment, and sharing the desktop's directories
   # lets them replace its sockets (the accessibility bus) or write its state.
-  root=$(mktemp -d "${TMPDIR:-/tmp}/ocu-wlroots-session.XXXXXX")
+  # A short root: Hyprland's IPC socket lives several levels below it and Unix
+  # socket paths are limited to 108 bytes.
+  root=$(mktemp -d "${TMPDIR:-/tmp}/ocu-wl.XXXXXX")
   for dir in run config data cache state; do mkdir -m 700 "$root/$dir"; done
   if command -v go >/dev/null 2>&1; then
     GOCACHE=$(go env GOCACHE)
@@ -36,7 +38,7 @@ if [ "${OCU_WLROOTS_SESSION_INNER:-}" != 1 ]; then
 fi
 root=${OCU_WLROOTS_SESSION_ROOT:-}
 case "$root" in
-  "${TMPDIR:-/tmp}"/ocu-wlroots-session.*) ;;
+  "${TMPDIR:-/tmp}"/ocu-wl.*) ;;
   *) echo "wlroots-session.sh: missing private session root" >&2; exit 1 ;;
 esac
 
@@ -150,6 +152,24 @@ launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launch
 "$launcher" --launch-immediately >/dev/null 2>&1 &
 pids="$pids $!"
 sleep 1
+# A headless compositor has no keyboard, and clients bind one only after the
+# seat gains it, losing keys sent meanwhile. Hold a virtual keyboard for the
+# whole run, as a physical keyboard does (needs OPEN_COMPUTER_USE_WAYLAND_HELPER).
+if [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ]; then
+  mkfifo "$root/keyboard"
+  python3 -c '
+import json, sys
+def call(method, **params):
+    body = json.dumps({"id": 1, "method": method, "params": params}).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
+call("hello", protocol=1)
+call("vkeyboard.prepare")
+open(sys.argv[1]).read()
+' "$root/keyboard" | "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
+  pids="$pids $!"
+  sleep 1
+fi
 status=0
 env XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" "$@" || status=$?
 exit "$status"

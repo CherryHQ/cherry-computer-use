@@ -45,9 +45,10 @@ func (d *linuxDesktop) keyboardInput(ctx context.Context) sdkruntime.Availabilit
 
 const remoteDesktopPermission = "remoteDesktop"
 
-// Permissions reports the Wayland remoteDesktop grant; X11 sessions need none.
+// Permissions reports the Wayland remoteDesktop grant. X11 sessions and compositors
+// with the wlroots virtual keyboard need none.
 func (d *linuxDesktop) Permissions(ctx context.Context) ([]sdkruntime.Permission, error) {
-	if !d.engine.Wayland() {
+	if !d.engine.KeyboardNeedsGrant(ctx) {
 		return []sdkruntime.Permission{}, nil
 	}
 	status, _ := d.engine.KeyboardPermission(ctx)
@@ -58,7 +59,7 @@ func (d *linuxDesktop) Permissions(ctx context.Context) ([]sdkruntime.Permission
 // declining is a "denied" status, not an error.
 func (d *linuxDesktop) RequestPermissions(ctx context.Context, ids []string) ([]sdkruntime.Permission, error) {
 	for _, id := range ids {
-		if id != remoteDesktopPermission || !d.engine.Wayland() {
+		if id != remoteDesktopPermission || !d.engine.KeyboardNeedsGrant(ctx) {
 			return nil, sdkruntime.Error("INVALID_ARGUMENT", "Unknown permission for this Linux session: "+id)
 		}
 	}

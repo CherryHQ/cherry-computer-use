@@ -180,7 +180,7 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) 
 	if err != nil {
 		return err
 	}
-	return e.waylandKeys(ctx, target, 1, func(_ int, keyboard *wayland.Helper) error { return keyboard.Chord(ctx, chord) })
+	return e.waylandKeys(ctx, target, 1, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, chord) })
 }
 
 func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string) error {
@@ -191,15 +191,18 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 	if err != nil {
 		return err
 	}
-	missing, err := keyboard.MissingCharacters(ctx, text)
-	if err != nil {
-		return err
-	}
-	if len(missing) > 0 {
-		return fail("UNSUPPORTED_CAPABILITY", "The keyboard layout cannot type %q; Wayland input has no way to enter it", missing)
+	if !keyboard.virtual {
+		// The portal keyboard can only type what the compositor's layout holds.
+		missing, err := keyboard.helper.MissingCharacters(ctx, text)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			return fail("UNSUPPORTED_CAPABILITY", "The keyboard layout cannot type %q; Wayland input has no way to enter it", missing)
+		}
 	}
 	characters := []rune(text)
-	return e.waylandKeys(ctx, target, len(characters), func(i int, keyboard *wayland.Helper) error { return keyboard.Text(ctx, string(characters[i])) })
+	return e.waylandKeys(ctx, target, len(characters), func(i int, keyboard waylandKeyboard) error { return keyboard.text(ctx, string(characters[i])) })
 }
 
 func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction string, pages float64) error {
@@ -212,19 +215,39 @@ func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction 
 	}
 	chord, _ := display.ParseKeyChord(key)
 	count := int(math.Ceil(pages))
-	return e.waylandKeys(ctx, target, count, func(_ int, keyboard *wayland.Helper) error { return keyboard.Chord(ctx, chord) })
+	return e.waylandKeys(ctx, target, count, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, chord) })
 }
 
-// waylandKeys sends count key steps through the libei keyboard, confirming
-// before each one that the target window is active. A refusal after the first
-// step reports a possible effect.
-func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int, step func(int, *wayland.Helper) error) error {
+// waylandKeyboard is the route Wayland keys take in this session: the wlroots
+// virtual keyboard, or the RemoteDesktop portal's libei keyboard.
+type waylandKeyboard struct {
+	helper  *wayland.Helper
+	virtual bool
+}
+
+func (k waylandKeyboard) chord(ctx context.Context, chord display.KeyChord) error {
+	if k.virtual {
+		return k.helper.VirtualChord(ctx, chord)
+	}
+	return k.helper.Chord(ctx, chord)
+}
+
+func (k waylandKeyboard) text(ctx context.Context, text string) error {
+	if k.virtual {
+		return k.helper.VirtualText(ctx, text)
+	}
+	return k.helper.Text(ctx, text)
+}
+
+// waylandKeys sends count key steps, confirming before each one that the target
+// window has focus. A refusal after the first step reports a possible effect.
+func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int, step func(int, waylandKeyboard) error) error {
 	keyboard, err := e.keyboard(ctx)
 	if err != nil {
 		return err
 	}
 	for i := 0; i < count; i++ {
-		err := e.requireActive(ctx, target)
+		err := e.requireFocus(ctx, target, keyboard)
 		if err == nil && ctx.Err() != nil {
 			err = cancelled()
 		}
@@ -240,6 +263,25 @@ func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int
 		}
 	}
 	return nil
+}
+
+// requireFocus binds keys to the target. When the compositor's IPC names the
+// focused window, its PID and title must be the target's; otherwise the
+// accessible window must be active.
+func (e *Engine) requireFocus(ctx context.Context, target GlobalTarget, keyboard waylandKeyboard) error {
+	if keyboard.virtual {
+		active, err := keyboard.helper.ActiveWindow(ctx)
+		if err != nil {
+			return err
+		}
+		if active.Available {
+			if active.PID == nil || *active.PID != target.PID || active.Title != target.Title {
+				return fail("TARGET_UNAVAILABLE", "The compositor's focused window is not the target; keys would reach another window")
+			}
+			return nil
+		}
+	}
+	return e.requireActive(ctx, target)
 }
 
 // requireActive refuses keys unless the observed window is the active one.
@@ -267,28 +309,42 @@ func (e *Engine) grantRoute() string {
 	return wayland.GrantPortal
 }
 
-// keyboard returns the helper once remote keyboard input is granted.
-func (e *Engine) keyboard(ctx context.Context) (*wayland.Helper, error) {
+// keyboard picks the session's keyboard route: the virtual keyboard when the
+// compositor offers it, else the portal once remote input is granted.
+func (e *Engine) keyboard(ctx context.Context) (waylandKeyboard, error) {
 	helper, err := e.waylandHelper(ctx)
 	if err != nil {
-		return nil, err
+		return waylandKeyboard{}, err
 	}
-	if availability := helper.Probe().KeyboardAvailable(); availability.Status != "available" {
-		return nil, fail(availability.Code, "%s", availability.Message)
+	if helper.Probe().VirtualKeyboardAvailable() {
+		return waylandKeyboard{helper: helper, virtual: true}, nil
+	}
+	if availability := e.keyboardRouteAvailable(helper); availability.Status != "available" {
+		return waylandKeyboard{}, fail(availability.Code, "%s", availability.Message)
 	}
 	granted, err := helper.KeyboardGranted(ctx)
 	if err != nil {
-		return nil, err
+		return waylandKeyboard{}, err
 	}
 	if !granted {
 		if !e.config.GrantOnDemand {
-			return nil, fail("PERMISSION_REQUIRED", "Wayland keyboard input needs the remoteDesktop permission; request it first")
+			return waylandKeyboard{}, fail("PERMISSION_REQUIRED", "Wayland keyboard input needs the remoteDesktop permission; request it first")
 		}
 		if err := helper.GrantKeyboard(ctx, e.grantRoute()); err != nil {
-			return nil, err
+			return waylandKeyboard{}, err
 		}
 	}
-	return helper, nil
+	return waylandKeyboard{helper: helper}, nil
+}
+
+// KeyboardNeedsGrant reports whether Wayland keys in this session go through the
+// portal and therefore the remoteDesktop permission.
+func (e *Engine) KeyboardNeedsGrant(ctx context.Context) bool {
+	if !e.Wayland() {
+		return false
+	}
+	helper, err := e.waylandHelper(ctx)
+	return err != nil || !helper.Probe().VirtualKeyboardAvailable()
 }
 
 // KeyboardAvailability reports whether Wayland keyboard input can be offered at
@@ -302,6 +358,15 @@ func (e *Engine) KeyboardAvailability(ctx context.Context) display.Availability 
 		}
 		return display.Unavailable(native.Code, native.Message)
 	}
+	return e.keyboardRouteAvailable(helper)
+}
+
+// keyboardRouteAvailable checks what the grant route needs: the portal, or in an
+// isolated test session Mutter's API, which the helper checks when granting.
+func (e *Engine) keyboardRouteAvailable(helper *wayland.Helper) display.Availability {
+	if helper.Probe().VirtualKeyboardAvailable() || e.grantRoute() == wayland.GrantMutterTest {
+		return display.Available()
+	}
 	return helper.Probe().KeyboardAvailable()
 }
 
@@ -311,7 +376,7 @@ func (e *Engine) KeyboardPermission(ctx context.Context) (status string, err err
 	if err != nil {
 		return "unavailable", err
 	}
-	if helper.Probe().KeyboardAvailable().Status != "available" {
+	if e.keyboardRouteAvailable(helper).Status != "available" {
 		return "unavailable", nil
 	}
 	granted, err := helper.KeyboardGranted(ctx)
