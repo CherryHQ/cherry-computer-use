@@ -102,6 +102,21 @@ func TestGNOMEWaylandKeyboard(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	time.Sleep(time.Second)
+	if err := engine.requireActive(ctx, target); err != nil {
+		// Tell a compositor that did not focus the window from an AT-SPI state that
+		// was not reported.
+		shell, _ := exec.Command("gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
+			"--method", "org.gnome.Shell.Eval", "global.display.focus_window ? global.display.focus_window.title + ' pid ' + global.display.focus_window.get_pid() : 'no focus window'").CombinedOutput()
+		t.Logf("shell focus window: %s", strings.TrimSpace(string(shell)))
+		windows, _ := engine.Windows(ctx, app)
+		for _, w := range windows {
+			t.Logf("accessible window %q role=%s states=%v active=%v", w.Title, w.Role, w.States, w.States.Has(StateActive))
+		}
+		focused, _ := engine.Focused(ctx, window)
+		for _, n := range focused {
+			t.Logf("focused accessible %s %q", n.Role, n.Name)
+		}
+	}
 
 	// Existing text with the caret at its end and no selection: Ctrl+A must select it.
 	observation, err := engine.Observe(ctx, app, TreeOptions{MaxNodes: 200, MaxDepth: 20, TextReadLimit: -1})
