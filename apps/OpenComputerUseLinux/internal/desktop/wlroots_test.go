@@ -191,17 +191,24 @@ func TestWlrootsPointerAndCapture(t *testing.T) {
 		t.Fatalf("capture looks blank: %d colours", len(colours))
 	}
 
+	// A new window is first laid out at its default size, then tiled; until the
+	// client catches up, element positions are refused rather than misplaced.
 	center := func() Point {
-		node, window := button()
-		current, err := engine.Revalidate(ctx, window, node)
-		if err != nil {
-			t.Fatal(err)
+		var err error
+		for attempt := 0; attempt < 50; attempt++ {
+			node, window := button()
+			var current Node
+			if current, err = engine.Revalidate(ctx, window, node); err != nil {
+				t.Fatal(err)
+			}
+			var point Point
+			if point, err = engine.ElementCenter(ctx, target, current); err == nil {
+				return point
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		point, err := engine.ElementCenter(ctx, target, current)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return point
+		t.Fatal(err)
+		return Point{}
 	}
 	if err := engine.PointerClick(ctx, target, center(), 1, 1); err != nil {
 		t.Fatal(err)
