@@ -74,7 +74,9 @@ const DRAG_STEPS = 10;
 // a press in the same instant as the motion can reach a client that has not
 // handled the motion yet.
 const SETTLE_MS = 40;
-const MOTION_ATTEMPTS = 5;
+// How long a motion may take to reach the cursor: a busy compositor can drop a
+// new device's first motions.
+const MOTION_DEADLINE_MS = 1000;
 const CLICK_GAP_MS = 30;
 
 const delay = ms => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
@@ -338,6 +340,10 @@ export default class ComputerUseExtension extends Extension {
                 keyboard: seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE),
                 held: {buttons: new Set(), keys: new Set()},
             };
+            // A motion to where the cursor already is moves nothing but gets the
+            // new device going before the first real motion.
+            const [x, y] = global.get_pointer();
+            this._devices.pointer.notify_absolute_motion(now(), x, y);
             await delay(DEVICE_SETTLE_MS);
         }
         return this._devices;
@@ -377,16 +383,16 @@ export default class ComputerUseExtension extends Extension {
         const [width, height] = global.display.get_size();
         if (!(x >= 0 && y >= 0 && x < width && y < height))
             throw new Refusal(ERROR.invalid, 'The point is outside the desktop');
-        let cursor = [];
-        for (let attempt = 0; attempt < MOTION_ATTEMPTS; attempt++) {
+        const arrived = cursor => Math.abs(cursor[0] - x) <= 1 && Math.abs(cursor[1] - y) <= 1;
+        const deadline = GLib.get_monotonic_time() + MOTION_DEADLINE_MS * 1000;
+        let cursor;
+        do {
             devices.pointer.notify_absolute_motion(now(), x, y);
             await delay(SETTLE_MS);
             cursor = global.get_pointer();
-            if (Math.abs(cursor[0] - x) <= 1 && Math.abs(cursor[1] - y) <= 1)
-                break;
-        }
-        if (!(Math.abs(cursor[0] - x) <= 1 && Math.abs(cursor[1] - y) <= 1))
-            throw new Refusal(ERROR.target, `The pointer stayed at (${cursor[0]}, ${cursor[1]}) instead of moving to (${Math.round(x)}, ${Math.round(y)})`);
+        } while (!arrived(cursor) && GLib.get_monotonic_time() < deadline);
+        if (!arrived(cursor))
+            throw new Refusal(ERROR.target, `The pointer stayed at (${cursor[0]}, ${cursor[1]}) instead of moving to (${Math.round(x)}, ${Math.round(y)}); the mouse may be in use`);
         const {window} = this._target(...target);
         if (this._windowAt(x, y) !== window)
             throw new Refusal(ERROR.target, `The point (${Math.round(x)}, ${Math.round(y)}) shows ${this._describeAt(x, y)}, not the target; the click would not reach it`);
