@@ -116,6 +116,10 @@ for _ in $(seq 100); do
   dbus-send --session --print-reply --dest=org.kde.KWin /KWin org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1 && break
   sleep 0.1
 done
+# KWin captures windows only with OpenGL compositing; without a GPU it needs
+# Mesa's software renderer.
+[ "${OCU_KWIN_DEBUG:-}" = 1 ] && echo "kwin-session.sh: KWin composites with $(gdbus call --session -d org.kde.KWin -o /Compositor \
+  -m org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType 2>&1)" >&2
 if [ "${OCU_KWIN_PLASMASHELL:-}" = 1 ]; then
   # plasmashell refuses to load its shell without the activity manager.
   for daemon in /usr/lib/*/libexec/kactivitymanagerd /usr/libexec/kactivitymanagerd; do

@@ -279,6 +279,15 @@ pub fn capture(internal_id: &str) -> Result<Capture, Failure> {
             "DEPENDENCY_MISSING",
             "KWin offers no ScreenShot2: its screenshot plugin is not installed (kwin-common on Debian and Ubuntu)",
         ),
+        // KWin cancels window captures while it composites without OpenGL.
+        zbus::Error::MethodError(name, _, _)
+            if name.as_str().ends_with("Cancelled") && compositing_type(connection).as_deref() == Some("qpainter") =>
+        {
+            failure(
+                "UNSUPPORTED_CAPABILITY",
+                "KWin cannot capture windows while it composites with QPainter; it needs OpenGL compositing",
+            )
+        }
         _ => failure("CAPTURE_FAILED", format!("KWin could not capture the window: {e}")),
     })?;
     let (meta,): (HashMap<String, zvariant::OwnedValue>,) = reply
@@ -298,6 +307,21 @@ pub fn capture(internal_id: &str) -> Result<Capture, Failure> {
         return Err(failure("CAPTURE_FAILED", "KWin returned a short window image"));
     }
     Ok(Capture { format, width, height, stride, data })
+}
+
+/// KWin's compositing type, such as "gl2" or "qpainter".
+fn compositing_type(connection: &Connection) -> Option<String> {
+    let reply = connection
+        .call_method(
+            Some(KWIN),
+            "/Compositor",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.kde.kwin.Compositing", "compositingType"),
+        )
+        .ok()?;
+    let value: zvariant::OwnedValue = reply.body().deserialize().ok()?;
+    String::try_from(value).ok()
 }
 
 /// Whether ScreenShot2 serves this helper, asked with a window id that cannot

@@ -30,6 +30,7 @@ Request: design the KDE backend, verify it on Plasma, then open a PR and impleme
   - KDE's application cache only lists `.desktop` files an application menu includes. With only KWin installed (the CI runner) there is no menu, so KWin never found the authorization. The session script now sets `XDG_MENU_PREFIX` as startplasma does, or writes a menu of every application into the private config when Plasma's menu is absent. The installer names the missing menu when it times out.
   - The ScreenShot2 probe counted any error other than NoAuthorized, such as a timeout, as authorized. Only KWin's InvalidWindow answer, given after its permission check, counts now.
   - ScreenShot2 comes from KWin's screenshot plugin, which is in kwin-common on Debian and Ubuntu. On Ubuntu 26.04, kwin-wayland does not pull kwin-common in, though a full Plasma install does. The CI job installs it. The helper reports a missing plugin, and the installer passes ScreenShot2's error on.
+  - KWin captures windows only with OpenGL compositing; under QPainter every CaptureWindow is cancelled. The CI runner lacked Mesa's software driver, so KWin fell back to QPainter. CI now installs it, and the helper reports a cancelled capture under QPainter as needing OpenGL compositing.
 
 Validation: isolated KWin 6.6.6 locally — the engine test and the SDK desktop test with the integration installed by the runtime itself; the SDK test without it; unit tests for installing and window geometry.
 
