@@ -7,7 +7,9 @@
 #   testdata/gnome-session.sh go test ./internal/desktop/ -run GNOME
 #
 # OCU_GNOME_SHELL_EXTENSION=<dir> installs that extension directory into the
-# session's private data directory and enables it before the shell starts.
+# session's private data directory and enables it before the shell starts; given
+# the open-computer-use executable instead, it runs its install-gnome-extension,
+# as a user would before logging in again.
 set -eu
 if [ "${OCU_GNOME_SESSION_INNER:-}" != 1 ]; then
   # Everything the shell and its services write goes under a private root: the
@@ -31,7 +33,9 @@ case "${OCU_GNOME_SESSION_ROOT:-}" in
 esac
 display="wayland-ocu-test"
 log="$OCU_GNOME_SESSION_ROOT/shell.log"
-if [ -n "${OCU_GNOME_SHELL_EXTENSION:-}" ]; then
+if [ -f "${OCU_GNOME_SHELL_EXTENSION:-}" ] && [ -x "$OCU_GNOME_SHELL_EXTENSION" ]; then
+  XDG_CURRENT_DESKTOP=GNOME "$OCU_GNOME_SHELL_EXTENSION" install-gnome-extension
+elif [ -n "${OCU_GNOME_SHELL_EXTENSION:-}" ]; then
   uuid=$(basename "$OCU_GNOME_SHELL_EXTENSION")
   mkdir -p "$XDG_DATA_HOME/gnome-shell/extensions"
   cp -r "$OCU_GNOME_SHELL_EXTENSION" "$XDG_DATA_HOME/gnome-shell/extensions/$uuid"
@@ -111,4 +115,4 @@ open(sys.argv[1]).read()
   fi
 fi
 env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland \
-  OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"
+  XDG_CURRENT_DESKTOP=GNOME OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"
