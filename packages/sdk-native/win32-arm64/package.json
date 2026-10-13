@@ -1,6 +1,6 @@
 {
   "name": "@cherrystudio/computer-use-win32-arm64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Private development placeholder for the generated win32-arm64 SDK runtime package",
   "license": "MIT"
