@@ -85,7 +85,10 @@ mkdir -p "$XDG_CONFIG_HOME"
 # KWin's application cache does not notice directories created later.
 mkdir -p "$XDG_DATA_HOME/applications"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
-[ "${OCU_KWIN_DEBUG:-}" = 1 ] && export QT_LOGGING_RULES="kwin_core.debug=true"
+if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
+  export QT_LOGGING_RULES="kwin_core.debug=true;kf.service.sycoca.debug=true"
+  export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"
+fi
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
   kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &

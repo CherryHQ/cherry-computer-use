@@ -112,8 +112,9 @@ func installKDEIntegration(stdout io.Writer, host kdeHost) error {
 		return nil
 	}
 	// KWin reads the application cache lazily; wait until both interfaces serve the helper.
-	deadline := time.Now().Add(host.wait)
-	for {
+	start := time.Now()
+	deadline := start.Add(host.wait)
+	for attempt := 1; ; attempt++ {
 		served, detail, err := host.served()
 		if served {
 			fmt.Fprintln(stdout, "KWin now serves the helper. Reinstall after moving or upgrading Cherry Computer Use, since the authorization names the helper's path.")
@@ -123,7 +124,7 @@ func installKDEIntegration(stdout io.Writer, host kdeHost) error {
 			if err != nil {
 				return fmt.Errorf("KWin did not serve the helper yet: %w", err)
 			}
-			return fmt.Errorf("KWin did not serve the helper within %s (%s); check that this is KDE Plasma 6 and try again", host.wait, detail)
+			return fmt.Errorf("KWin did not serve the helper within %s (%d checks; %s); check that this is KDE Plasma 6 and try again", time.Since(start).Round(time.Second), attempt, detail)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
