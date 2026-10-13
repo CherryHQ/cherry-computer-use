@@ -52,3 +52,25 @@ func TestDownscaleAveragesToLogicalSize(t *testing.T) {
 		t.Fatalf("averaged pixel = %v", got)
 	}
 }
+
+func TestCompositorIPCOutranksTheDesktopName(t *testing.T) {
+	var probe Probe
+	probe.Session.Desktop = "ubuntu:GNOME"
+	probe.Compositor.Sway = true
+	for _, global := range []string{"zwlr_screencopy_manager_v1", "zwlr_virtual_pointer_manager_v1", "zxdg_output_manager_v1", "wl_seat"} {
+		probe.Wayland.Globals = append(probe.Wayland.Globals, struct {
+			Interface string `json:"interface"`
+			Version   uint32 `json:"version"`
+		}{global, 1})
+	}
+	if got := probe.CaptureAvailable(); got.Status != "available" {
+		t.Fatalf("Sway capture under an inherited GNOME desktop name: %+v", got)
+	}
+	if got := probe.PointerAvailable(); got.Status != "available" {
+		t.Fatalf("Sway pointer under an inherited GNOME desktop name: %+v", got)
+	}
+	probe.Compositor.Sway = false
+	if got := probe.PointerAvailable(); got.Code != "DEPENDENCY_MISSING" {
+		t.Fatalf("GNOME without the extension: %+v", got)
+	}
+}

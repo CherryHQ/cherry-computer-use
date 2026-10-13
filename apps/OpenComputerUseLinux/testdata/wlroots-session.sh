@@ -195,5 +195,6 @@ open(sys.argv[1]).read()
   sleep 1
 fi
 status=0
-env XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" "$@" || status=$?
+case "$compositor" in sway) desktop=sway ;; *) desktop=Hyprland ;; esac
+env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP="$desktop" GDK_BACKEND=wayland OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" "$@" || status=$?
 exit "$status"
