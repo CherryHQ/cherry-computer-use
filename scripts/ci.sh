@@ -23,6 +23,8 @@ if command -v go >/dev/null 2>&1; then
   )
   (
     cd "${repo_root}/apps/OpenComputerUseLinux"
+    test -z "$(gofmt -l .)"
+    go vet ./...
     go test ./...
   )
 fi
@@ -30,7 +32,10 @@ fi
 if command -v cargo >/dev/null 2>&1; then
   (
     cd "${repo_root}/apps/OpenComputerUseLinux/wayland-helper"
+    cargo fmt --check
+    cargo clippy --locked --all-targets -- -D warnings
     cargo test --locked
+    node "${repo_root}/scripts/wayland-helper-notices.mjs" --check
   )
 fi
 

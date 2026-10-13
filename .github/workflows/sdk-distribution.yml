@@ -108,6 +108,17 @@ jobs:
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
           swift --version
+      - name: Install the Linux Wayland helper toolchain
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          # zig links the helper against glibc 2.28, so one build runs on older distributions.
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet ziglang==0.14.1 cargo-zigbuild==0.23.4
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
       - name: Build signed and notarized macOS runtime
         if: runner.os == 'macOS' && inputs.signed
         run: npm run sdk:runtime:build -- --signed
@@ -124,6 +135,14 @@ jobs:
         run: npm run sdk:package:verify
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Start the Wayland helper on glibc 2.28 (Debian 10)
+        if: runner.os == 'Linux'
+        run: |
+          arch=$([ "$(uname -m)" = x86_64 ] && echo amd64 || echo arm64)
+          request='{"id":1,"method":"hello","params":{"protocol":1}}'
+          printf 'Content-Length: %d\r\n\r\n%s' "${#request}" "$request" |
+            docker run --rm -i -v "$PWD/dist/linux/$arch:/runtime:ro" debian:10-slim /runtime/open-computer-use-wayland |
+            tee /dev/stderr | grep -q '"protocol":1'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdk-native-${{ matrix.target }}

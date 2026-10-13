@@ -204,7 +204,13 @@ mkdir -p "${codex_home}" "${plugin_cache_root}"
 rm -rf "${plugin_install_root}"
 mkdir -p "${plugin_install_root}"
 
-node "${config_helper}" copy-into-dir "${plugin_install_root}" "${plugin_source_root}" "${payload_path}"
+payload_paths=("${payload_path}")
+# The Linux runtime starts its Wayland helper from its own directory.
+helper_path="$(dirname "${payload_path}")/open-computer-use-wayland"
+if [[ "${platform}" == "linux" && -x "${helper_path}" ]]; then
+  payload_paths+=("${helper_path}")
+fi
+node "${config_helper}" copy-into-dir "${plugin_install_root}" "${plugin_source_root}" "${payload_paths[@]}"
 
 node "${config_helper}" codex-plugin-config "${config_path}" "${repo_root}" "${marketplace_name}" "${plugin_name}"
 

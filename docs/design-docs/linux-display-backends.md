@@ -96,7 +96,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 - **协议**：stdio 上的版本化私有协议，沿用 runtime-go 的帧格式。握手时返回探测结果（会话类型、Wayland 全局对象、门户版本与设备类型、可用的合成器助手），作为 Go 端能力表的依据。请求携带目标描述（PID、观察到的标题、AT-SPI 引用）；原生句柄留在辅助进程内，不回传。
 - **所有权与清理**：辅助进程持有门户会话、EIS 连接、Wayland 虚拟设备和 PipeWire 流。stdin EOF（runtime 正常关闭或被杀）时，它松开仍按住的输入、关闭会话后退出，与 `input-guard` 同一模式；Go 端在超时后强制结束它。辅助进程意外退出时，依赖它的能力报告不可用，进行中的动作按 `effect: possible` 处理，不自动重启后补发。
 - **系统库**：除 PipeWire 外都是纯 Rust。libpipewire 缺失时就不加载：`pipewire-rs` 在构建时链接该库，链接它的程序在缺库的机器上无法启动，所以截图放进单独的可执行文件，只在需要截图时才启动；启动失败即报告截图不可用，输入与语义动作不受影响。W0 原型（不含截图）只依赖 libc/libm/libgcc，release 体积 5.4 MB（arm64）。
-- **构建与分发**：CI 为 Linux x64/arm64 构建，随平台 npm 包放在 `runtime/` 下与 `open-computer-use` 同级。`Cargo.lock` 入库，纳入现有的依赖审查、OSV 扫描与 SBOM（见 [供应链安全](../SUPPLY_CHAIN_SECURITY.md)）。
+- **构建与分发**：`build-open-computer-use-linux.sh` 在 Go 运行时旁构建辅助进程，SDK 平台包把它放在 `runtime/` 下与 `open-computer-use` 同级，CLI 包与 Codex 插件也随运行时携带。GNOME 键盘路由要在运行时 `dlopen` libxkbcommon，静态 musl 程序做不到，因此发布构建（`--portable-helper`）用 cargo-zigbuild 按 glibc 2.28 链接（Debian 10、RHEL 8 及以后），不按构建机的 glibc（ubuntu-24.04 为 2.39）；脚本检查产物要求的最高 glibc 版本。SDK 分发工作流在安装验证中让辅助进程完成握手，并在 Debian 10 容器中启动它。依赖的许可证全文由 `scripts/wayland-helper-notices.mjs` 写入 `THIRD_PARTY_NOTICES.md`，CI 检查其是否过期。`Cargo.lock` 入库，纳入现有的依赖审查、OSV 扫描与 SBOM（见 [供应链安全](../SUPPLY_CHAIN_SECURITY.md)）。
 
 ## 后端矩阵（目标状态）
 
@@ -106,7 +106,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | --- | --- | --- | --- | --- | --- |
 | X11 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ✅ XTEST + guard | ✅ XTEST，校验落点 | 无 |
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
-| wlroots（Sway、labwc、Hyprland 等） | Sway/Hyprland IPC 给出焦点窗口的 PID、标题与几何 ✅（焦点）；其他合成器回退到 AT-SPI ACTIVE | Sway 只有输出级截图；Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | `wlr-virtual-pointer` | 无 |
+| wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
 | GNOME（Mutter） | 🧪 AT-SPI `ACTIVE`；窗口由用户在门户中选择 | 门户 ScreenCast（窗口源）+ PipeWire，或 Shell 扩展按窗口截取 | 门户 RemoteDesktop + libei，只发给焦点窗口 | libei 绝对坐标以所选窗口为参照（W0 已确认）；🧪 遮挡时的送达与目标绑定 | 门户弹窗，可持久 |
 | KDE（KWin） | 🧪 KWin 脚本/effect 提供几何与焦点 | 门户 ScreenCast + PipeWire | 门户 + libei | 🧪 同 GNOME | 门户弹窗，可持久 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
@@ -178,7 +178,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | W0 | 用 Rust 原型（`experiments/` 下）实验：GNOME 门户会话（只读，不发输入）与窗口流坐标；XWayland 下 XTEST/GetImage；libei 与门户会话断开时是否松键；无头 mutter/sway 能否跑门户。同时验证 Rust 在 CI 中构建 x64/arm64 与产物大小 | 结论写入本文与执行计划 |
-| W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；辅助进程尚未打包进平台 npm 包，安装包中 `doctor` 会报告其缺失，打包随 W2 首个实际能力一起做 |
+| W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；打包见「构建与分发」 |
 | W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 | 截图：门户 ScreenCast + PipeWire 辅助二进制，或 GNOME 扩展 | 依赖方案经确认后实现 |

@@ -404,3 +404,34 @@ Scope: Rust 辅助进程、Go 引擎与 SDK、测试脚本、CI 与文档。
 - 实测问题：无头会话没有物理指针，每次手势新建虚拟指针会让座位指针能力反复出现，GTK 异步绑定期间的点击偶发丢失；改为设备常驻并在会话中预热后稳定。
 - Sway 窗口几何修正：IPC 的 `rect` 包含边框，客户端内容需加 `window_rect` 偏移（实测 1024x743 → 1020x741）；元素坐标前新增 AT-SPI 与合成器窗口尺寸一致性检查。
 - Hyprland：嵌套到真实桌面（`OCU_HYPRLAND_PARENT=wayland-0`）后有显示器，引擎测试连续 3 次通过、SDK 测试通过，截图人工检查正确；遮挡测试覆盖两种合成器。真实会话、`/var/crash` 前后不变，无残留。
+
+## [2026-10-13 12:50] | Task: 打包 Wayland 辅助进程
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 开始做打包。
+
+### Changes Overview
+
+Scope: 构建脚本、npm 打包与验证、CI、第三方声明与文档。
+
+- `build-open-computer-use-linux.sh` 在 Go 运行时旁构建 `open-computer-use-wayland`。`--portable-helper`（SDK 平台包与 CLI 包使用）要求 cargo-zigbuild 按 glibc 2.28 链接，并检查产物要求的最高 glibc 版本；默认模式在缺少 zig 时退回本机 cargo（需要本机 glibc），跨架构则跳过并警告。
+- SDK 平台包、CLI 包与 Codex 插件安装都随运行时携带辅助进程。`verify-sdk-package.mjs` 让安装后的辅助进程完成握手；SDK 分发工作流在 Linux 上安装 Rust、zig 与 cargo-zigbuild，并在 Debian 10 容器中启动辅助进程。
+- 新增 `scripts/wayland-helper-notices.mjs`，把辅助进程链接的 96 个 crate 及其许可证全文（相同文本只收一次）与 Hyprland 协议的 BSD-3 声明写入 `THIRD_PARTY_NOTICES.md`；`sdk-check` 与 `scripts/ci.sh` 检查其是否过期，`scripts/ci.sh` 也加入 gofmt、go vet、rustfmt 与 clippy。
+
+### Design Intent
+
+GNOME 键盘路由在运行时 `dlopen` libxkbcommon，静态 musl 程序不能这样做，所以保留 glibc 动态链接，只把版本要求降到 2.28。zig 还能在 macOS 或单台 Linux 上交叉构建两个架构，符合 CLI 包一次构建全部平台的方式。
+
+### Validation
+
+- 本机（Ubuntu 26.04，arm64）用 zig 构建两个架构，要求均为 glibc 2.28；arm64 产物在隔离 Sway 中通过引擎测试。
+- `npm run sdk:runtime:build` 与 `npm run sdk:package:verify` 在 linux-arm64 通过，平台包含 `runtime/open-computer-use-wayland`，安装后握手成功。
+- 构建脚本的三种退路：缺少 zig 时本机架构退回 cargo（要求 glibc 2.39 并警告）、跨架构跳过、`--portable-helper` 失败。
+- 未在本机验证：Debian 10 容器启动（本机无容器运行时，由 CI 验证）、x64 机器上的实际运行、macOS 上的 CLI 包构建。
