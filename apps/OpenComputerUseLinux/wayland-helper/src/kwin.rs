@@ -299,10 +299,12 @@ pub fn capture(internal_id: &str) -> Result<Capture, Failure> {
 /// Whether ScreenShot2 serves this helper, asked with a window id that cannot
 /// exist: KWin checks the caller first, so only "no such window" means yes.
 /// Anything else, such as a timeout, says nothing about the authorization.
-pub fn screenshot_authorized() -> bool {
+/// Otherwise the error says why.
+pub fn screenshot_authorized() -> Result<(), String> {
     match capture("{00000000-0000-0000-0000-000000000000}") {
-        Ok(_) => true,
-        Err(failure) => failure.message.contains("InvalidWindow"),
+        Ok(_) => Ok(()),
+        Err(failure) if failure.message.contains("InvalidWindow") => Ok(()),
+        Err(failure) => Err(failure.message),
     }
 }
 

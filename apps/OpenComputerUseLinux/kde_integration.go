@@ -49,6 +49,9 @@ func systemKDEHost() kdeHost {
 		defer helper.Close()
 		probe := helper.Probe()
 		detail := fmt.Sprintf("KWin found: %v, fake_input offered: %v, ScreenShot2 allowed: %v", probe.KWin != nil, probe.KWinInput(), probe.KWinCapture())
+		if probe.KWin != nil && probe.KWin.ScreenshotError != "" {
+			detail += " (" + probe.KWin.ScreenshotError + ")"
+		}
 		return probe.KWinInput() && probe.KWinCapture(), detail, nil
 	}
 	return host

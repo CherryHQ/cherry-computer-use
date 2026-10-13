@@ -83,7 +83,10 @@ pub fn run() -> Probe {
         },
         gnome_shell: crate::shell::probe(),
         kwin: if crate::kwin::running() {
-            serde_json::json!({ "screenshot": crate::kwin::screenshot_authorized() })
+            match crate::kwin::screenshot_authorized() {
+                Ok(()) => serde_json::json!({ "screenshot": true }),
+                Err(error) => serde_json::json!({ "screenshot": false, "screenshot_error": error }),
+            }
         } else {
             serde_json::Value::Null
         },
