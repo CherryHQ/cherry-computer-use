@@ -18,4 +18,21 @@ Request: open a new PR and build the GNOME Shell extension (W4) designed in #10:
 
 Validation: isolated headless GNOME 50 locally — the extension test 4/4 and the SDK test 3/3 with the extension; the portal keyboard and SDK tests without it; unit tests for installing and parsing. First probe: the real extension worked over D-Bus on first load.
 
+Later fixes from CI and the real desktop:
+
+- Click refusals name what covers the point.
+- The isolated session turns notification banners off and leaves the startup overview.
+- The extension waits for clients to see pointer motion, confirms the cursor actually reached the point before pressing (a new device's first motion was dropped on the GNOME 50 runner), and warms up a new virtual pointer.
+
+Real desktop (GNOME 50.1 in a Parallels VM):
+
+- Setup:
+  - The user turned on user extensions, which were off; the installer only reports that.
+  - Then logged in again.
+  - Authorized in the Shell dialog.
+- Results:
+  - Capture, double click, coordinate click, Ctrl+A and BackSpace all worked.
+  - After stopping from the top bar and allowing again, a fresh virtual pointer clicked on its first try while the mouse was idle.
+  - Moving the mouse right after allowing makes the host's absolute pointer override the virtual one, and the click is rightly refused.
+
 Files: `apps/OpenComputerUseLinux/gnome-shell-extension/`, `wayland-helper/src/shell.rs`, `internal/display/wayland/shell.go`, `internal/desktop/display.go`, `sdk.go`, `gnome_extension.go`, `testdata/gnome-session.sh`, `protocol/linux-desktop.test.mjs`, `.github/workflows/sdk-check.yml`.

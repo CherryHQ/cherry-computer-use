@@ -268,7 +268,9 @@ GNOME 不向普通客户端提供 wlroots 协议、`ext-image-copy-capture` 或�
 - 辅助进程（`shell.rs`）通过会话总线调用扩展：`window.find`/`window.capture` 在 GNOME 上改由扩展列出与截取窗口，`shell.*` 方法负责授权、点击、拖拽、组合键与文本。扩展的 D-Bus 错误名映射为运行时错误码；`Possible` 表示输入已发送、效果未知。zbus 的超时按连接设置，等待用户回答对话框的调用使用单独的长超时连接，两者都来自辅助进程本身。
 - 引擎：扩展存在时，GNOME 的截图（按窗口逻辑尺寸缩放）、窗口定位、点击、拖拽、按键与文本都走扩展；键盘选择顺序为扩展、wlroots 虚拟键盘、门户。元素坐标以 client 表面（含客户端阴影，即 `get_buffer_rect`）为原点，并要求 AT-SPI 窗口尺寸与其一致。缺少授权时 SDK 返回 `PERMISSION_REQUIRED`，CLI 弹出 Shell 对话框一次后重试。
 - 测试：`gnome-session.sh` 可在 Shell 启动前运行运行时自己的 `install-gnome-extension`，与用户首次安装的路径相同；对话框通过只在 unsafe mode 下可用的 `Shell.Eval` 回答。`TestGNOMEShellExtension` 覆盖授权前拒绝、拒绝与允许、被遮挡窗口截图、遮挡时拒绝点击、单击、双击、拖拽、Ctrl+A、Unicode 文本、焦点在别处时拒绝、撤销后拒绝；SDK 桌面测试覆盖 `gnomeShell` 的授权流程，以及无扩展时的 `unavailable`。
-- 未覆盖：真实桌面上的安装、重新登录与对话框流程；GNOME 45 及更早版本；Electron、Qt 等客户端是否支持 text-input（不支持时只发送 ASCII，其余字符在发送前拒绝）。
+- 指针到位确认：GNOME 50 CI 上扩展放行了双击，计数却不变；Shell 状态显示光标停在 (512, 0)，新虚拟指针的移动被丢弃，按下落在了光标原来的位置。扩展因此在移动后读取光标位置，最长 1 秒内重发移动，新设备先原地移动一次；光标未到位则拒绝并说明它停在哪里。命中检查只看坐标处的窗口，不能代替这一步。
+- 真实桌面（GNOME 50.1，Parallels 虚拟机，2026-10-13）：`install-gnome-extension` 后用户需打开用户扩展总开关（本机原为关闭，安装命令只提示）并重新登录；扩展 `ACTIVE`，`doctor` 报告截图与全局输入可用；对话框授权后截图、双击、坐标点击、Ctrl+A 与退格均生效；从顶栏停止后重新授权，新建的虚拟指针在鼠标静止时首次点击即成功。点击“允许”后立即移动鼠标时，宿主同步的绝对位置会覆盖虚拟指针，点击按设计被拒绝并提示鼠标可能正在使用。
+- 未覆盖：GNOME 45 及更早版本；Electron、Qt 等客户端是否支持 text-input（不支持时只发送 ASCII，其余字符在发送前拒绝）。
 
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 
