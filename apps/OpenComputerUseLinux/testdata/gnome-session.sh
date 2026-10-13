@@ -6,6 +6,9 @@
 #
 #   testdata/gnome-session.sh go test ./internal/desktop/ -run GNOME
 #
+# OCU_XWAYLAND=1 lets Mutter run XWayland and gives the command its DISPLAY with
+# GDK_BACKEND=x11, so GTK test windows are X11 windows.
+#
 # OCU_GNOME_SHELL_EXTENSION=<dir> installs that extension directory into the
 # session's private data directory and enables it before the shell starts; given
 # the open-computer-use executable instead, it runs its install-gnome-extension,
@@ -46,7 +49,11 @@ fi
 # Notification banners can cover test windows; actions there are rightly refused.
 gsettings set org.gnome.desktop.notifications show-banners false
 # Unsafe mode allows org.gnome.Shell.Eval, used below only inside this session.
-gnome-shell --headless --unsafe-mode --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
+# XWayland's sockets live in the shared /tmp/.X11-unix; the new one is ours.
+x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
+x11=--no-x11
+[ "${OCU_XWAYLAND:-}" = 1 ] && x11=
+gnome-shell --headless --unsafe-mode --wayland $x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
 shell=$!
 # Session services (document portal, gvfs) may mount FUSE filesystems in the
 # private runtime directory. Cleanup must never change the command's exit status.
@@ -72,6 +79,10 @@ for _ in $(seq 100); do
   gdbus introspect --session --dest org.gnome.Mutter.RemoteDesktop --object-path /org/gnome/Mutter/RemoteDesktop >/dev/null 2>&1 && break
   sleep 0.1
 done
+# A login session hands the display to services the bus starts later, such as
+# the portal's dialogs; GNOME 42 and 43 do not do it themselves when headless.
+gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+  --method org.freedesktop.DBus.UpdateActivationEnvironment "{'WAYLAND_DISPLAY': '$display', 'XDG_CURRENT_DESKTOP': 'GNOME'}" >/dev/null
 # Give each new window focus once it is shown, as a desktop does when the user
 # starts an app. Without an activation token, some GNOME versions (46) leave a
 # test fixture unfocused, and keys are then correctly refused. The shell opens
@@ -116,5 +127,18 @@ open(sys.argv[1]).read()
     echo "gnome-session.sh: the warm-up keyboard was not granted: $(tr -d '\r' < "$log.keyboard-replies" 2>/dev/null | tail -c 400)" >&2
   fi
 fi
-env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland \
-  XDG_CURRENT_DESKTOP=GNOME OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"
+backend=wayland
+if [ -z "$x11" ]; then
+  for _ in $(seq 100); do
+    x_socket=$(ls /tmp/.X11-unix 2>/dev/null | grep -vxF "$x_before" | head -1 || true)
+    [ -n "$x_socket" ] && break
+    sleep 0.1
+  done
+  [ -n "$x_socket" ] || { echo "gnome-session.sh: XWayland did not start" >&2; exit 1; }
+  DISPLAY=":${x_socket#X}"
+  export DISPLAY
+  backend=x11
+fi
+env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND="$backend" \
+  XDG_CURRENT_DESKTOP=GNOME OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 \
+  OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST="$([ "$backend" = x11 ] && echo 1)" "$@"

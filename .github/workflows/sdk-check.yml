@@ -327,6 +327,12 @@ jobs:
           # for it, or it undoes the chmod.
           sudo udevadm settle
           sudo chmod a+rw /dev/dri/*
+          # Mesa's software renderer allocates dumb buffers, which vgem allows only
+          # on its primary node; Hyprland opens the render node, so it gets the
+          # primary node there.
+          card=$(grep -x 'card[0-9]*' "$RUNNER_TEMP/vgem")
+          render=$(grep -x 'renderD[0-9]*' "$RUNNER_TEMP/vgem")
+          sudo mount --bind "/dev/dri/$card" "/dev/dri/$render"
           ls -l /dev/dri
       - name: Capture and input through Hyprland
         run: |

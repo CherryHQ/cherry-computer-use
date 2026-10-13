@@ -14,6 +14,8 @@
 # The command gets WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland, SWAYSOCK or
 # HYPRLAND_INSTANCE_SIGNATURE, and OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST=<compositor>.
 # OCU_WLROOTS_DEBUG=1 prints the compositors' logs when the run fails.
+# OCU_XWAYLAND=1 runs XWayland too and gives the command its DISPLAY with
+# GDK_BACKEND=x11, so GTK test windows are X11 windows.
 set -eu
 compositor=${1:-}
 case "$compositor" in
@@ -113,11 +115,15 @@ wait_for_socket() {
   return 1
 }
 
+# XWayland's sockets live in the shared /tmp/.X11-unix; the new one is ours.
+x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
+xwayland=disable
+[ "${OCU_XWAYLAND:-}" = 1 ] && xwayland=force
 case "$compositor" in
   sway)
     # Our own config only: the system config would export this session's
     # environment into the user's systemd manager.
-    printf 'output HEADLESS-1 resolution 1024x768\nxwayland disable\n' > "$root/sway.conf"
+    printf 'output HEADLESS-1 resolution 1024x768\nxwayland %s\n' "$xwayland" > "$root/sway.conf"
     WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 XDG_CURRENT_DESKTOP=sway \
       sway -c "$root/sway.conf" > "$root/compositor.log" 2>&1 &
     pids="$!"
@@ -148,7 +154,7 @@ case "$compositor" in
     cat > "$XDG_CONFIG_HOME/hypr/hyprland.conf" <<'CONF'
 monitor = , 1024x768, auto, 1
 xwayland {
-  enabled = false
+  enabled = XWAYLAND_ENABLED
 }
 # Window animations advance per rendered frame; a nested headless output may
 # barely render, leaving new windows at their tiny opening size.
@@ -164,6 +170,7 @@ ecosystem {
   no_donation_nag = true
 }
 CONF
+    sed -i "s/XWAYLAND_ENABLED/$([ "$xwayland" = force ] && echo true || echo false)/" "$XDG_CONFIG_HOME/hypr/hyprland.conf"
     [ "${OCU_WLROOTS_DEBUG:-}" = 1 ] && printf 'debug {\n  disable_logs = false\n}\n' >> "$XDG_CONFIG_HOME/hypr/hyprland.conf"
     HYPRLAND_NO_CRASHREPORTER=1 XDG_CURRENT_DESKTOP=Hyprland \
       Hyprland --config "$XDG_CONFIG_HOME/hypr/hyprland.conf" > "$root/compositor.log" 2>&1 &
@@ -203,7 +210,20 @@ open(sys.argv[1]).read()
   pids="$pids $!"
   sleep 1
 fi
+backend=wayland
+if [ "$xwayland" = force ]; then
+  for _ in $(seq 100); do
+    x_socket=$(ls /tmp/.X11-unix 2>/dev/null | grep -vxF "$x_before" | head -1 || true)
+    [ -n "$x_socket" ] && break
+    sleep 0.1
+  done
+  [ -n "$x_socket" ] || { echo "wlroots-session.sh: XWayland did not start" >&2; exit 1; }
+  DISPLAY=":${x_socket#X}"
+  export DISPLAY
+  backend=x11
+fi
 status=0
 case "$compositor" in sway) desktop=sway ;; *) desktop=Hyprland ;; esac
-env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP="$desktop" GDK_BACKEND=wayland OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" "$@" || status=$?
+env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP="$desktop" GDK_BACKEND="$backend" OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" \
+  OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST="$([ "$backend" = x11 ] && echo 1)" "$@" || status=$?
 exit "$status"

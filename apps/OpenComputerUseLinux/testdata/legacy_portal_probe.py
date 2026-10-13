@@ -130,8 +130,11 @@ try:
 except GLib.Error as e:
     report["mutter_session_methods"] = {"error": e.message}
 
-fixture = subprocess.Popen(["python3", FIXTURE, "Legacy Portal"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-assert fixture.stdout.readline().strip() == "ready"
+fixture = subprocess.Popen(["python3", FIXTURE, "Legacy Portal"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+if fixture.stdout.readline().strip() != "ready":
+    report["fixture"] = fixture.stderr.read()[-1500:]
+    print(json.dumps(report, default=str))
+    sys.exit(1)
 time.sleep(1)
 
 try:
