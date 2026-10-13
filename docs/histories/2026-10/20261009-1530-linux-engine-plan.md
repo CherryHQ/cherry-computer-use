@@ -435,3 +435,32 @@ GNOME 键盘路由在运行时 `dlopen` libxkbcommon，静态 musl 程序不能�
 - `npm run sdk:runtime:build` 与 `npm run sdk:package:verify` 在 linux-arm64 通过，平台包含 `runtime/open-computer-use-wayland`，安装后握手成功。
 - 构建脚本的三种退路：缺少 zig 时本机架构退回 cargo（要求 glibc 2.39 并警告）、跨架构跳过、`--portable-helper` 失败。
 - 未在本机验证：Debian 10 容器启动（本机无容器运行时，由 CI 验证）、x64 机器上的实际运行、macOS 上的 CLI 包构建。
+
+## [2026-10-13 14:40] | Task: GNOME 截图与输入方案（Shell 扩展）
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> 先做A，不用隔离；输入用扩展里的虚拟设备，先做验证；写进设计文档。
+
+### Changes Overview
+
+Scope: 设计文档与执行计划，无代码改动。
+
+- 比较 moeru-ai/auv（门户显示器流 + 按 gnome-shell「Main stage」树裁剪）与 trycua/cua（WinRects Shell 扩展）。在真实桌面上只读实验 Main stage 树：节点顺序即层叠顺序，ACTIVE 窗口总在最后，但节点没有 PID 与标题；`Shell.Introspect.GetWindows` 对第三方返回 `AccessDenied`。
+- 决定 GNOME 改用自有 Shell 扩展（W4），输入使用扩展内的 Clutter 虚拟设备，Shell 内授权；不实现无扩展的显示器裁剪退路。
+- 在隔离的无头 GNOME 50 中用 `Shell.Eval` 验证：窗口列表、被完全遮挡的窗口截图、落点窗口、同一调用内确认落点后的虚拟指针点击、虚拟键盘、`Main.inputMethod.commit` 提交任意 Unicode。
+
+### Design Intent
+
+扩展能在 gnome-shell 内确认窗口身份与落点，并把确认与送达放在同一次调用中，这是门户方案给不出的目标绑定。GNOME 有意收紧了截图与窗口列表接口，所以扩展只接受本产品辅助进程，并在首次使用时由用户在 Shell 内授权。
+
+### Validation
+
+- 真实桌面实验只读取无障碍树，打开过两个测试窗口并让其申请焦点，未注入输入。
+- 隔离会话：PID 与夹具一致；遮挡时截到的是目标窗口本身；遮挡时点击被拒绝、置顶后计数 0 → 1；按键送达焦点控件；布局外键符被 Mutter 丢弃，经输入法提交的 `中文 😀 é` 原样进入输入框。会话结束后无残留。

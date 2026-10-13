@@ -107,7 +107,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | X11 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ✅ XTEST + guard | ✅ XTEST，校验落点 | 无 |
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
 | wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
-| GNOME（Mutter） | 🧪 AT-SPI `ACTIVE`；窗口由用户在门户中选择 | 门户 ScreenCast（窗口源）+ PipeWire，或 Shell 扩展按窗口截取 | 门户 RemoteDesktop + libei，只发给焦点窗口 | libei 绝对坐标以所选窗口为参照（W0 已确认）；🧪 遮挡时的送达与目标绑定 | 门户弹窗，可持久 |
+| GNOME（Mutter） | 🧪 Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4，已验证可行） | 🧪 Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 门户 RemoteDesktop + libei（无扩展时）；🧪 扩展内虚拟键盘 + 输入法提交任意 Unicode（W4） | 🧪 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 门户弹窗；扩展由用户安装并在 Shell 内授权 |
 | KDE（KWin） | 🧪 KWin 脚本/effect 提供几何与焦点 | 门户 ScreenCast + PipeWire | 门户 + libei | 🧪 同 GNOME | 门户弹窗，可持久 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
 
@@ -144,7 +144,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 
 ## 授权与会话生命周期
 
-- 门户授权映射到现有协议：Wayland 会话中 `getPermissionStatus` 报告 `remoteDesktop`（`granted`/`notDetermined`/`unavailable`），`requestPermissions` 发起门户会话并弹出系统对话框，用户拒绝返回 `denied` 而不是错误；X11 会话不报告任何权限。SDK 的动作调用本身不触发弹窗，未授权时返回 `PERMISSION_REQUIRED`；CLI 在第一次需要 Wayland 键盘时按需弹窗（CLI 每次进程都会重新询问）。`screenCast` 随截图（W4）加入。
+- 门户授权映射到现有协议：Wayland 会话中 `getPermissionStatus` 报告 `remoteDesktop`（`granted`/`notDetermined`/`unavailable`），`requestPermissions` 发起门户会话并弹出系统对话框，用户拒绝返回 `denied` 而不是错误；X11 会话不报告任何权限。SDK 的动作调用本身不触发弹窗，未授权时返回 `PERMISSION_REQUIRED`；CLI 在第一次需要 Wayland 键盘时按需弹窗（CLI 每次进程都会重新询问）。GNOME 扩展（W4）的授权在 Shell 内完成，SDK 以单独的权限项报告其安装、重新登录与授权状态。
 - 已知限制：辅助进程等待对话框时是阻塞的，SDK 取消 `requestPermissions` 只会让 Go 端返回，对话框仍然打开、辅助进程在用户回答前不处理其他请求。对话框没有父窗口，GNOME 不会把它提到前台。
 - 持久化：门户 restore token 为一次性，需要每次会话后更新。token 的存放位置属于宿主（Cherry）的产品决定；runtime 只通过协议接收与返回，不自行在用户目录写入隐藏状态。
 - 门户会话归 runtime 的 `display.Session` 所有，任务结束、EOF、`stop` 时关闭；不跨任务共享。
@@ -158,7 +158,8 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | 门户 | Rust `ashpd`（zbus） | 纯 Rust |
 | libei | Rust `reis` | 纯 Rust；其 API 仍在变化，升级需预留成本 |
 | PipeWire 取帧 | Rust `pipewire-rs`，需要系统 libpipewire | 运行时加载或拆成可选二进制 |
-| GNOME Shell 扩展 / KWin 脚本 | JavaScript，随包分发，需要用户安装或启用 | 产品决定：是否提供、谁来安装、如何升级 |
+| GNOME Shell 扩展 | JavaScript，随包分发，由安装命令写入并启用，重新登录后生效 | 已决定提供（W4）；随 GNOME 大版本适配 |
+| KWin 脚本 | JavaScript | 待定（W5） |
 
 ## 测试策略
 
@@ -181,8 +182,8 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；打包见「构建与分发」 |
 | W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
-| W4 | 截图：门户 ScreenCast + PipeWire 辅助二进制，或 GNOME 扩展 | 依赖方案经确认后实现 |
-| W5 | GNOME/KDE 指针：依赖 W0 的坐标结论与助手方案 | 落点校验可证明时才开放 |
+| W4 🟡 | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权（见「GNOME Shell 扩展」） | 方案已确认，可行性在隔离 GNOME 50 中验证通过；实现另开 PR |
+| W5 | KDE：KWin 脚本或门户，按同样的落点与焦点校验标准 | 待定 |
 
 每个阶段独立成 PR；未完成的能力保持 unsupported/unavailable，并说明原因。
 
@@ -229,6 +230,39 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 设备生命周期：无头合成器没有物理指针，每次新建、销毁虚拟指针会让座位的指针能力反复出现，客户端异步绑定 `wl_pointer` 期间的点击会丢失（测试中偶发）。虚拟指针因此在辅助进程生命周期内常驻，首次创建后等待 200 ms；`wlroots-session.sh` 也在会话开始时保持一个指针。
 - Hyprland：嵌套在无头父合成器（labwc、无头 GNOME）中时没有显示器，窗口只有 5x5；`OCU_HYPRLAND_PARENT=wayland-0` 让它嵌套到真实显示中（出现一个窗口，输入只进入嵌套 Hyprland 自己的座位），在 virgl 加速的虚拟机中获得 1024x768 显示器，键盘、截图、指针测试与 SDK 测试通过。toplevel export 只含窗口内容（GTK 3 的客户端阴影不在其中，AT-SPI 窗口尺寸与 IPC 一致），被浮动窗口遮挡时仍能截图；遮挡时点击同样因焦点落到遮挡窗口而被拒绝。
 
+## GNOME Shell 扩展（W4，2026-10-13 方案与验证）
+
+### 为什么是扩展
+
+GNOME 不向普通客户端提供 wlroots 协议、`ext-image-copy-capture` 或窗口归属信息，门户只能给出用户选择的画面。比较过的做法：
+
+- **门户 ScreenCast 窗口源**：用户在对话框中选中的窗口无法证明就是 AT-SPI 观察到的目标（moeru-ai/auv 也因此放弃了这条路）。
+- **门户显示器源 + 按窗口位置裁剪**（moeru-ai/auv 的做法）：窗口位置取自 gnome-shell 自己的 AT-SPI「Main stage」树。在真实 GNOME 50 桌面上只读实验：树中「Wayland window」节点的顺序就是自下而上的层叠顺序，ACTIVE 窗口总在最后（4/4），GTK 3 窗口的 AT-SPI 窗口尺寸与节点尺寸一致，节点给出真实屏幕位置。但节点没有 PID 与标题，只能按尺寸匹配；同尺寸的最大化窗口无法区分，通知横幅不在其中，被遮挡时裁剪会截到遮挡物，只能截取激活窗口。它还需要门户授权与 PipeWire。扩展可用后，这种无扩展退路的价值不抵其成本，因此不实现。
+- **`org.gnome.Shell.Introspect.GetWindows`**：GNOME 50 对白名单外的调用返回 `AccessDenied`，旧的 `introspect` 设置项已移除。
+- **Shell 扩展**（trycua/cua 的 WinRects 已用于定位、截图与激活）：扩展运行在 gnome-shell 内，能读取每个窗口的身份与层叠，并在同一次调用中确认落点后送达输入。代价是安装后需要重新登录、随 GNOME 版本适配、扩展出错会使整个会话崩溃，以及重新开放了 GNOME 有意收紧的截图与窗口列表能力，因此必须由用户授权。
+
+### 可行性验证（隔离的无头 GNOME 50，unsafe mode 下用 `Shell.Eval` 运行与扩展相同的 JavaScript）
+
+| 能力 | 做法 | 结果 |
+| --- | --- | --- |
+| 窗口列表 | `global.get_window_actors()`、`sort_windows_by_stacking`、`get_pid`、`get_title`、`get_frame_rect`/`get_buffer_rect`、`focus_window` | ✅ PID 与夹具进程一致，层叠自下而上，焦点正确 |
+| 被完全遮挡的窗口截图 | `MetaWindowActor.paint_to_content` 取窗口纹理，按 frame 相对 buffer 的偏移与 `get_resource_scale` 裁剪，`Shell.Screenshot.composite_to_stream` 编码 PNG；先挂一个透明的 1x1 `Clutter.Clone`，避免 Mutter 停止绘制被完全遮挡的窗口（cua 的做法） | ✅ 被另一窗口完全覆盖时得到 400x363 的目标窗口画面，不含遮挡物 |
+| 落点窗口 | `global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y)` 向上找到 `meta_window`；Shell 自己的界面（通知、菜单）也是 stage 上的角色 | ✅ 覆盖时返回遮挡窗口，置顶后返回目标 |
+| 虚拟指针 | 默认 seat 的 `create_virtual_device(POINTER_DEVICE)`，`notify_absolute_motion` 后在同一调用内检查落点窗口，是目标才 `notify_button` | ✅ 被覆盖时拒绝、计数不变；置顶后点击，计数 0 → 1 |
+| 虚拟键盘 | `create_virtual_device(KEYBOARD_DEVICE)`，`notify_keyval`/`notify_key` | ✅ 送达焦点控件；布局中没有的键符被 Mutter 丢弃（`No keycode found for keyval`） |
+| 任意文本 | `Main.inputMethod.commit(text)`（GNOME 屏幕键盘提交 emoji 的方式），经 text-input-v3 交给焦点客户端 | ✅ `中文 😀 é` 原样进入 GTK 输入框 |
+
+注意：键盘只送达窗口内的焦点控件。验证中先点击了按钮，按键随后进入按钮而不是输入框；扩展只保证目标窗口有焦点，控件焦点仍由引擎经 AT-SPI 确认。
+
+### 设计
+
+- **扩展** `computer-use@cherryai`（GNOME 46–50，ESM），在会话总线上导出一个接口：窗口列表；按窗口截图（PNG 经 fd 传回，不用 base64）；激活并返回焦点是否到达；落点窗口查询；点击、拖拽、滚动（每次在同一调用中确认落点窗口是目标）；按键与文本（确认焦点窗口是目标；文本优先经输入法提交，客户端不支持 text-input 时退回布局内键符，布局外拒绝）。每个请求携带目标的 PID 与标题，扩展按 `get_stable_sequence` 找到窗口后再核对两者。锁屏与登录界面时拒绝一切请求。
+- **授权**：只接受本产品辅助进程的调用（由总线取得调用方 PID，核对其可执行文件路径）；首次调用时 Shell 弹出模态对话框请求允许，授权在会话内有效，顶栏显示控制中的提示并可随时撤销。SDK 增加对应权限，状态为未安装、需要重新登录、待授权、已授权。扩展默认不做任何事，安装本身不等于授权。
+- **辅助进程与引擎**：辅助进程在会话总线上发现扩展后，GNOME 的定位、截图、指针与键盘都走扩展；门户 + libei 键盘保留给未启用扩展的 GNOME 与 KDE。
+- **安装**：`open-computer-use` 提供安装命令，把扩展写入用户扩展目录并启用（修改持久配置，需用户确认），然后提示重新登录；Wayland 下新装的扩展只在重新登录后加载。企业环境禁用用户扩展时如实报告不可用。
+- **稳定性**：扩展只做上述操作，每个入口捕获异常并以 D-Bus 错误返回，避免拖垮 gnome-shell；虚拟设备与透明克隆在禁用或空闲后释放。
+- **测试**：无头 GNOME 会话可在启动前把扩展放进私有数据目录并启用，CI 中加载真实扩展（`ubuntu-26.04` 为 GNOME 50，`ubuntu-24.04` 为 GNOME 46）。
+
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 
 - Sway：虚拟键盘/指针、`zwp_input_method_manager_v2`（可提交任意 Unicode，包括中文）、`ext-foreign-toplevel-list` 与 `wlr-foreign-toplevel`、`swaymsg` IPC。截图只有输出级的 screencopy 与 `ext-image-copy-capture`（无按窗口来源），按窗口截图只能裁剪输出，会包含遮挡内容。
@@ -242,8 +276,8 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 2. ~~libei 区域能否与门户流对应~~：能，区域 `mapping_id` 与窗口流一致，参照系为窗口。KDE 尚未验证。
 3. 客户端断开时是否释放按住的键：Mutter 会释放（W3 已验证）；KWin 与 wlroots 虚拟键盘待验证。
 4. XWayland：`GetImage` 已确认可用；XTEST 的送达范围待在隔离会话中验证。
-5. 是否提供 GNOME Shell 扩展 / KWin 脚本（安装体验、签名与升级、只读或可输入）。
-6. ~~libpipewire 缺失时的处理~~：不加载，截图放在单独的可执行文件中（见"辅助进程"）。仍需决定该文件是否进入默认发行包。
+5. ~~是否提供 GNOME Shell 扩展~~：提供，含输入（见「GNOME Shell 扩展」）。KWin 脚本待定。
+6. ~~libpipewire 缺失时的处理~~：不加载，截图放在单独的可执行文件中（见"辅助进程"）。GNOME 改由扩展截图后，PipeWire 只与 KDE 有关。
 7. 门户 restore token 由宿主存放的协议形式。
 8. Rust 工具链如何进入 CI 与发行流程：交叉编译方式、二进制大小、许可证审查。
 
@@ -253,4 +287,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - [XDG ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)：窗口源类型 2；`position` 仅用于显示器流；restore token 一次性。
 - [ext-image-copy-capture 合入 wayland-protocols](https://phoronix.com/news/Wayland-Merges-Screen-Capture)：wlroots 0.19 / Sway 1.11 起支持；GNOME 50 未向普通客户端提供（W1 探测），KWin 待确认。
 - [trycua/cua platform-linux](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux)：按合成器分层、libei、GNOME Shell 扩展与 KWin 下拒绝目标输入的做法；同样选用 `reis`、`ashpd` 与 `pipewire-rs`。
+- [trycua/cua WinRects 扩展](https://github.com/trycua/cua/tree/main/libs/cua-driver/wayland-helper)：GNOME 45–50 的窗口几何、按窗口截图（透明克隆避免被遮挡窗口停止绘制）与激活；输入仍走门户/libei，接口不限制调用方。
+- [moeru-ai/auv](https://github.com/moeru-ai/auv)：GNOME 上门户显示器流 + 按 gnome-shell「Main stage」树的窗口位置裁剪，restore token 带锁原子轮换；不校验输入落点。
+- [GJS 扩展指南](https://gjs.guide/extensions/)。
 - Go Wayland 客户端库（评估时参考）：[xogas/wayland](https://github.com/xogas/wayland)、[pdf/go-wayland](https://pkg.go.dev/github.com/pdf/go-wayland)、[rajveermalviya/go-wayland](https://pkg.go.dev/github.com/rajveermalviya/go-wayland)。
