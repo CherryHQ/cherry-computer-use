@@ -20,32 +20,40 @@ func (p Probe) WindowsAvailable() bool { return p.Compositor.Sway || p.Composito
 // copies the window's region of its output, Hyprland exports the toplevel, and
 // the GNOME Shell extension paints the window itself.
 func (p Probe) CaptureAvailable() display.Availability {
+	// A compositor's own IPC says more than XDG_CURRENT_DESKTOP, which a
+	// nested or misconfigured session can inherit from another desktop.
 	switch {
-	case p.ShellAvailable():
-		return display.Available()
-	case p.GNOME():
-		return p.ShellMissing()
 	case p.Compositor.Sway && p.HasGlobal("zwlr_screencopy_manager_v1"):
 		return display.Available()
 	case p.Compositor.Hyprland && p.HasGlobal("hyprland_toplevel_export_manager_v1"):
 		return display.Available()
 	case p.Compositor.Sway || p.Compositor.Hyprland:
 		return display.Unavailable("DEPENDENCY_MISSING", "The compositor offers no screen copy protocol")
+	case p.ShellAvailable(), p.KWinCapture():
+		return display.Available()
+	case p.GNOME():
+		return p.ShellMissing()
+	case p.KDE():
+		return p.KDEMissing()
 	}
 	return display.Unsupported("Wayland window capture needs Sway or Hyprland; this compositor is not supported yet")
 }
 
 // PointerAvailable reports whether pointer input can be bound to a target: the
-// GNOME Shell extension checks the window at the point itself; elsewhere the
-// wlroots virtual pointer needs output positions and IPC naming the focused window.
+// GNOME Shell extension and KWin check the window at the point through the
+// helper; elsewhere the wlroots virtual pointer needs output positions and IPC
+// naming the focused window.
 func (p Probe) PointerAvailable() display.Availability {
-	if p.ShellAvailable() {
+	if p.AssistedRoute() != "" {
 		return display.Available()
 	}
-	if p.GNOME() {
-		return p.ShellMissing()
-	}
 	if !p.WindowsAvailable() {
+		switch {
+		case p.GNOME():
+			return p.ShellMissing()
+		case p.KDE():
+			return p.KDEMissing()
+		}
 		return display.Unsupported("Wayland pointer input needs Sway or Hyprland; this compositor is not supported yet")
 	}
 	if !p.HasGlobal("zwlr_virtual_pointer_manager_v1") || !p.HasGlobal("zxdg_output_manager_v1") || !p.HasGlobal("wl_seat") {

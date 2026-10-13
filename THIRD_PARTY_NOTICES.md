@@ -308,6 +308,7 @@ Where a crate offers a choice of licenses, it is used under any of them; its lic
 | wayland-client | 0.31.15 | MIT |
 | wayland-protocols | 0.32.13 | MIT |
 | wayland-protocols-misc | 0.3.12 | MIT |
+| wayland-protocols-plasma | 0.3.12 | MIT |
 | wayland-protocols-wlr | 0.3.12 | MIT |
 | wayland-scanner | 0.31.11 | MIT |
 | wayland-sys | 0.31.11 | MIT |
@@ -3712,7 +3713,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### wayland-backend 0.3.17, wayland-client 0.31.15, wayland-protocols 0.32.13, wayland-protocols-misc 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11
+#### wayland-backend 0.3.17, wayland-client 0.31.15, wayland-protocols 0.32.13, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11
 
 ```text
 Copyright (c) 2015 Elinor Berger

@@ -44,6 +44,12 @@ type Probe struct {
 	GnomeShell *struct {
 		Protocol uint32 `json:"protocol"`
 	} `json:"gnome_shell"`
+	// KWin is set in a KDE session with KWin on the bus; Screenshot says whether
+	// ScreenShot2 serves the helper, and ScreenshotError why not.
+	KWin *struct {
+		Screenshot      bool   `json:"screenshot"`
+		ScreenshotError string `json:"screenshot_error"`
+	} `json:"kwin"`
 	// Compositor names the compositor IPC the helper can use.
 	Compositor struct {
 		Sway     bool `json:"sway"`

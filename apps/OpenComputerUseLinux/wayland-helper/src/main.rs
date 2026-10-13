@@ -11,6 +11,7 @@
 mod frame;
 mod keyboard;
 mod keymap;
+mod kwin;
 mod pointer;
 mod probe;
 mod shell;
@@ -39,6 +40,7 @@ struct Helper {
     keyboard: Option<keyboard::Keyboard>,
     virtual_keyboard: Option<wlr::VirtualKeyboard>,
     virtual_pointer: Option<pointer::VirtualPointer>,
+    fake_input: Option<kwin::FakeInput>,
 }
 
 fn main() {
@@ -135,6 +137,54 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
         "window.capture" => Ok(window::capture(&target_window()?)?.to_json()),
         "shell.authorization" => Ok(json!({ "status": shell::authorization()? })),
         "shell.authorize" => Ok(json!({ "status": shell::authorize()? })),
+        method if method.starts_with("kwin.") => {
+            let window = target_window()?;
+            let id = window
+                .kwin_id
+                .clone()
+                .ok_or_else(|| refuse("UNSUPPORTED_CAPABILITY", "KWin does not list this window"))?;
+            let number = |name: &str| {
+                request
+                    .params
+                    .get(name)
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| refuse("INVALID_ARGUMENT", format!("{name} is required")))
+            };
+            if helper.fake_input.is_none() {
+                helper.fake_input = Some(kwin::FakeInput::connect()?);
+            }
+            let input = helper.fake_input.as_mut().unwrap();
+            let result = match method {
+                "kwin.click" => {
+                    let button = match request.params.get("button").and_then(Value::as_u64) {
+                        Some(1) => 0x110,
+                        Some(2) => 0x112,
+                        Some(3) => 0x111,
+                        _ => return Err(refuse("INVALID_ARGUMENT", "button is 1, 2 or 3")),
+                    };
+                    let count = request.params.get("count").and_then(Value::as_u64).filter(|c| (1..=3).contains(c));
+                    let count = count.ok_or_else(|| refuse("INVALID_ARGUMENT", "count is 1 to 3"))? as u32;
+                    kwin::click(input, &id, number("x")?, number("y")?, button, count)
+                }
+                "kwin.drag" => {
+                    kwin::drag(input, &id, (number("from_x")?, number("from_y")?), (number("to_x")?, number("to_y")?))
+                }
+                "kwin.chord" => {
+                    let modifiers =
+                        request.params.get("modifiers").and_then(Value::as_array).cloned().unwrap_or_default();
+                    let modifiers = modifiers.iter().map(keysym).collect::<Result<Vec<_>, _>>()?;
+                    let key = keysym(request.params.get("key").unwrap_or(&Value::Null))?;
+                    kwin::key_chord(input, &id, &modifiers, key)
+                }
+                "kwin.text" => kwin::text(input, &id, text("text")?),
+                other => return Err(refuse("UNSUPPORTED_CAPABILITY", format!("unknown helper method {other:?}"))),
+            };
+            // A lost Wayland connection takes the device with it; connect again next time.
+            if result.as_ref().is_err_and(|f| f.message.contains("Wayland connection lost")) {
+                helper.fake_input = None;
+            }
+            result.map(|()| json!({}))
+        }
         method if method.starts_with("shell.") => {
             let window = target_window()?;
             let id = window.shell_id.ok_or_else(|| {

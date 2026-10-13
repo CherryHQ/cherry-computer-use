@@ -18,6 +18,8 @@ pub struct Probe {
     pub compositor: Compositor,
     /// The GNOME Shell extension's protocol version when it is running.
     pub gnome_shell: serde_json::Value,
+    /// KWin's scripting, and whether this helper may use fake_input and ScreenShot2.
+    pub kwin: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -80,6 +82,14 @@ pub fn run() -> Probe {
             hyprland: var("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
         },
         gnome_shell: crate::shell::probe(),
+        kwin: if crate::kwin::running() {
+            match crate::kwin::screenshot_authorized() {
+                Ok(()) => serde_json::json!({ "screenshot": true }),
+                Err(error) => serde_json::json!({ "screenshot": false, "screenshot_error": error }),
+            }
+        } else {
+            serde_json::Value::Null
+        },
     }
 }
 

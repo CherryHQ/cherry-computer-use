@@ -17,10 +17,11 @@ libc = "0.2.190"
 reis = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.53.2", features = ["rt", "time"] }
+tokio = { version = "1.53.2", features = ["rt", "rt-multi-thread", "time"] }
 wayland-backend = "0.3"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 wayland-protocols-misc = { version = "0.3.12", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 wayland-scanner = "0.31"

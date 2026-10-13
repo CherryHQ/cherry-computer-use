@@ -251,3 +251,58 @@ jobs:
         export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
         node --test protocol/linux-desktop.test.mjs; code=$?
         kill $fixture; exit $code
+
+  linux-kde:
+    name: Linux KDE Plasma (isolated KWin, ubuntu-26.04)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: "1.23.4"
+          cache-dependency-path: apps/OpenComputerUseLinux/go.sum
+      - run: npm ci --ignore-scripts
+      - run: npm run sdk:build
+      - name: Build the Linux runtime and Wayland helper
+        run: |
+          mkdir -p dist/native
+          (cd apps/OpenComputerUseLinux && go build -o ../../dist/native/open-computer-use .)
+          (cd apps/OpenComputerUseLinux/wayland-helper && cargo --version && cargo build --locked --release)
+          cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
+      - name: Install KWin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends kwin-wayland kwin-common mesa-libgallium libgl1-mesa-dri libgbm1 libkf6service-bin libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          kwin_wayland --version
+      - name: Give KWin a DRM device
+        # KWin's virtual backend composites with OpenGL only on a DRM device, and
+        # captures windows only with OpenGL. The runner has no GPU; vgem, as in
+        # KWin's own CI, gives Mesa's software renderer a device. With CI set,
+        # KWin opens /dev/dri/card1, which on the runner is a Hyper-V display
+        # that cannot render, so vgem's node is mounted over it.
+        run: |
+          before=$(ls /dev/dri 2>/dev/null || true)
+          sudo modprobe vgem || { sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" && sudo modprobe vgem; }
+          vgem=$(ls /dev/dri | grep -x 'card[0-9]*' | grep -vxF "$before" || true)
+          echo "before: $before; vgem: $vgem"
+          [ -n "$vgem" ]
+          [ "$vgem" = card1 ] || { sudo touch /dev/dri/card1; sudo mount --bind "/dev/dri/$vgem" /dev/dri/card1; }
+          sudo chmod a+rw /dev/dri/*
+          ls -l /dev/dri
+      - name: Capture and input through KWin
+        run: |
+          # The runtime's own install-kde-integration authorizes the helper once KWin is up.
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_KDE_INTEGRATION="$PWD/dist/native/open-computer-use" OCU_KWIN_DEBUG=1
+          session="$PWD/apps/OpenComputerUseLinux/testdata/kwin-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run KDE -v ./internal/desktop/)
+          "$session" sh -c '
+            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI KDE" & fixture=$!
+            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
+            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+            node --test protocol/linux-desktop.test.mjs; code=$?
+            kill $fixture; exit $code'

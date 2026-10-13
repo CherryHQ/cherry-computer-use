@@ -961,8 +961,12 @@ func runCLI(args []string, stdout io.Writer) error {
 		return installGNOMEExtension(stdout, systemExtensionHost())
 	case "uninstall-gnome-extension":
 		return uninstallGNOMEExtension(stdout, systemExtensionHost())
+	case "install-kde-integration":
+		return installKDEIntegration(stdout, systemKDEHost())
+	case "uninstall-kde-integration":
+		return uninstallKDEIntegration(stdout, systemKDEHost())
 	case "doctor":
-		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) engine with X11 and Wayland display backends runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) is refused unless the target window has keyboard focus or lies under the pointer. X11 and XWayland windows use XTEST. On Sway and Hyprland, the Wayland helper captures windows and uses a virtual keyboard and pointer bound to the compositor's focused window. On other Wayland desktops (GNOME, KDE), keys go through the RemoteDesktop portal after a one-time system dialog, and window capture and pointer input are unavailable. The session report below shows what this session offers.")
+		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) engine with X11 and Wayland display backends runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) is refused unless the target window has keyboard focus or lies under the pointer. X11 and XWayland windows use XTEST. On Sway and Hyprland, the Wayland helper captures windows and uses a virtual keyboard and pointer bound to the compositor's focused window. On GNOME, the Cherry Computer Use Shell extension (install-gnome-extension, then log in again) captures windows and sends input after you allow it in a Shell dialog. On KDE Plasma 6, install-kde-integration authorizes the helper for KWin window capture and input, with no new login. Without them, keys go through the RemoteDesktop portal after a one-time system dialog, and window capture and pointer input are unavailable. The session report below shows what this session offers.")
 		svc := newService()
 		defer svc.engine.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
@@ -1343,6 +1347,11 @@ Commands:
                        and sends input on GNOME Wayland (log in again after).
   uninstall-gnome-extension
                        Disable and remove that extension.
+  install-kde-integration
+                       Authorize the Wayland helper for KWin window capture
+                       and input on KDE Plasma 6 (no new login needed).
+  uninstall-kde-integration
+                       Remove that authorization.
   help [command]       Show general or command-specific help.
   version              Print the CLI version.
 
@@ -1351,7 +1360,8 @@ Notes:
   coordinate/key synthesis. Run it in the signed-in desktop session.
   Global input uses XTEST for X11/XWayland windows; on Wayland, a virtual
   keyboard and pointer on Sway and Hyprland, the GNOME Shell extension on GNOME,
-  and the RemoteDesktop portal for keys elsewhere. Run 'open-computer-use doctor'
+  the KDE integration on KDE Plasma, and the RemoteDesktop portal for keys
+  elsewhere. Run 'open-computer-use doctor'
   for this session.
 `
 	}

@@ -219,6 +219,35 @@ func (e *Engine) ShellPermission(ctx context.Context) (status string, applies bo
 	return status, true
 }
 
+// KDEPermissionID names the KDE integration in SDK permissions.
+const KDEPermissionID = "kdeIntegration"
+
+// KDEPermission reports the KDE integration, and whether this session has one at
+// all: "granted" once KWin serves the helper both ScreenShot2 and fake_input,
+// otherwise "unavailable" (install it with install-kde-integration). KDE asks
+// nothing at run time; installing is the grant.
+func (e *Engine) KDEPermission(ctx context.Context) (status string, applies bool) {
+	if !e.Wayland() {
+		return "", false
+	}
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		kde := false
+		for _, desktop := range strings.Split(e.env("XDG_CURRENT_DESKTOP"), ":") {
+			kde = kde || strings.EqualFold(desktop, "KDE")
+		}
+		return "unavailable", kde
+	}
+	probe := helper.Probe()
+	if !probe.KDE() && probe.KWin == nil {
+		return "", false
+	}
+	if probe.KWinInput() && probe.KWinCapture() {
+		return "granted", true
+	}
+	return "unavailable", true
+}
+
 // RequestShell shows the Shell's dialog unless desktop control is already allowed.
 func (e *Engine) RequestShell(ctx context.Context) (string, error) {
 	helper, err := e.waylandHelper(ctx)
@@ -339,9 +368,9 @@ func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Po
 	if !ok || count < 1 || count > 3 {
 		return fail("INVALID_ARGUMENT", "Unsupported button or click count")
 	}
-	if helper, ok := e.shellHelper(ctx); ok {
-		// The extension confirms the window at the point in the same call that clicks.
-		return e.granted(ctx, func() error { return helper.ShellClick(ctx, target.native(), point, button, count) })
+	if helper, route := e.assisted(ctx); route != "" {
+		// The helper confirms the window at the point right before it clicks.
+		return e.granted(ctx, func() error { return helper.TargetedClick(ctx, route, target.native(), point, button, count) })
 	}
 	pointer, err := e.pointAt(ctx, target, point)
 	if err != nil {
@@ -357,8 +386,8 @@ func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) 
 	if e.x11Input(ctx, target) {
 		return e.injector().Drag(ctx, target.native(), from, to)
 	}
-	if helper, ok := e.shellHelper(ctx); ok {
-		return e.granted(ctx, func() error { return helper.ShellDrag(ctx, target.native(), from, to) })
+	if helper, route := e.assisted(ctx); route != "" {
+		return e.granted(ctx, func() error { return helper.TargetedDrag(ctx, route, target.native(), from, to) })
 	}
 	pointer, err := e.pointAt(ctx, target, from)
 	if err != nil {
@@ -395,13 +424,17 @@ func possibly(err error) error {
 	return uncertain("Wayland pointer input stopped part way: %v", err)
 }
 
-// shellHelper is the helper when the GNOME Shell extension serves this session.
-func (e *Engine) shellHelper(ctx context.Context) (*wayland.Helper, bool) {
+// assisted is the helper and its compositor-assisted input route (the GNOME Shell
+// extension or KWin), when this session has one.
+func (e *Engine) assisted(ctx context.Context) (*wayland.Helper, wayland.Route) {
 	if !e.Wayland() {
-		return nil, false
+		return nil, ""
 	}
 	helper, err := e.waylandHelper(ctx)
-	return helper, err == nil && helper.Probe().ShellAvailable()
+	if err != nil {
+		return nil, ""
+	}
+	return helper, helper.Probe().AssistedRoute()
 }
 
 // waylandPointer is the helper when this session can locate windows and bind
@@ -496,9 +529,9 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 	if err != nil {
 		return err
 	}
-	if keyboard.shell {
-		// One call: the extension checks focus and commits the whole text.
-		return e.granted(ctx, func() error { return keyboard.helper.ShellText(ctx, target.native(), text) })
+	if keyboard.route != "" {
+		// One call: the helper checks focus before each character it sends.
+		return e.granted(ctx, func() error { return keyboard.helper.TargetedText(ctx, keyboard.route, target.native(), text) })
 	}
 	if !keyboard.virtual {
 		// The portal keyboard can only type what the compositor's layout holds.
@@ -529,19 +562,20 @@ func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction 
 	return e.waylandKeys(ctx, target, count, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, target, chord) })
 }
 
-// waylandKeyboard is the route Wayland keys take in this session: the GNOME Shell
-// extension, the wlroots virtual keyboard, or the RemoteDesktop portal's libei keyboard.
+// waylandKeyboard is the route Wayland keys take in this session: a
+// compositor-assisted route (the GNOME Shell extension, KWin), the wlroots
+// virtual keyboard, or the RemoteDesktop portal's libei keyboard.
 type waylandKeyboard struct {
 	helper  *wayland.Helper
 	virtual bool
-	// shell keys are checked against the focus window by the extension itself.
-	shell bool
+	// route keys are checked against the focus window by the helper itself.
+	route wayland.Route
 }
 
 func (k waylandKeyboard) chord(ctx context.Context, target GlobalTarget, chord display.KeyChord) error {
 	switch {
-	case k.shell:
-		return k.helper.ShellChord(ctx, target.native(), chord)
+	case k.route != "":
+		return k.helper.TargetedChord(ctx, k.route, target.native(), chord)
 	case k.virtual:
 		return k.helper.VirtualChord(ctx, chord)
 	}
@@ -550,8 +584,8 @@ func (k waylandKeyboard) chord(ctx context.Context, target GlobalTarget, chord d
 
 func (k waylandKeyboard) text(ctx context.Context, target GlobalTarget, text string) error {
 	switch {
-	case k.shell:
-		return k.helper.ShellText(ctx, target.native(), text)
+	case k.route != "":
+		return k.helper.TargetedText(ctx, k.route, target.native(), text)
 	case k.virtual:
 		return k.helper.VirtualText(ctx, text)
 	}
@@ -588,7 +622,7 @@ func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int
 // focused window, its PID and title must be the target's; otherwise the
 // accessible window must be active.
 func (e *Engine) requireFocus(ctx context.Context, target GlobalTarget, keyboard waylandKeyboard) error {
-	if keyboard.shell {
+	if keyboard.route != "" {
 		return nil
 	}
 	if keyboard.virtual {
@@ -638,8 +672,8 @@ func (e *Engine) keyboard(ctx context.Context) (waylandKeyboard, error) {
 	if err != nil {
 		return waylandKeyboard{}, err
 	}
-	if helper.Probe().ShellAvailable() {
-		return waylandKeyboard{helper: helper, shell: true}, nil
+	if route := helper.Probe().AssistedRoute(); route != "" {
+		return waylandKeyboard{helper: helper, route: route}, nil
 	}
 	if helper.Probe().VirtualKeyboardAvailable() {
 		return waylandKeyboard{helper: helper, virtual: true}, nil
@@ -669,7 +703,7 @@ func (e *Engine) KeyboardNeedsGrant(ctx context.Context) bool {
 		return false
 	}
 	helper, err := e.waylandHelper(ctx)
-	return err != nil || !(helper.Probe().VirtualKeyboardAvailable() || helper.Probe().ShellAvailable())
+	return err != nil || !(helper.Probe().VirtualKeyboardAvailable() || helper.Probe().AssistedRoute() != "")
 }
 
 // KeyboardAvailability reports whether Wayland keyboard input can be offered at
@@ -689,7 +723,7 @@ func (e *Engine) KeyboardAvailability(ctx context.Context) display.Availability 
 // keyboardRouteAvailable checks what the grant route needs: the portal, or in an
 // isolated test session Mutter's API, which the helper checks when granting.
 func (e *Engine) keyboardRouteAvailable(helper *wayland.Helper) display.Availability {
-	if helper.Probe().ShellAvailable() || helper.Probe().VirtualKeyboardAvailable() || e.grantRoute() == wayland.GrantMutterTest {
+	if helper.Probe().AssistedRoute() != "" || helper.Probe().VirtualKeyboardAvailable() || e.grantRoute() == wayland.GrantMutterTest {
 		return display.Available()
 	}
 	return helper.Probe().KeyboardAvailable()

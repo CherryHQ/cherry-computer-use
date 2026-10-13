@@ -45,12 +45,17 @@ func (d *linuxDesktop) keyboardInput(ctx context.Context) sdkruntime.Availabilit
 const remoteDesktopPermission = "remoteDesktop"
 
 // Permissions reports the Wayland grants this session has. GNOME has the Shell
-// extension's desktop control ("unavailable" until the extension runs); keys
-// through the portal need remoteDesktop. X11 sessions and wlroots compositors need none.
+// extension's desktop control ("unavailable" until the extension runs), KDE the
+// installed integration; keys through the portal need remoteDesktop. X11
+// sessions and wlroots compositors need none.
 func (d *linuxDesktop) Permissions(ctx context.Context) ([]sdkruntime.Permission, error) {
 	permissions := []sdkruntime.Permission{}
 	if status, applies := d.engine.ShellPermission(ctx); applies {
 		permissions = append(permissions, shellPermission(status))
+	}
+	if status, applies := d.engine.KDEPermission(ctx); applies {
+		// Installing the integration is the grant; nothing is asked at run time.
+		permissions = append(permissions, sdkruntime.Permission{ID: desktop.KDEPermissionID, Label: "KDE desktop control", Status: status, Interaction: "systemSettings"})
 	}
 	if d.engine.KeyboardNeedsGrant(ctx) {
 		status, _ := d.engine.KeyboardPermission(ctx)
@@ -73,13 +78,19 @@ func shellPermission(status string) sdkruntime.Permission {
 // reports the result; declining is a "denied" status, not an error.
 func (d *linuxDesktop) RequestPermissions(ctx context.Context, ids []string) ([]sdkruntime.Permission, error) {
 	_, shellApplies := d.engine.ShellPermission(ctx)
+	_, kdeApplies := d.engine.KDEPermission(ctx)
 	for _, id := range ids {
-		known := (id == desktop.ShellPermissionID && shellApplies) || (id == remoteDesktopPermission && d.engine.KeyboardNeedsGrant(ctx))
+		known := (id == desktop.ShellPermissionID && shellApplies) || (id == desktop.KDEPermissionID && kdeApplies) ||
+			(id == remoteDesktopPermission && d.engine.KeyboardNeedsGrant(ctx))
 		if !known {
 			return nil, sdkruntime.Error("INVALID_ARGUMENT", "Unknown permission for this Linux session: "+id)
 		}
 	}
 	for _, id := range ids {
+		if id == desktop.KDEPermissionID {
+			// Nothing to ask: the status says whether the integration is installed.
+			continue
+		}
 		if id == desktop.ShellPermissionID {
 			// Without the extension there is nothing to ask; the status says so.
 			if _, err := d.engine.RequestShell(ctx); err != nil && !isCode(err, "DEPENDENCY_MISSING") {
