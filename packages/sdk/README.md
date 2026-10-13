@@ -13,14 +13,18 @@ and typing without a focused field use global input and require
 presses, page scrolling and typing without a focused field need
 `allowGlobalInput: true`. wlroots compositors such as Sway and Hyprland use a
 virtual keyboard with no dialog, can type any character, and require the
-compositor to report the target as the focused window. Elsewhere (GNOME, KDE) keys go
-through the RemoteDesktop portal: request the `remoteDesktop` permission (the system
-shows a dialog); the target window must be active and characters the keyboard
-layout lacks are refused. On Sway and Hyprland, screenshots and pointer input also
-work for native Wayland windows: the pointer moves first and a button is pressed only
-when the compositor then reports the target as the focused window, which needs focus
-to follow the mouse (the default). Other Wayland compositors report capture and
-pointer input as unsupported. Query capabilities and element actions before
+compositor to report the target as the focused window. On Sway and Hyprland,
+screenshots and pointer input also work for native Wayland windows: the pointer moves
+first and a button is pressed only when the compositor then reports the target as
+the focused window, which needs focus to follow the mouse (the default). On GNOME,
+screenshots, pointer and keyboard input go through the Cherry Computer Use Shell
+extension: the user runs `open-computer-use install-gnome-extension` and logs in
+again, then `requestPermissions({ ids: ['gnomeShell'] })` shows the Shell's dialog.
+The extension captures covered windows, clicks only when the target owns the point,
+sends keys only to the focus window, and types any Unicode into text-input clients.
+Without it, GNOME and KDE keys go through the RemoteDesktop portal (`remoteDesktop`
+permission); the target window must be active and characters the keyboard layout
+lacks are refused, and capture and pointer input are unavailable. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native
