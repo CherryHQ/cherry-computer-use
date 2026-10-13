@@ -70,6 +70,11 @@ const DEVICE_SETTLE_MS = 200;
 const CAPTURE_CLONE_MS = 4000;
 const MAX_CAPTURE_BYTES = 64 * 1024 * 1024;
 const DRAG_STEPS = 10;
+// Clients see the pointer enter and move before a press, as with a real mouse;
+// a press in the same instant as the motion can reach a client that has not
+// handled the motion yet.
+const SETTLE_MS = 40;
+const CLICK_GAP_MS = 30;
 
 const delay = ms => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
     resolve();
@@ -364,12 +369,15 @@ export default class ComputerUseExtension extends Extension {
             devices.held.keys.delete(keyval);
     }
 
-    // Moves the pointer and confirms the target owns the point before anything is pressed.
-    _pointAt(devices, window, x, y) {
+    // Moves the pointer, lets clients see the motion, and confirms the target owns
+    // the point right before anything is pressed.
+    async _pointAt(devices, target, x, y) {
         const [width, height] = global.display.get_size();
         if (!(x >= 0 && y >= 0 && x < width && y < height))
             throw new Refusal(ERROR.invalid, 'The point is outside the desktop');
         devices.pointer.notify_absolute_motion(now(), x, y);
+        await delay(SETTLE_MS);
+        const {window} = this._target(...target);
         if (this._windowAt(x, y) !== window)
             throw new Refusal(ERROR.target, `The point (${Math.round(x)}, ${Math.round(y)}) shows ${this._describeAt(x, y)}, not the target; the click would not reach it`);
     }
@@ -383,10 +391,12 @@ export default class ComputerUseExtension extends Extension {
         if (![1, 2, 3].includes(button) || count < 1 || count > 3)
             throw new Refusal(ERROR.invalid, 'Unsupported button or click count');
         const devices = await this._input();
-        const {window} = this._target(...target);
-        this._pointAt(devices, window, x, y);
+        this._target(...target);
+        await this._pointAt(devices, target, x, y);
         try {
             for (let i = 0; i < count; i++) {
+                if (i > 0)
+                    await delay(CLICK_GAP_MS);
                 this._button(devices, button, true);
                 this._button(devices, button, false);
             }
@@ -397,8 +407,8 @@ export default class ComputerUseExtension extends Extension {
 
     async _drag(target, fromX, fromY, toX, toY) {
         const devices = await this._input();
-        const {window} = this._target(...target);
-        this._pointAt(devices, window, fromX, fromY);
+        this._target(...target);
+        await this._pointAt(devices, target, fromX, fromY);
         try {
             this._button(devices, Clutter.BUTTON_PRIMARY, true);
             for (let i = 1; i <= DRAG_STEPS; i++) {
