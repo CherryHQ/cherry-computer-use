@@ -120,7 +120,7 @@ AT-SPI 语义操作与 Wayland 截图/输入分开报告。后者验证 RemoteDe
 - [x] 语义动作：`click`、次级动作、`setValue`、`typeText` 由两个入口共用；SDK 通过 `ActionDriver` 接入。
 - [ ] 语义方向滚动：未开放，CLI `scroll` 仍走全局翻页键，SDK 报告不支持。
 - [x] 剩余 X11 动作（全局按键、拖拽、坐标点击、翻页、无焦点打字）迁移与清理验收。
-- [~] 删除 Python 执行路径：代码、测试与依赖说明已删除；x64 与平台 tarball 实际启动尚未验收。
+- [x] 删除 Python 执行路径：代码、测试与依赖说明已删除。2026-10-13 的 SDK 分发工作流（run 38348378183）在 linux-x64 与 linux-arm64 上从平台 tarball 干净安装 SDK，自动选择并启动运行时，Wayland 辅助进程完成握手，并在 Debian 10 容器中启动；在 macOS 上构建 CLI 包尚未覆盖。
 
 ## 里程碑 1、2 实现记录
 

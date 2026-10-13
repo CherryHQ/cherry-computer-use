@@ -958,7 +958,7 @@ func runCLI(args []string, stdout io.Writer) error {
 			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(newLinuxDesktop()),
 		})
 	case "doctor":
-		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) and X11 engine runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) uses X11 XTEST, reaches only X11/XWayland windows, and requires the target window to have keyboard focus or lie under the pointer.")
+		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) engine with X11 and Wayland display backends runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) is refused unless the target window has keyboard focus or lies under the pointer. X11 and XWayland windows use XTEST. On Sway and Hyprland, the Wayland helper captures windows and uses a virtual keyboard and pointer bound to the compositor's focused window. On other Wayland desktops (GNOME, KDE), keys go through the RemoteDesktop portal after a one-time system dialog, and window capture and pointer input are unavailable. The session report below shows what this session offers.")
 		svc := newService()
 		defer svc.engine.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
@@ -1340,8 +1340,9 @@ Commands:
 Notes:
   The Linux runtime uses AT-SPI2 semantic actions first, then best-effort
   coordinate/key synthesis. Run it in the signed-in desktop session.
-  Global pointer and keyboard input uses X11 XTEST and only reaches
-  X11/XWayland windows.
+  Global input uses XTEST for X11/XWayland windows; on Wayland, a virtual
+  keyboard and pointer on Sway and Hyprland, and the RemoteDesktop portal for
+  keys elsewhere. Run 'open-computer-use doctor' for this session.
 `
 	}
 }
