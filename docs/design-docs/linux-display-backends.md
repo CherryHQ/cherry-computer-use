@@ -108,7 +108,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
 | wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
 | GNOME（Mutter） | ✅ Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4） | ✅ Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 扩展内虚拟键盘，文本经输入法提交任意 Unicode（W4）；无扩展时门户 RemoteDesktop + libei | ✅ 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 扩展由用户安装、重新登录，并在 Shell 内授权；无扩展时门户弹窗 |
-| KDE（KWin） | 🧪 KWin 脚本/effect 提供几何与焦点 | 门户 ScreenCast + PipeWire | 门户 + libei | 🧪 同 GNOME | 门户弹窗，可持久 |
+| KDE（KWin，Plasma 6） | 🧪 KWin 脚本：窗口的 PID、标题、几何、层叠、激活窗口、光标与 `windowAt`（W5，已验证可行） | 🧪 `ScreenShot2.CaptureWindow`，被遮挡也可截取（W5） | 🧪 `fake_input` 键码，按键前确认激活窗口（W5）；无集成时门户 + libei | 🧪 `fake_input` 绝对坐标，移动后确认光标到位且 `windowAt` 最上层是目标（W5） | `install-kde-integration` 写入声明受限接口的 `.desktop`，无需重新登录；无集成时门户弹窗 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
 
 AT-SPI 语义动作在以上所有会话中都可用，不依赖此表。
@@ -183,7 +183,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 ✅ | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权，`install-gnome-extension`（见「GNOME Shell 扩展」） | 隔离的无头 GNOME 中由运行时自己安装扩展后，引擎与 SDK 测试通过；CI 覆盖 GNOME 50 与 46 |
-| W5 | KDE：KWin 脚本或门户，按同样的落点与焦点校验标准 | 待定 |
+| W5 🟡 | KDE Plasma 6：KWin 脚本、`ScreenShot2`、`fake_input` 与 `.desktop` 授权（见「KDE Plasma」） | 可行性在隔离的 KWin 6.6.6 中验证通过；实现进行中 |
 
 每个阶段独立成 PR；未完成的能力保持 unsupported/unavailable，并说明原因。
 
@@ -272,6 +272,44 @@ GNOME 不向普通客户端提供 wlroots 协议、`ext-image-copy-capture` 或�
 - 真实桌面（GNOME 50.1，Parallels 虚拟机，2026-10-13）：`install-gnome-extension` 后用户需打开用户扩展总开关（本机原为关闭，安装命令只提示）并重新登录；扩展 `ACTIVE`，`doctor` 报告截图与全局输入可用；对话框授权后截图、双击、坐标点击、Ctrl+A 与退格均生效；从顶栏停止后重新授权，新建的虚拟指针在鼠标静止时首次点击即成功。点击“允许”后立即移动鼠标时，宿主同步的绝对位置会覆盖虚拟指针，点击按设计被拒绝并提示鼠标可能正在使用。
 - 未覆盖：GNOME 45 及更早版本；Electron、Qt 等客户端是否支持 text-input（不支持时只发送 ASCII，其余字符在发送前拒绝）。
 
+## KDE Plasma（W5，2026-10-14 方案与验证）
+
+### 为什么这样做
+
+KWin 有三种官方能力可用，不需要像 GNOME 那样在合成器进程里运行代码：
+
+- **KWin 脚本**（JavaScript，经 `org.kde.kwin.Scripting` 加载，不需编译，跟随 Plasma 6 稳定的脚本 API）：读取 `workspace.stackingOrder` 中每个窗口的 `pid`、`caption`、`internalId`、`frameGeometry`/`bufferGeometry`、`active`、`minimized` 与类型（`dock`、`notification` 等），以及 `workspace.activeWindow`、`cursorPos`、`windowAt(pos)`。脚本只能用 `callDBus` 向外调用，不能导出方法。
+- **`org.kde.KWin.ScreenShot2.CaptureWindow`**：按 `internalId` 截取一个窗口。受限接口：KWin 读取调用方的 `/proc/<pid>/exe`，在应用目录中找 `Exec=` 第一项（规范化后）与之相同的 `.desktop`，其 `X-KDE-DBUS-Restricted-Interfaces` 须列出该接口。
+- **`org_kde_kwin_fake_input`**（KDE Connect 使用的 Wayland 协议）：绝对坐标指针、按键与键码。同一机制下由 `X-KDE-Wayland-Interfaces` 授权，未授权的客户端在注册表中看不到这个全局对象。
+
+比较过的做法：trycua/cua 的 KWin effect 插件（C++，与 KWin/Qt ABI 绑定，只读，KDE 上拒绝原始输入）；isac322/kwin-mcp（ScreenShot2、KWin 脚本、KWin 私有 EIS 接口，输入不绑定目标）。在 KWin 进程内同一调用中确认并注入（与 GNOME 扩展同级）只能靠 effect 插件，代价是每次升级 Plasma 都要重新编译、加载失败影响桌面，因此不采用。
+
+### 可行性验证（隔离的 KWin 6.6.6，`testdata/kwin-session.sh`）
+
+| 能力 | 结果 |
+| --- | --- |
+| KWin 脚本的窗口列表、激活窗口、光标 | ✅ PID 与夹具进程一致；层叠、几何、激活状态正确；加载、运行、回传、卸载一次约 25 ms |
+| `ScreenShot2.CaptureWindow` | ✅ 未授权时 `NoAuthorized`；`.desktop` 授权后截到被完全覆盖的目标窗口自身的内容（不含 KWin 标题栏与阴影） |
+| `fake_input` 授权 | ✅ 无声明时注册表中没有该全局对象；写入 `.desktop` 并运行 `kbuildsycoca6` 后约 0.5 秒可用，不需重新登录 |
+| 移动后的光标与落点 | ✅ `fake_input` 绝对移动后脚本立即读到新的 `cursorPos`；覆盖时 `windowAt` 返回遮挡窗口，置顶后返回目标 |
+| 点击、双击 | ✅ 移动与按下之间间隔约 40 ms 时全部生效；紧接移动按下（另一连接）时有丢失 |
+| 按键 | ✅ 键码（End、退格、h、i）把 "beta" 改成 "hi" |
+| Plasma 面板与通知（`OCU_KWIN_PLASMASHELL=1`，需先启动 `kactivitymanagerd`） | ✅ 面板是 `dock` 窗口、通知弹窗是 `notification` 窗口，都在 `stackingOrder` 中；被面板或通知覆盖的点，`windowAt` 返回它们而不是目标 |
+| 多显示器（两个输出并排） | ✅ 全局逻辑坐标：第二个输出上的目标，光标、`windowAt` 与点击都正确 |
+| 1.5 倍缩放（`kscreen-doctor` 设置输出缩放） | ✅ 几何、`cursorPos`、`fake_input` 与 AT-SPI 窗口坐标都是逻辑坐标，点击正确；截图为物理像素 600x498，元数据 `scale: 1.5`，需缩放到逻辑尺寸 |
+| 授权生效时间 | ⚠️ 写入 `.desktop` 并运行 `kbuildsycoca6` 后，`fake_input` 约 0.5 秒可用，`ScreenShot2` 有一次约 10 秒才生效；安装命令须等待并确认授权已生效 |
+
+元素坐标：GTK 3 在 KWin 下使用服务端标题栏，AT-SPI 窗口坐标以 `bufferGeometry`（客户区）为原点。
+
+### 设计
+
+- **查询**：辅助进程在会话总线上注册接收对象，每次查询写入一段带随机令牌的脚本（私有运行时目录，0600），`loadScript` → `run` → 等待回传 → `unloadScript`。KWin 的脚本接口对任何进程开放，所以只接受由 `org.kde.KWin` 的当前所有者发出且令牌匹配的回传。
+- **截图**：`CaptureWindow(internalId, {include-decoration: false, include-shadow: false}, pipe)`，读取原始图像与元数据（QImage 格式、尺寸、行宽、缩放），转为 PNG 并缩放到窗口逻辑尺寸。
+- **输入**：辅助进程保持一个 `fake_input` 连接。点击：查询确认目标可见 → 绝对移动 → 约 40 ms → 查询确认光标已到、`windowAt` 最上层是目标（面板、通知也是 KWin 窗口，能被识别）→ 按下。按键：每个键之前确认激活窗口是目标的 PID 与标题。键码按当前布局（辅助进程已有的 xkbcommon 键位表）查找，布局缺失的字符在发送前拒绝；有焦点文本框时文本仍走 AT-SPI。检查与送达之间存在毫秒级竞争，与 Sway 同级。
+- **安装与授权**：`open-computer-use install-kde-integration` 写入 `~/.local/share/applications/` 下的 `.desktop`（`Exec=` 为辅助进程绝对路径，`NoDisplay=true`，声明上述两个受限接口）并运行 `kbuildsycoca6`，然后让辅助进程确认两个接口都已可用（最多等待约 15 秒）再报告成功；`uninstall-kde-integration` 撤销。KDE 没有运行时授权对话框，安装即授权。SDK 增加 `kdeIntegration` 权限：未安装或辅助进程路径已变（例如 npm 升级）时为 `unavailable`（`systemSettings`，提示重新运行安装），否则为 `granted`；辅助进程以 `fake_input` 是否可见判断。
+- **无集成时**：键盘沿用门户 + libei；截图与指针报告不可用并提示安装。
+- **范围与 CI**：仅 Plasma 6（ubuntu-24.04 为 Plasma 5.27，不纳入）。CI 在 ubuntu-26.04 上用 `kwin-session.sh` 运行引擎与 SDK 测试。
+
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 
 - Sway：虚拟键盘/指针、`zwp_input_method_manager_v2`（可提交任意 Unicode，包括中文）、`ext-foreign-toplevel-list` 与 `wlr-foreign-toplevel`、`swaymsg` IPC。截图只有输出级的 screencopy 与 `ext-image-copy-capture`（无按窗口来源），按窗口截图只能裁剪输出，会包含遮挡内容。
@@ -285,7 +323,7 @@ GNOME 不向普通客户端提供 wlroots 协议、`ext-image-copy-capture` 或�
 2. ~~libei 区域能否与门户流对应~~：能，区域 `mapping_id` 与窗口流一致，参照系为窗口。KDE 尚未验证。
 3. 客户端断开时是否释放按住的键：Mutter 会释放（W3 已验证）；KWin 与 wlroots 虚拟键盘待验证。
 4. XWayland：`GetImage` 已确认可用；XTEST 的送达范围待在隔离会话中验证。
-5. ~~是否提供 GNOME Shell 扩展~~：提供，含输入（见「GNOME Shell 扩展」）。KWin 脚本待定。
+5. ~~是否提供 GNOME Shell 扩展~~：提供，含输入（见「GNOME Shell 扩展」）。~~KWin 脚本~~：采用 KWin 脚本加 `ScreenShot2` 与 `fake_input`（见「KDE Plasma」）。
 6. ~~libpipewire 缺失时的处理~~：不加载，截图放在单独的可执行文件中（见"辅助进程"）。GNOME 改由扩展截图后，PipeWire 只与 KDE 有关。
 7. 门户 restore token 由宿主存放的协议形式。
 8. Rust 工具链如何进入 CI 与发行流程：交叉编译方式、二进制大小、许可证审查。
