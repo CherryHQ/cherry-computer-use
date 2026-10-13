@@ -111,7 +111,63 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | KDE（KWin，Plasma 6） | ✅ KWin 脚本：窗口的 PID、标题、几何、层叠、激活窗口、光标与 `windowAt`（W5） | ✅ `ScreenShot2.CaptureWindow`，被遮挡也可截取（W5） | ✅ `fake_input` 键码，按键前确认激活窗口（W5）；无集成时门户 + libei | ✅ `fake_input` 绝对坐标，移动后确认光标到位且 `windowAt` 最上层是目标（W5） | `install-kde-integration` 写入声明受限接口的 `.desktop`，无需重新登录；无集成时门户弹窗 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
 
-AT-SPI 语义动作在以上所有会话中都可用，不依赖此表。
+AT-SPI 语义动作在以上所有会话中都可用，不依赖此表。按发行版与协议展开的对照见下一节。
+
+## 支持矩阵：发行版、桌面、合成器与协议
+
+能做什么由会话类型（X11 或 Wayland）和合成器决定，发行版只决定默认桌面及其版本。下面先列各合成器实际提供的接口，再列每条路线的功能，最后把发行版归到路线上：大多数发行版归为一类，只单列有特殊情况的。
+
+图例：✅ 已在 CI 或隔离会话中验证 · 🧪 已实现，未系统验证 · ☑️ 按版本与接口推断，未在该环境运行 · ⚠️ 部分可用 · ⛔ 不可用（如实报告）
+
+### 合成器提供的接口
+
+Wayland 全局对象由辅助进程在隔离会话中列出（2026-10-14）；门户一列为各桌面门户后端的已知能力，未逐一实测。
+
+| 合成器 | 窗口列表 | 截图 | 输入注入 | 门户后端 |
+| --- | --- | --- | --- | --- |
+| Mutter（GNOME 50） | Wayland 上没有（实测 40 个全局对象中无窗口、截图、输入相关协议）；`org.gnome.Shell.Introspect` 不对普通客户端开放 → 只能用 Shell 扩展 | 同左；`org.gnome.Shell.Screenshot` 同样受限 | 同左 | ScreenCast、RemoteDesktop（`ConnectToEIS`） |
+| KWin（Plasma 6.6） | 无标准协议；`org_kde_plasma_window_management` 受限；KWin 脚本（D-Bus `org.kde.kwin.Scripting`）对会话内进程开放 | D-Bus `org.kde.KWin.ScreenShot2`，受限，由 `.desktop` 授权；需要 OpenGL 合成与 screenshot 插件 | `org_kde_kwin_fake_input`（KDE 私有，受限，由 `.desktop` 授权） | ScreenCast、RemoteDesktop |
+| Sway 1.11 | `ext_foreign_toplevel_list_v1`、`zwlr_foreign_toplevel_manager_v1`（无 PID、无几何）；Sway IPC 给出 PID、几何与焦点 | `zwlr_screencopy`、`ext_image_copy_capture`，只有整个输出的捕获源，没有按窗口的捕获源 | `zwp_virtual_keyboard_v1`、`zwlr_virtual_pointer_v1`，不受限 | ScreenCast；没有 RemoteDesktop |
+| Hyprland 0.53 | Hyprland IPC 给出 PID、几何与焦点 | `hyprland_toplevel_export`，按窗口 | 同 Sway | ScreenCast；没有 RemoteDesktop |
+
+我们需要而标准协议不提供的：窗口的 PID（用来对上 AT-SPI 的应用）、窗口的全局坐标（Wayland 刻意不暴露，AT-SPI 在 Wayland 下只给窗口内坐标）、某点最上层是哪个窗口（按下前确认目标）。按窗口截图的标准捕获源（`ext-foreign-toplevel-image-capture-source`）在以上三个合成器中都没有。门户是唯一跨 GNOME 与 KDE 的标准，但窗口由用户在对话框里选择、每个会话需要确认、输入是全局注入，只适合作后备。
+
+### 各路线的功能
+
+AT-SPI 语义动作（读取无障碍树、按元素执行动作、向聚焦的可编辑文本写入任意字符）在所有会话中都可用，前提是应用暴露 AT-SPI（GTK、Qt 默认暴露；Chromium/Electron 需要开启无障碍）。下表只比较依赖显示后端的能力；Wayland 下的翻页滚动以 Page Up/Page Down 按键发送，与按键同列。
+
+| 路线 | 窗口定位 | 截图 | 被遮挡窗口截图 | 坐标点击、拖拽 | 按键、翻页滚动 | 布局外字符（如中文） | 一次性设置 | 验证 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| X11 会话 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ⚠️ 取决于窗口管理器是否合成 | ✅ XTEST，校验落点 | ✅ XTEST，确认焦点 | ✅ 临时改键位映射 | 无 | ✅ CI（Xvfb） |
+| Wayland 中的 XWayland 窗口 | 🧪 XID | 🧪 `GetImage` | 🧪 | 🧪 XTEST | 🧪 XTEST | 🧪 | 无 | 🧪 |
+| GNOME 46–50 + Shell 扩展 | ✅ PID、几何、层叠、焦点 | ✅ | ✅ | ✅ 同一调用内确认落点窗口 | ✅ 确认焦点 | ✅ 经输入法提交 | `install-gnome-extension`、重新登录、在 Shell 对话框中允许 | ✅ CI（GNOME 50、46）与真实桌面（GNOME 50.1） |
+| GNOME 无扩展（含 45 及更早） | ⚠️ 只有 AT-SPI ACTIVE，无几何 | ⛔ | ⛔ | ⛔ | ✅ 门户 RemoteDesktop + libei，确认 ACTIVE；需要门户支持 `ConnectToEIS` | ⛔ 发送前拒绝 | 首次使用时系统对话框 | ✅ GNOME 50（W3） |
+| KDE Plasma 6 + 集成 | ✅ PID、几何、层叠、激活窗口、`windowAt` | ✅ | ✅ | ✅ 确认光标到位且目标在最上层 | ✅ 确认激活窗口 | ⛔ 发送前拒绝 | `install-kde-integration`，无需重新登录 | ✅ 隔离 KWin 6.6.6 与 CI |
+| KDE 无集成 | ⚠️ 只有 AT-SPI ACTIVE | ⛔ | ⛔ | ⛔ | ☑️ 门户 RemoteDesktop + libei | ⛔ | 首次使用时系统对话框 | ☑️ |
+| KDE Plasma 5 | ⚠️ 只有 AT-SPI ACTIVE | ⛔ 集成需要 Plasma 6 的 KWin 脚本接口 | ⛔ | ⛔ | ☑️ 视门户是否支持 `ConnectToEIS` | ⛔ | — | ☑️ |
+| Sway | ✅ IPC | ✅ 截取输出中的窗口区域 | ⛔ 与浮动窗口重叠时拒绝 | ✅ 移动后要求 IPC 焦点为目标 | ✅ 虚拟键盘，确认 IPC 焦点 | ✅ 自定义键位表 | 无 | ✅ CI |
+| Hyprland | ✅ IPC | ✅ 按窗口导出 | ☑️ | ✅ 同 Sway | ✅ 同 Sway | ✅ | 无 | ✅ 本地（CI 无 GPU） |
+| 其他 wlroots（labwc、Wayfire、river 等） | ⚠️ 只有 AT-SPI ACTIVE | ⛔ 没有 IPC 给出窗口几何 | ⛔ | ⛔ 无法确认焦点窗口 | ☑️ 有虚拟键盘协议时可用 | ☑️ | 无 | ☑️ |
+| COSMIC 等其他合成器 | 按探测到的协议拼装，都没有时 ⛔ | 同左 | 同左 | 同左 | 同左 | 同左 | — | 未验证 |
+
+### 发行版
+
+除下表单列的情况外，发行版都按"默认桌面 + 版本"对照上表：Fedora Workstation 与 Fedora KDE、Arch 及其衍生版、openSUSE Tumbleweed、KDE neon 等跟进上游新版本的发行版，GNOME 在 46–50 之间、Plasma 为 6.x，走完整路线；它们只是没有在该发行版上运行过（☑️）。另一类是 Xfce、MATE、LXQt（X11）等仍运行在 X11 上的桌面，走 X11 路线。
+
+| 发行版 | 默认桌面与会话 | 路线 | 说明 |
+| --- | --- | --- | --- |
+| Ubuntu 26.04 | GNOME 50，只有 Wayland 会话 | GNOME + 扩展 | ✅ CI 与真实桌面验证；没有 Xorg 会话可退回 |
+| Kubuntu 26.04 | Plasma 6.6 | KDE + 集成 | ✅ CI 运行同版本的 KWin（`kwin-wayland` 加 `kwin-common`） |
+| Ubuntu 24.04 | GNOME 46，Wayland（可选 Xorg 会话） | GNOME + 扩展 | ✅ CI；无头会话中 GTK 不报告 ACTIVE，真实桌面不受影响 |
+| Kubuntu 24.04 | Plasma 5.27 | KDE Plasma 5 | ⛔ 集成需要 Plasma 6；建议登录 X11 会话 |
+| Debian 13 | GNOME 48 / Plasma 6.3 | GNOME + 扩展 / KDE + 集成 | ☑️ Plasma 6.3 早于验证过的 6.6 |
+| Ubuntu 22.04、Debian 12、RHEL 9 系（Rocky、Alma） | GNOME 42 / 43 / 40，默认 Wayland；Kubuntu 22.04 与 Debian 12 的 Plasma 为 5.x | GNOME 无扩展 / KDE Plasma 5 | ⛔ 扩展只支持 GNOME 46–50；☑️ 这些版本的门户不支持 `ConnectToEIS`，Wayland 下按键也不可用，只剩 AT-SPI 语义动作与 XWayland 应用。建议登录 Xorg 会话，走完整的 X11 路线 |
+| RHEL 10 系 | GNOME 47，只有 Wayland 会话 | GNOME + 扩展 | ☑️ |
+| Linux Mint（Cinnamon、MATE、Xfce） | X11 | X11 | ☑️ Cinnamon 的 Wayland 会话仍为实验性质，其合成器没有我们可用的接口 |
+| Pop!_OS 24.04 | COSMIC | 其他合成器 | 未验证，按探测结果拼装 |
+| Fedora Silverblue、Kinoite 等不可变发行版 | GNOME / Plasma 6 | 同可变版本 | ☑️ 扩展与 `.desktop` 都写在用户目录，不改动系统 |
+| NixOS | 任意 | 按桌面 | 辅助进程位于 Nix store，每次升级路径都会变：KDE 需重新运行 `install-kde-integration`，GNOME 的 Shell 内授权也会重新询问 |
+| glibc 早于 2.28 的发行版（Ubuntu 18.04、CentOS 7） | — | 只有 X11 | Wayland 辅助进程按 glibc 2.28 链接，无法启动；Go 运行时不依赖 glibc，X11 路线可用 |
 
 ## 探测与选择
 
