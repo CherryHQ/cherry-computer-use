@@ -23,7 +23,7 @@ use wayland_protocols_wlr::{
     screencopy::v1::client::{zwlr_screencopy_frame_v1, zwlr_screencopy_manager_v1},
 };
 
-use crate::{keyboard::Failure, shell, wlr};
+use crate::{keyboard::Failure, kwin, shell, wlr};
 
 #[allow(non_upper_case_globals, non_camel_case_types, unused_imports, missing_docs, clippy::all)]
 pub mod hyprland_export {
@@ -60,6 +60,8 @@ pub struct Window {
     pub client: [i64; 4],
     /// Mutter's window id when the GNOME Shell extension lists the window.
     pub shell_id: Option<u32>,
+    /// KWin's internalId when a KWin script lists the window.
+    pub kwin_id: Option<String>,
     pub focused: bool,
     pub visible: bool,
     /// Hyprland window address, or the Sway output holding the window.
@@ -113,6 +115,7 @@ fn sway_views(
                 visible: node.get("visible").and_then(Value::as_bool) == Some(true),
                 address: None,
                 shell_id: None,
+                kwin_id: None,
                 output: output.map(|(n, _)| n.to_owned()),
                 output_rect: output.map(|(_, r)| r),
                 overlapping: Vec::new(),
@@ -181,6 +184,7 @@ fn hyprland_windows(clients: &Value, active: Option<u64>) -> Vec<Window> {
                     && client.get("hidden").and_then(Value::as_bool) != Some(true),
                 address,
                 shell_id: None,
+                kwin_id: None,
                 output: None,
                 output_rect: None,
                 overlapping: Vec::new(),
@@ -207,7 +211,44 @@ pub fn windows() -> Result<Option<Vec<Window>>, Failure> {
     if shell::running() == Some(shell::PROTOCOL) {
         return Ok(Some(shell::windows()?.iter().filter_map(shell_window).collect()));
     }
+    if kwin::running() {
+        let state = kwin::state(None)?;
+        return Ok(Some(
+            state.get("windows").and_then(Value::as_array).into_iter().flatten().filter_map(kwin_window).collect(),
+        ));
+    }
     Ok(None)
+}
+
+/// A window from a KWin script's report. Captures leave out KWin's decoration and
+/// shadows, so the content is where the frame and the client surface overlap:
+/// the client area under a server-side title bar, the frame inside client-drawn
+/// shadows. Toolkit window coordinates start at the client surface.
+fn kwin_window(value: &Value) -> Option<Window> {
+    let quad = |name: &str| -> Option<[f64; 4]> {
+        let values = value.get(name)?.as_array()?;
+        (values.len() == 4).then(|| [0, 1, 2, 3].map(|i| values[i].as_f64().unwrap_or(0.0)))
+    };
+    let (frame, buffer) = (quad("frame")?, quad("buffer")?);
+    let (x, y) = (frame[0].max(buffer[0]), frame[1].max(buffer[1]));
+    let right = (frame[0] + frame[2]).min(buffer[0] + buffer[2]);
+    let bottom = (frame[1] + frame[3]).min(buffer[1] + buffer[3]);
+    let round = |r: [f64; 4]| r.map(|v| v.round() as i64);
+    Some(Window {
+        pid: u32::try_from(value.get("pid")?.as_u64()?).ok()?,
+        title: value.get("caption")?.as_str()?.to_owned(),
+        rect: round([x, y, right - x, bottom - y]),
+        frame: round(frame),
+        client: round(buffer),
+        shell_id: None,
+        kwin_id: Some(value.get("id")?.as_str()?.to_owned()),
+        focused: value.get("active").and_then(Value::as_bool) == Some(true),
+        visible: value.get("visible").and_then(Value::as_bool) == Some(true),
+        address: None,
+        output: None,
+        output_rect: None,
+        overlapping: Vec::new(),
+    })
 }
 
 /// A window from the GNOME Shell extension's list.
@@ -228,6 +269,7 @@ fn shell_window(value: &Value) -> Option<Window> {
         frame,
         client: quad("buffer")?,
         shell_id: u32::try_from(value.get("id")?.as_u64()?).ok(),
+        kwin_id: None,
         focused: value.get("focused").and_then(Value::as_bool) == Some(true),
         visible: value.get("visible").and_then(Value::as_bool) == Some(true),
         address: None,
@@ -501,6 +543,17 @@ pub fn capture(window: &Window) -> Result<Image, Failure> {
     if !window.visible {
         return Err(failure("CAPTURE_FAILED", "The window is not visible"));
     }
+    if let Some(id) = &window.kwin_id {
+        let capture = kwin::capture(id)?;
+        return Ok(Image::Raw {
+            width: capture.width,
+            height: capture.height,
+            stride: capture.stride,
+            format: capture.format,
+            y_invert: false,
+            data: capture.data,
+        });
+    }
     if let Some(id) = window.shell_id {
         let (data, width, height) = shell::capture(&shell::Target { id, pid: window.pid, title: &window.title })?;
         return Ok(Image::Png { width, height, data });
@@ -625,5 +678,20 @@ mod tests {
         assert!(
             shell_window(&json!({"id": 7, "pid": 42, "title": "T", "frame": [1, 2], "buffer": [0, 0, 1, 1]})).is_none()
         );
+    }
+
+    #[test]
+    fn kwin_windows_use_the_content_area() {
+        // Server-side decoration: the frame adds a title bar above the client area.
+        let ssd = json!({"id": "{a}", "pid": 7, "caption": "T", "frame": [100, 100, 400, 368], "buffer": [100, 136, 400, 332],
+            "active": true, "visible": true});
+        let window = kwin_window(&ssd).unwrap();
+        assert_eq!((window.rect, window.client), ([100, 136, 400, 332], [100, 136, 400, 332]));
+        assert_eq!(window.kwin_id.as_deref(), Some("{a}"));
+        // Client-side decoration: the surface adds shadows around the frame.
+        let csd = json!({"id": "{b}", "pid": 7, "caption": "T", "frame": [100, 100, 400, 360], "buffer": [74, 77, 452, 415],
+            "active": false, "visible": true});
+        let window = kwin_window(&csd).unwrap();
+        assert_eq!((window.rect, window.client), ([100, 100, 400, 360], [74, 77, 452, 415]));
     }
 }
