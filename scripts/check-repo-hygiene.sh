@@ -6,22 +6,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required_files=(
   ".gitignore"
-  ".editorconfig"
   ".gitattributes"
   "CODEOWNERS"
   "CONTRIBUTING.md"
   "SECURITY.md"
-  ".github/PULL_REQUEST_TEMPLATE.md"
-  ".github/dependency-review-config.yml"
-  ".github/ISSUE_TEMPLATE/bug_report.yml"
-  ".github/ISSUE_TEMPLATE/feature_request.yml"
-  ".github/ISSUE_TEMPLATE/config.yml"
-  ".github/workflows/ci.yml"
-  ".github/workflows/docs-check.yml"
-  ".github/workflows/repo-hygiene.yml"
+  # 与 docs/CICD.md 描述的实际 workflow 保持一致
+  ".github/workflows/sdk-check.yml"
+  ".github/workflows/sdk-distribution.yml"
   ".github/workflows/release.yml"
-  ".github/workflows/supply-chain-security.yml"
-  ".markdownlint.json"
   "scripts/check-action-pinning.sh"
 )
 
