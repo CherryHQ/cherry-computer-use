@@ -85,6 +85,20 @@ mkdir -p "$XDG_CONFIG_HOME"
 # KWin's application cache does not notice directories created later.
 mkdir -p "$XDG_DATA_HOME/applications"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
+# KDE's application cache, where KWin looks up authorizations, lists only what
+# an application menu includes. startplasma picks Plasma's menu with
+# XDG_MENU_PREFIX; without plasma-workspace, a menu of every application stands in.
+export XDG_MENU_PREFIX=
+for dir in $(echo "${XDG_CONFIG_DIRS:-/etc/xdg}" | tr ':' ' '); do
+  [ -f "$dir/menus/plasma-applications.menu" ] && XDG_MENU_PREFIX=plasma-
+done
+if [ -z "$XDG_MENU_PREFIX" ]; then
+  mkdir -p "$XDG_CONFIG_HOME/menus"
+  cat > "$XDG_CONFIG_HOME/menus/applications.menu" <<'MENU'
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/1.0/menu.dtd">
+<Menu><Name>Applications</Name><DefaultAppDirs/><DefaultDirectoryDirs/><Include><All/></Include></Menu>
+MENU
+fi
 if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
   export QT_LOGGING_RULES="kwin_core.debug=true;KWIN_UTILS.debug=true;kf.service.*.debug=true"
   export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"

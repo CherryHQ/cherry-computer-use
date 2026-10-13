@@ -78,6 +78,19 @@ func TestKDEIntegrationReportsWhenKWinNeverServes(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "did not serve") || !strings.Contains(err.Error(), "fake_input offered: false") || !strings.Contains(out.String(), "kbuildsycoca6 did not run") {
 		t.Fatalf("err %v, output %s", err, out.String())
 	}
+	// Without the application menu, KDE's cache lists no applications: say so.
+	config := t.TempDir()
+	host.env = func(key string) string {
+		return map[string]string{"XDG_DATA_HOME": t.TempDir(), "XDG_CURRENT_DESKTOP": "KDE", "XDG_CONFIG_DIRS": config, "XDG_MENU_PREFIX": "plasma-"}[key]
+	}
+	if err := installKDEIntegration(&out, host); err == nil || !strings.Contains(err.Error(), "plasma-applications.menu is missing") {
+		t.Fatalf("missing menu: %v", err)
+	}
+	_ = os.MkdirAll(filepath.Join(config, "menus"), 0o755)
+	_ = os.WriteFile(filepath.Join(config, "menus", "plasma-applications.menu"), nil, 0o644)
+	if err := installKDEIntegration(&out, host); err == nil || strings.Contains(err.Error(), "menu") {
+		t.Fatalf("present menu: %v", err)
+	}
 	// Outside KDE nothing is waited for.
 	host.env = func(key string) string { return map[string]string{"XDG_DATA_HOME": t.TempDir()}[key] }
 	out.Reset()

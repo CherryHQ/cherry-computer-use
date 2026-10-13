@@ -27,6 +27,8 @@ Request: design the KDE backend, verify it on Plasma, then open a PR and impleme
 - Found on the way:
   - The isolated KWin followed the desktop's logind lock state and started behind a fullscreen lock-screen fallback window while the desktop was locked. The session script now passes `--no-lockscreen`.
   - zbus runs on tokio in this build because ashpd enables the feature, so the report receiver needs a runtime.
+  - KDE's application cache only lists `.desktop` files an application menu includes. With only KWin installed (the CI runner) there is no menu, so KWin never found the authorization. The session script now sets `XDG_MENU_PREFIX` as startplasma does, or writes a menu of every application into the private config when Plasma's menu is absent. The installer names the missing menu when it times out.
+  - The ScreenShot2 probe counted any error other than NoAuthorized, such as a timeout, as authorized. Only KWin's InvalidWindow answer, given after its permission check, counts now.
 
 Validation: isolated KWin 6.6.6 locally — the engine test and the SDK desktop test with the integration installed by the runtime itself; the SDK test without it; unit tests for installing and window geometry.
 

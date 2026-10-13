@@ -66,6 +66,31 @@ func (h kdeHost) desktopPath() (string, error) {
 	return filepath.Join(data, "applications", kdeDesktopFile), nil
 }
 
+// kdeMenu names the application menu kbuildsycoca6 builds KDE's application
+// cache from, and whether it exists. Without it the cache holds no applications,
+// so KWin never finds the authorization; Plasma installs it with
+// plasma-workspace and sets XDG_MENU_PREFIX to pick it.
+func kdeMenu(env func(string) string) (string, bool) {
+	name := env("XDG_MENU_PREFIX") + "applications.menu"
+	config := env("XDG_CONFIG_HOME")
+	if config == "" && env("HOME") != "" {
+		config = filepath.Join(env("HOME"), ".config")
+	}
+	dirs := env("XDG_CONFIG_DIRS")
+	if dirs == "" {
+		dirs = "/etc/xdg"
+	}
+	for _, dir := range append([]string{config}, strings.Split(dirs, ":")...) {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "menus", name)); err == nil {
+			return name, true
+		}
+	}
+	return name, false
+}
+
 func isKDE(env func(string) string) bool {
 	for _, desktop := range strings.Split(env("XDG_CURRENT_DESKTOP"), ":") {
 		if strings.EqualFold(desktop, "KDE") {
@@ -123,6 +148,9 @@ func installKDEIntegration(stdout io.Writer, host kdeHost) error {
 		if time.Now().After(deadline) {
 			if err != nil {
 				return fmt.Errorf("KWin did not serve the helper yet: %w", err)
+			}
+			if menu, ok := kdeMenu(host.env); !ok {
+				detail += fmt.Sprintf("; KDE's application menu %s is missing, so KDE's application cache lists no applications (Plasma installs it with plasma-workspace)", menu)
 			}
 			return fmt.Errorf("KWin did not serve the helper within %s (%d checks; %s); check that this is KDE Plasma 6 and try again", time.Since(start).Round(time.Second), attempt, detail)
 		}

@@ -317,6 +317,7 @@ KWin 有三种官方能力可用，不需要像 GNOME 那样在合成器进程�
 - `install-kde-integration` 写入指向辅助进程规范路径的 `.desktop`，运行 `kbuildsycoca6`，在 KDE 会话中启动辅助进程确认两个接口都已可用（最多约 15 秒）后才报告成功；`uninstall-kde-integration` 撤销。
 - 测试：`kwin-session.sh` 在 KWin 启动后运行运行时自己的安装命令。`TestKDEIntegration` 覆盖授权状态、截图（含被覆盖时）、覆盖时拒绝点击（说明遮挡窗口）、单击、双击、拖拽、Ctrl+A、布局文本、布局外字符在发送前拒绝、目标非激活时拒绝按键；SDK 桌面测试覆盖安装后的 `kdeIntegration: granted`，未安装时截图与指针报告需要安装。
 - 隔离会话踩到的问题：KWin 跟随所在 logind 会话的锁定状态，桌面锁屏时隔离的 KWin 一启动就显示全屏的锁屏后备窗口，挡住所有窗口、脚本也无法移动它们；`kwin-session.sh` 以 `--no-lockscreen` 启动。
+- CI 踩到的问题：KDE 的应用缓存（KSycoca）只收录应用菜单包含的 `.desktop`，`kbuildsycoca6` 找不到 `${XDG_MENU_PREFIX}applications.menu` 时缓存里没有任何应用，KWin 就找不到授权。真实 Plasma 由 plasma-workspace 提供 `plasma-applications.menu`，startplasma 设置 `XDG_MENU_PREFIX=plasma-`；只装了 KWin 的 CI 没有菜单。`kwin-session.sh` 照 startplasma 设置前缀，没有 Plasma 菜单时在私有配置目录写一个包含全部应用的菜单；安装命令超时时会指出菜单缺失。同一次排查还发现，用不存在的窗口探测 ScreenShot2 时把除 NoAuthorized 外的任何错误（如超时）都当成已授权；现在只有 KWin 在权限检查之后给出的 InvalidWindow 才算。
 - 未覆盖：真实 Plasma 桌面上的安装与使用；Plasma 6.0–6.5（只在 6.6.6 上验证）；KWin 对 `.desktop` 授权的缓存刷新时间在不同机器上的差异。
 
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
