@@ -60,6 +60,16 @@ xcrun notarytool submit "${signing_dir}/app.zip" \
   --apple-id "${APPLE_ID}" --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
   --team-id "${APPLE_TEAM_ID}" --wait --output-format json > "${signing_dir}/notary.json"
 node -e 'if (JSON.parse(require("node:fs").readFileSync(process.argv[1])).status !== "Accepted") throw new Error("Apple notarization was not accepted")' "${signing_dir}/notary.json"
-xcrun stapler staple "${app_path}"
-xcrun stapler validate "${app_path}"
+# stapler fetches the ticket from Apple's CloudKit; a dropped connection there
+# (NSURLErrorDomain -1005, "Error 68") fails the step, so try a few times.
+retry() {
+  for attempt in 1 2 3 4; do
+    "$@" && return 0
+    [[ "${attempt}" == 4 ]] && return 1
+    echo "Retrying in $((attempt * 15))s: $*" >&2
+    sleep $((attempt * 15))
+  done
+}
+retry xcrun stapler staple "${app_path}"
+retry xcrun stapler validate "${app_path}"
 spctl --assess --type execute --verbose "${app_path}"

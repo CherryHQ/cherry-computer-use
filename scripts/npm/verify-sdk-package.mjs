@@ -75,7 +75,17 @@ try {
       assert.match(signature.stderr, /Authority=Developer ID Application:/);
       assert.ok(process.env.APPLE_TEAM_ID, 'APPLE_TEAM_ID is required to verify the release signer');
       assert.ok(signature.stderr.includes(`TeamIdentifier=${process.env.APPLE_TEAM_ID}\n`));
-      execFileSync('xcrun', ['stapler', 'validate', app], { stdio: 'inherit' });
+      // stapler checks the ticket with Apple's CloudKit, whose connection can drop.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          execFileSync('xcrun', ['stapler', 'validate', app], { stdio: 'inherit' });
+          break;
+        } catch (error) {
+          if (attempt === 4) throw error;
+          console.error(`stapler validate failed; retrying in ${attempt * 15}s`);
+          await new Promise((resolve) => setTimeout(resolve, attempt * 15000));
+        }
+      }
       execFileSync('spctl', ['--assess', '--type', 'execute', '--verbose', app], { stdio: 'inherit' });
     }
   }
