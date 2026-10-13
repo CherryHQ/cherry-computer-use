@@ -275,6 +275,10 @@ pub fn capture(internal_id: &str) -> Result<Capture, Failure> {
         zbus::Error::MethodError(name, _, _) if name.as_str().ends_with("NoAuthorized") => {
             not_installed("ScreenShot2 refused")
         }
+        zbus::Error::MethodError(name, _, _) if name.as_str() == "org.freedesktop.DBus.Error.UnknownObject" => failure(
+            "DEPENDENCY_MISSING",
+            "KWin offers no ScreenShot2: its screenshot plugin is not installed (kwin-common on Debian and Ubuntu)",
+        ),
         _ => failure("CAPTURE_FAILED", format!("KWin could not capture the window: {e}")),
     })?;
     let (meta,): (HashMap<String, zvariant::OwnedValue>,) = reply
