@@ -13,6 +13,7 @@
 # the nested Hyprland's own seat.
 # The command gets WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland, SWAYSOCK or
 # HYPRLAND_INSTANCE_SIGNATURE, and OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST=<compositor>.
+# OCU_WLROOTS_DEBUG=1 prints the compositors' logs when the run fails.
 set -eu
 compositor=${1:-}
 case "$compositor" in
@@ -68,7 +69,13 @@ session_processes() {
 }
 # Cleanup must never change the command's exit status.
 cleanup() {
+  code=$?
   set +e
+  if [ "$code" != 0 ] && [ "${OCU_WLROOTS_DEBUG:-}" = 1 ]; then
+    for log in "$root/parent.log" "$root/compositor.log" "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log; do
+      [ -s "$log" ] && { echo "wlroots-session.sh: $log:" >&2; tail -40 "$log" >&2; }
+    done
+  fi
   [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && hyprctl dispatch exit >/dev/null 2>&1
   for pid in $pids; do kill "$pid" 2>/dev/null; done
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -129,7 +136,8 @@ case "$compositor" in
     else
       # An empty config directory: no system or user autostart.
       mkdir -m 700 "$root/labwc"
-      WLR_BACKENDS=headless WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
+      # labwc starts without outputs; Hyprland's window needs one to be shown on.
+      WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
         labwc -C "$root/labwc" > "$root/parent.log" 2>&1 &
       pids="$!"
       WAYLAND_DISPLAY=$(wait_for_socket "$!" 1)
@@ -156,6 +164,7 @@ ecosystem {
   no_donation_nag = true
 }
 CONF
+    [ "${OCU_WLROOTS_DEBUG:-}" = 1 ] && printf 'debug {\n  disable_logs = false\n}\n' >> "$XDG_CONFIG_HOME/hypr/hyprland.conf"
     HYPRLAND_NO_CRASHREPORTER=1 XDG_CURRENT_DESKTOP=Hyprland \
       Hyprland --config "$XDG_CONFIG_HOME/hypr/hyprland.conf" > "$root/compositor.log" 2>&1 &
     pids="$! $pids"
