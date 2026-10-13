@@ -20,6 +20,9 @@ func TestGNOMEWaylandKeyboard(t *testing.T) {
 	if os.Getenv("OPEN_COMPUTER_USE_LINUX_GNOME_TEST") != "1" || helper == "" {
 		t.Skip("run inside testdata/gnome-session.sh with OPEN_COMPUTER_USE_WAYLAND_HELPER set")
 	}
+	if os.Getenv("OCU_GNOME_SHELL_EXTENSION") != "" {
+		t.Skip("the portal keyboard is what GNOME uses without the Shell extension; TestGNOMEShellExtension covers it with one")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	startFixture := func(title string) *exec.Cmd {
