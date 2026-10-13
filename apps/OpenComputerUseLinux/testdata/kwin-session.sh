@@ -86,7 +86,7 @@ mkdir -p "$XDG_CONFIG_HOME"
 mkdir -p "$XDG_DATA_HOME/applications"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
 if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
-  export QT_LOGGING_RULES="kwin_core.debug=true;kf.service.sycoca.debug=true"
+  export QT_LOGGING_RULES="kwin_core.debug=true;KWIN_UTILS.debug=true;kf.service.*.debug=true"
   export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"
 fi
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
@@ -118,7 +118,9 @@ fi
 if [ -n "${OCU_KDE_INTEGRATION:-}" ]; then
   WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE "$OCU_KDE_INTEGRATION" install-kde-integration || {
     echo "kwin-session.sh: install-kde-integration failed; KWin log:" >&2
-    grep -E "X-KDE-Wayland-Interfaces|authorized|Could not identify|fake" "$root/kwin.log" | tail -20 >&2
+    grep -E "X-KDE-Wayland-Interfaces|authorized|Could not|Interfaces found|fake|sycoca" "$root/kwin.log" | tail -30 >&2
+    echo "kwin-session.sh: kbuildsycoca6 says:" >&2
+    kbuildsycoca6 2>&1 | grep -vE "^$" | tail -20 >&2
     tail -20 "$root/kwin.log" >&2
     exit 1
   }
