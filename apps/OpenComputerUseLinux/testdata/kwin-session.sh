@@ -81,6 +81,9 @@ display="wayland-ocu-kwin"
 # it runs in, which is the desktop's: --no-lockscreen keeps a locked desktop from
 # covering this session with KWin's lock screen.
 mkdir -p "$XDG_CONFIG_HOME"
+# As on a desktop, the user's application directory exists before KWin starts;
+# KWin's application cache does not notice directories created later.
+mkdir -p "$XDG_DATA_HOME/applications"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
 [ "${OCU_KWIN_DEBUG:-}" = 1 ] && export QT_LOGGING_RULES="kwin_core.debug=true"
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
