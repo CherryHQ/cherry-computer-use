@@ -22,7 +22,12 @@ extension: the user runs `open-computer-use install-gnome-extension` and logs in
 again, then `requestPermissions({ ids: ['gnomeShell'] })` shows the Shell's dialog.
 The extension captures covered windows, clicks only when the target owns the point,
 sends keys only to the focus window, and types any Unicode into text-input clients.
-Without it, GNOME and KDE keys go through the RemoteDesktop portal (`remoteDesktop`
+On KDE Plasma 6, `open-computer-use install-kde-integration` authorizes the runtime's
+helper for KWin window capture and input (no new login; the `kdeIntegration`
+permission reports it): clicks are pressed only once the cursor is at the point and
+the target is topmost there, keys only while the target is active, and text the
+keyboard layout lacks is refused unless it goes into a focused text field.
+Without them, GNOME and KDE keys go through the RemoteDesktop portal (`remoteDesktop`
 permission); the target window must be active and characters the keyboard layout
 lacks are refused, and capture and pointer input are unavailable. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts

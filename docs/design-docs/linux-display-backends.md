@@ -108,7 +108,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
 | wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
 | GNOME（Mutter） | ✅ Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4） | ✅ Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 扩展内虚拟键盘，文本经输入法提交任意 Unicode（W4）；无扩展时门户 RemoteDesktop + libei | ✅ 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 扩展由用户安装、重新登录，并在 Shell 内授权；无扩展时门户弹窗 |
-| KDE（KWin，Plasma 6） | 🧪 KWin 脚本：窗口的 PID、标题、几何、层叠、激活窗口、光标与 `windowAt`（W5，已验证可行） | 🧪 `ScreenShot2.CaptureWindow`，被遮挡也可截取（W5） | 🧪 `fake_input` 键码，按键前确认激活窗口（W5）；无集成时门户 + libei | 🧪 `fake_input` 绝对坐标，移动后确认光标到位且 `windowAt` 最上层是目标（W5） | `install-kde-integration` 写入声明受限接口的 `.desktop`，无需重新登录；无集成时门户弹窗 |
+| KDE（KWin，Plasma 6） | ✅ KWin 脚本：窗口的 PID、标题、几何、层叠、激活窗口、光标与 `windowAt`（W5） | ✅ `ScreenShot2.CaptureWindow`，被遮挡也可截取（W5） | ✅ `fake_input` 键码，按键前确认激活窗口（W5）；无集成时门户 + libei | ✅ `fake_input` 绝对坐标，移动后确认光标到位且 `windowAt` 最上层是目标（W5） | `install-kde-integration` 写入声明受限接口的 `.desktop`，无需重新登录；无集成时门户弹窗 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
 
 AT-SPI 语义动作在以上所有会话中都可用，不依赖此表。
@@ -183,7 +183,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 ✅ | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权，`install-gnome-extension`（见「GNOME Shell 扩展」） | 隔离的无头 GNOME 中由运行时自己安装扩展后，引擎与 SDK 测试通过；CI 覆盖 GNOME 50 与 46 |
-| W5 🟡 | KDE Plasma 6：KWin 脚本、`ScreenShot2`、`fake_input` 与 `.desktop` 授权（见「KDE Plasma」） | 可行性在隔离的 KWin 6.6.6 中验证通过；实现进行中 |
+| W5 ✅ | KDE Plasma 6：KWin 脚本、`ScreenShot2`、`fake_input` 与 `.desktop` 授权，`install-kde-integration`（见「KDE Plasma」） | 隔离的 KWin 6.6.6 中由运行时自己安装授权后，引擎与 SDK 测试通过；CI 在 `ubuntu-26.04` 上运行 |
 
 每个阶段独立成 PR；未完成的能力保持 unsupported/unavailable，并说明原因。
 
@@ -309,6 +309,15 @@ KWin 有三种官方能力可用，不需要像 GNOME 那样在合成器进程�
 - **安装与授权**：`open-computer-use install-kde-integration` 写入 `~/.local/share/applications/` 下的 `.desktop`（`Exec=` 为辅助进程绝对路径，`NoDisplay=true`，声明上述两个受限接口）并运行 `kbuildsycoca6`，然后让辅助进程确认两个接口都已可用（最多等待约 15 秒）再报告成功；`uninstall-kde-integration` 撤销。KDE 没有运行时授权对话框，安装即授权。SDK 增加 `kdeIntegration` 权限：未安装或辅助进程路径已变（例如 npm 升级）时为 `unavailable`（`systemSettings`，提示重新运行安装），否则为 `granted`；辅助进程以 `fake_input` 是否可见判断。
 - **无集成时**：键盘沿用门户 + libei；截图与指针报告不可用并提示安装。
 - **范围与 CI**：仅 Plasma 6（ubuntu-24.04 为 Plasma 5.27，不纳入）。CI 在 ubuntu-26.04 上用 `kwin-session.sh` 运行引擎与 SDK 测试。
+
+### W5 实现结果（2026-10-14）
+
+- 辅助进程 `kwin.rs`：每次查询加载一段带令牌的脚本，回传由会话总线上的接收对象处理，只接受 KWin 当前所有者发出且令牌匹配的回传，一次约 25 ms。zbus 在本构建中运行于 tokio（ashpd 为整个构建开启了该特性），注册接收对象会派生任务，因此接收端有一个单工作线程的运行时。截图经管道读取 ScreenShot2 的原始图像；`fake_input` 连接在辅助进程生命周期内保持。窗口的内容区是 frame 与 buffer 的交集（服务端标题栏下的客户区，或客户端阴影内的 frame），元素坐标以 buffer 为原点。
+- Go：GNOME 扩展与 KWin 合并为“合成器协助”的输入路线（`wayland.Route`，方法前缀 `shell.*`/`kwin.*`），引擎按路线发送点击、拖拽、组合键与文本；SDK 增加 `kdeIntegration`。
+- `install-kde-integration` 写入指向辅助进程规范路径的 `.desktop`，运行 `kbuildsycoca6`，在 KDE 会话中启动辅助进程确认两个接口都已可用（最多约 15 秒）后才报告成功；`uninstall-kde-integration` 撤销。
+- 测试：`kwin-session.sh` 在 KWin 启动后运行运行时自己的安装命令。`TestKDEIntegration` 覆盖授权状态、截图（含被覆盖时）、覆盖时拒绝点击（说明遮挡窗口）、单击、双击、拖拽、Ctrl+A、布局文本、布局外字符在发送前拒绝、目标非激活时拒绝按键；SDK 桌面测试覆盖安装后的 `kdeIntegration: granted`，未安装时截图与指针报告需要安装。
+- 隔离会话踩到的问题：KWin 跟随所在 logind 会话的锁定状态，桌面锁屏时隔离的 KWin 一启动就显示全屏的锁屏后备窗口，挡住所有窗口、脚本也无法移动它们；`kwin-session.sh` 以 `--no-lockscreen` 启动。
+- 未覆盖：真实 Plasma 桌面上的安装与使用；Plasma 6.0–6.5（只在 6.6.6 上验证）；KWin 对 `.desktop` 授权的缓存刷新时间在不同机器上的差异。
 
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 

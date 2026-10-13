@@ -118,8 +118,9 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
     }
   }
   if (wayland) {
-    // GNOME with the Shell extension lists gnomeShell; portal sessions (GNOME without
-    // it, KDE) list remoteDesktop; the wlroots virtual keyboard needs no grant.
+    // GNOME with the Shell extension lists gnomeShell, KDE kdeIntegration; portal
+    // sessions (GNOME or KDE without them) list remoteDesktop; the wlroots virtual
+    // keyboard needs no grant.
     const permissions = (await client.getPermissionStatus()).permissions
     const portal = permissions.some(permission => permission.id === 'remoteDesktop')
     if (keyboard.status !== 'available') return
@@ -147,7 +148,9 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
       const shell = granted.permissions.find(permission => permission.id === 'gnomeShell')
       if (shell) assert.deepEqual([shell.status, shell.interaction], ['unavailable', 'systemSettings'])
     } else {
-      assert.deepEqual(permissions, [])
+      // wlroots needs no grant; KDE's installed integration is already granted.
+      assert.deepEqual(permissions.filter(permission => permission.status !== 'granted'), [])
+      assert.ok(permissions.every(permission => permission.id === 'kdeIntegration'), JSON.stringify(permissions))
     }
   }
   // With explicit permission, keys reach the focused fixture field.

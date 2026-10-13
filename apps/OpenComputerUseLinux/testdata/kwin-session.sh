@@ -12,6 +12,8 @@
 #
 # OCU_KWIN_PLASMASHELL=1 also starts plasmashell (panels, notifications);
 # OCU_KWIN_SCALE and OCU_KWIN_OUTPUTS set the virtual outputs' scale and count.
+# OCU_KDE_INTEGRATION=<open-computer-use executable> runs its
+# install-kde-integration once KWin is up, as a user would.
 set -eu
 [ $# -gt 0 ] || { echo "usage: $0 <command...>" >&2; exit 2; }
 
@@ -73,11 +75,13 @@ trap cleanup EXIT
 
 display="wayland-ocu-kwin"
 # KWin ships no default config here; keep screen edges and effects that could
-# cover windows out of the way.
+# cover windows out of the way. KWin follows the lock state of the logind session
+# it runs in, which is the desktop's: --no-lockscreen keeps a locked desktop from
+# covering this session with KWin's lock screen.
 mkdir -p "$XDG_CONFIG_HOME"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
-  kwin_wayland --virtual --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
+  kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &
 kwin=$!
 for _ in $(seq 100); do
@@ -101,6 +105,9 @@ if [ "${OCU_KWIN_PLASMASHELL:-}" = 1 ]; then
     sleep 0.1
   done
   sleep 2
+fi
+if [ -n "${OCU_KDE_INTEGRATION:-}" ]; then
+  WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE "$OCU_KDE_INTEGRATION" install-kde-integration
 fi
 launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launcher)
 "$launcher" --launch-immediately >/dev/null 2>&1 &
