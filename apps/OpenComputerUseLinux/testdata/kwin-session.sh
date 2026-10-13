@@ -103,7 +103,10 @@ if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
   export QT_LOGGING_RULES="kwin_core.debug=true;KWIN_UTILS.debug=true;kf.service.*.debug=true"
   export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"
 fi
-XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
+# With CI set, KWin's virtual backend opens /dev/dri/card1 instead of looking
+# for a usable DRM device (a workaround for KWin's own CI); on a CI runner that
+# is often a display without rendering, which leaves KWin on QPainter.
+env -u CI XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
   kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &
 kwin=$!
@@ -119,7 +122,8 @@ done
 # KWin captures windows only with OpenGL compositing; without a GPU it needs
 # Mesa's software renderer.
 [ "${OCU_KWIN_DEBUG:-}" = 1 ] && echo "kwin-session.sh: KWin composites with $(gdbus call --session -d org.kde.KWin -o /Compositor \
-  -m org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType 2>&1)" >&2
+  -m org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType 2>&1)" >&2 &&
+  grep -iE "OpenGL|EGL|drm|render" "$root/kwin.log" | grep -v sycoca | head -10 >&2
 if [ "${OCU_KWIN_PLASMASHELL:-}" = 1 ]; then
   # plasmashell refuses to load its shell without the activity manager.
   for daemon in /usr/lib/*/libexec/kactivitymanagerd /usr/libexec/kactivitymanagerd; do
