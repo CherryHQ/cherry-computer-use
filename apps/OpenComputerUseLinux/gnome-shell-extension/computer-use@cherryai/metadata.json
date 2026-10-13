@@ -1,0 +1,8 @@
+{
+  "uuid": "computer-use@cherryai",
+  "name": "Cherry Computer Use",
+  "description": "Lets Cherry Computer Use see and control windows on GNOME Wayland after you allow it. Shows a top bar indicator while allowed; stop it there at any time.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "url": "https://github.com/CherryHQ/cherry-computer-use",
+  "version": 1
+}

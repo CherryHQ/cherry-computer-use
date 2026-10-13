@@ -5,6 +5,9 @@
 # RemoteDesktop API in place of the portal dialog, which no one can click here.
 #
 #   testdata/gnome-session.sh go test ./internal/desktop/ -run GNOME
+#
+# OCU_GNOME_SHELL_EXTENSION=<dir> installs that extension directory into the
+# session's private data directory and enables it before the shell starts.
 set -eu
 if [ "${OCU_GNOME_SESSION_INNER:-}" != 1 ]; then
   # Everything the shell and its services write goes under a private root: the
@@ -28,6 +31,14 @@ case "${OCU_GNOME_SESSION_ROOT:-}" in
 esac
 display="wayland-ocu-test"
 log="$OCU_GNOME_SESSION_ROOT/shell.log"
+if [ -n "${OCU_GNOME_SHELL_EXTENSION:-}" ]; then
+  uuid=$(basename "$OCU_GNOME_SHELL_EXTENSION")
+  mkdir -p "$XDG_DATA_HOME/gnome-shell/extensions"
+  cp -r "$OCU_GNOME_SHELL_EXTENSION" "$XDG_DATA_HOME/gnome-shell/extensions/$uuid"
+  # The private bus activates its own dconf service, writing under XDG_CONFIG_HOME.
+  gsettings set org.gnome.shell disable-user-extensions false
+  gsettings set org.gnome.shell enabled-extensions "['$uuid']"
+fi
 # Unsafe mode allows org.gnome.Shell.Eval, used below only inside this session.
 gnome-shell --headless --unsafe-mode --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
 shell=$!
