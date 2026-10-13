@@ -6,6 +6,15 @@ import { ComputerUse } from '../packages/sdk/dist/index.js'
 
 // Start apps/OpenComputerUseLinux/testdata/gtk_fixture.py in the desktop session first.
 
+function shellDump() {
+  const js = `JSON.stringify((() => { const [x, y] = global.get_pointer(); return { pointer: [x, y], overview: Main.overview.visible,
+    at: Main.extensionManager.lookup('computer-use@cherryai').stateObj._describeAt(x, y),
+    windows: global.get_window_actors().map(a => a.meta_window).filter(Boolean).map(w => { const f = w.get_frame_rect(), b = w.get_buffer_rect();
+      return [w.get_title(), [f.x, f.y, f.width, f.height], [b.x, b.y, b.width, b.height], w.has_focus()] }) } })())`
+  return spawnSync('gdbus', ['call', '--session', '--dest', 'org.gnome.Shell', '--object-path', '/org/gnome/Shell',
+    '--method', 'org.gnome.Shell.Eval', js], { encoding: 'utf8' }).stdout
+}
+
 // Allows desktop control in the GNOME Shell extension's dialog once it opens.
 // Shell.Eval exists only in the isolated test session's unsafe mode.
 async function answerShellDialog() {
@@ -153,6 +162,12 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   // Pointer: a double click presses the counter twice; points outside the window are refused.
   await state(() => true)
   await global({ type: 'click', elementId: named(`Count: ${count + 1}`).id, count: 2 })
-  await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))
+  try {
+    await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))
+  } catch (error) {
+    // Where the pointer and windows were, as the Shell sees them (test sessions only).
+    if (shellPending) console.error('Shell state after the double click:', shellDump())
+    throw error
+  }
   await assert.rejects(global({ type: 'click', x: 5000, y: 5000 }), refused('INVALID_ARGUMENT'))
 })
