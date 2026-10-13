@@ -265,6 +265,22 @@ export default class ComputerUseExtension extends Extension {
         return actor?.meta_window ?? null;
     }
 
+    // Names what is at a point, for refusals: a window's title, or the Shell
+    // element (with its style class, such as a notification banner).
+    _describeAt(x, y) {
+        const window = this._windowAt(x, y);
+        if (window)
+            return `the window "${window.get_title() ?? ''}"`;
+        const actor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+        const names = [];
+        for (let current = actor; current && names.length < 3; current = current.get_parent()) {
+            const name = current.name || current.style_class || current.constructor.name;
+            if (name)
+                names.push(name);
+        }
+        return names.length ? `the Shell element ${names.join(' < ')}` : 'nothing';
+    }
+
     async _capture(id, pid, title) {
         const {actor, window} = this._target(id, pid, title);
         if (window.minimized)
@@ -355,7 +371,7 @@ export default class ComputerUseExtension extends Extension {
             throw new Refusal(ERROR.invalid, 'The point is outside the desktop');
         devices.pointer.notify_absolute_motion(now(), x, y);
         if (this._windowAt(x, y) !== window)
-            throw new Refusal(ERROR.target, 'Another window or Shell element is at the point; the click would not reach the target');
+            throw new Refusal(ERROR.target, `The point (${Math.round(x)}, ${Math.round(y)}) shows ${this._describeAt(x, y)}, not the target; the click would not reach it`);
     }
 
     _requireFocus(window) {

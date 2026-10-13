@@ -183,16 +183,24 @@ func TestGNOMEShellExtension(t *testing.T) {
 		t.Fatal(err)
 		return Point{}
 	}
-	if c, effect := code(engine.PointerClick(ctx, target, center(), 1, 1)); c != "TARGET_UNAVAILABLE" || effect != "none" {
-		t.Fatalf("click under another window: %s/%s", c, effect)
+	covered := engine.PointerClick(ctx, target, center(), 1, 1)
+	if c, effect := code(covered); c != "TARGET_UNAVAILABLE" || effect != "none" || !strings.Contains(covered.Error(), cover) {
+		t.Fatalf("click under another window: %s/%s %v", c, effect, covered)
 	}
 	eventually("count", count, "Count: 0")
 
-	// On top, clicks, double clicks and drags reach the target.
+	// On top, clicks, double clicks and drags reach the target. A refused click
+	// sends nothing, so wait for the raise by retrying the first one.
 	place(title, 100, 100, 400, 360)
-	time.Sleep(500 * time.Millisecond)
-	if err := engine.PointerClick(ctx, target, center(), 1, 1); err != nil {
-		t.Fatal(err)
+	for attempt := 0; ; attempt++ {
+		err := engine.PointerClick(ctx, target, center(), 1, 1)
+		if err == nil {
+			break
+		}
+		if c, effect := code(err); c != "TARGET_UNAVAILABLE" || effect != "none" || attempt > 30 {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	eventually("count", count, "Count: 1")
 	if err := engine.PointerClick(ctx, target, center(), 1, 2); err != nil {
