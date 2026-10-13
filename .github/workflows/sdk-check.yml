@@ -252,6 +252,40 @@ jobs:
         node --test protocol/linux-desktop.test.mjs; code=$?
         kill $fixture; exit $code
 
+  legacy-portal-probe-ubuntu-2204:
+    # Temporary experiment: does the pre-libei RemoteDesktop keyboard work on GNOME 42?
+    if: github.event_name == 'workflow_dispatch'
+    name: Legacy portal probe (GNOME 42, ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-shell xdg-desktop-portal xdg-desktop-portal-gnome at-spi2-core dbus python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 libglib2.0-bin
+          gnome-shell --version
+          dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
+      - run: |
+          cd apps/OpenComputerUseLinux
+          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py 2>&1 | tail -30
+
+  legacy-portal-probe-debian-12:
+    if: github.event_name == 'workflow_dispatch'
+    name: Legacy portal probe (GNOME 43, debian-12)
+    runs-on: ubuntu-24.04
+    container: debian:12
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gnome-shell xdg-desktop-portal xdg-desktop-portal-gnome at-spi2-core dbus dbus-x11 python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 libglib2.0-bin procps fuse3
+          gnome-shell --version
+          dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
+      - run: |
+          cd apps/OpenComputerUseLinux
+          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py 2>&1 | tail -30
+
   linux-hyprland:
     name: Linux Hyprland (nested in headless labwc, ubuntu-26.04)
     runs-on: ubuntu-26.04
@@ -289,16 +323,15 @@ jobs:
           sudo modprobe vgem || { sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" && sudo modprobe vgem; }
           ls /dev/dri | grep -vxF "$before" > "$RUNNER_TEMP/vgem"
           echo "before: $before; vgem: $(cat "$RUNNER_TEMP/vgem" | tr '\n' ' ')"
+          # udev sets the new nodes' owner and mode after modprobe returns; wait
+          # for it, or it undoes the chmod.
+          sudo udevadm settle
           sudo chmod a+rw /dev/dri/*
           ls -l /dev/dri
-          id
-          for node in /dev/dri/*; do python3 -c 'import os,sys; os.close(os.open(sys.argv[1], os.O_RDWR)); print(sys.argv[1], "opens")' "$node" || true; done
-          sudo dmesg | grep -iE "apparmor|drm|vgem" | tail -10 || true
       - name: Capture and input through Hyprland
         run: |
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_WLROOTS_DEBUG=1
-          # vgem's primary node: Mesa allocates dumb buffers there, as for KWin.
-          export WLR_RENDER_DRM_DEVICE="/dev/dri/$(grep -x 'card[0-9]*' "$RUNNER_TEMP/vgem")"
+          ls -l /dev/dri
           session="$PWD/apps/OpenComputerUseLinux/testdata/wlroots-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" hyprland go test -count=1 -run Wlroots -v ./internal/desktop/)
           "$session" hyprland sh -c '
