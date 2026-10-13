@@ -1,0 +1,3 @@
+# Long Wayland protocol paths read better on one line than split at 100 columns.
+max_width = 120
+use_small_heuristics = "Max"

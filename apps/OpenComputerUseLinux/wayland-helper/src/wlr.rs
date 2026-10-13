@@ -17,7 +17,9 @@ use wayland_client::{
     globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_registry, wl_seat},
 };
-use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1, zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1};
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
+    zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1, zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
+};
 
 use crate::keyboard::Failure;
 
@@ -80,7 +82,10 @@ const MAX_KEYS: usize = 247;
 fn base_keysyms() -> Vec<u32> {
     let mut keysyms = MODIFIERS.to_vec();
     keysyms.extend(0x20..=0x7e);
-    keysyms.extend([0xff0d, 0xff09, 0xff1b, 0xff08, 0xffff, 0xff63, 0xff50, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55, 0xff56, 0xff57, 0xff67]);
+    keysyms.extend([
+        0xff0d, 0xff09, 0xff1b, 0xff08, 0xffff, 0xff63, 0xff50, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55, 0xff56, 0xff57,
+        0xff67,
+    ]);
     keysyms.extend(0xffbe..=0xffd5);
     keysyms
 }
@@ -99,16 +104,40 @@ fn modifier_name(keysym: u32) -> Option<&'static str> {
 struct State;
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 impl Dispatch<ZwpVirtualKeyboardManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &ZwpVirtualKeyboardManagerV1, _: <ZwpVirtualKeyboardManagerV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZwpVirtualKeyboardManagerV1,
+        _: <ZwpVirtualKeyboardManagerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ZwpVirtualKeyboardV1, ()> for State {
-    fn event(_: &mut Self, _: &ZwpVirtualKeyboardV1, _: <ZwpVirtualKeyboardV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZwpVirtualKeyboardV1,
+        _: <ZwpVirtualKeyboardV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 /// One virtual keyboard on the default seat. Dropping it releases held keys and
@@ -124,14 +153,23 @@ pub struct VirtualKeyboard {
 
 impl VirtualKeyboard {
     pub fn connect() -> Result<Self, Failure> {
-        let unavailable = |e: String| failure("DEPENDENCY_MISSING", format!("The compositor offers no virtual keyboard: {e}"));
+        let unavailable =
+            |e: String| failure("DEPENDENCY_MISSING", format!("The compositor offers no virtual keyboard: {e}"));
         let connection = Connection::connect_to_env().map_err(|e| unavailable(e.to_string()))?;
         let (globals, queue) = registry_queue_init::<State>(&connection).map_err(|e| unavailable(e.to_string()))?;
         let handle = queue.handle();
         let seat: wl_seat::WlSeat = globals.bind(&handle, 1..=1, ()).map_err(|e| unavailable(e.to_string()))?;
-        let manager: ZwpVirtualKeyboardManagerV1 = globals.bind(&handle, 1..=1, ()).map_err(|e| unavailable(e.to_string()))?;
+        let manager: ZwpVirtualKeyboardManagerV1 =
+            globals.bind(&handle, 1..=1, ()).map_err(|e| unavailable(e.to_string()))?;
         let keyboard = manager.create_virtual_keyboard(&seat, &handle, ());
-        let mut device = VirtualKeyboard { _connection: connection, queue, keyboard, keysyms: Vec::new(), held: Vec::new(), time: 0 };
+        let mut device = VirtualKeyboard {
+            _connection: connection,
+            queue,
+            keyboard,
+            keysyms: Vec::new(),
+            held: Vec::new(),
+            time: 0,
+        };
         // The protocol requires a keymap before any key; modifiers take the first,
         // fixed keycodes. Clearing the modifier state also undoes modifiers a crashed
         // client left behind: Hyprland keeps them on the seat until a keyboard reports new ones.
@@ -142,7 +180,10 @@ impl VirtualKeyboard {
     }
 
     fn sync(&mut self) -> Result<(), Failure> {
-        self.queue.roundtrip(&mut State).map(|_| ()).map_err(|e| failure("TARGET_UNAVAILABLE", format!("Wayland connection lost: {e}")))
+        self.queue
+            .roundtrip(&mut State)
+            .map(|_| ())
+            .map_err(|e| failure("TARGET_UNAVAILABLE", format!("Wayland connection lost: {e}")))
     }
 
     /// Makes sure every keysym has a keycode and returns their keymap indexes. Base
@@ -207,7 +248,8 @@ impl VirtualKeyboard {
     /// releases key and undoes both in reverse.
     pub fn chord(&mut self, modifiers: &[u32], key: u32) -> Result<(), Failure> {
         for modifier in modifiers {
-            modifier_name(*modifier).ok_or_else(|| failure("INVALID_ARGUMENT", format!("Unsupported modifier {modifier:#x}")))?;
+            modifier_name(*modifier)
+                .ok_or_else(|| failure("INVALID_ARGUMENT", format!("Unsupported modifier {modifier:#x}")))?;
         }
         let mut keysyms = modifiers.to_vec();
         keysyms.push(key);
@@ -236,7 +278,10 @@ impl VirtualKeyboard {
     pub fn text(&mut self, text: &str) -> Result<(), Failure> {
         let keysyms: Vec<u32> = text
             .chars()
-            .map(|c| char_keysym(c).ok_or_else(|| failure("INVALID_ARGUMENT", format!("Cannot type control character {c:?}"))))
+            .map(|c| {
+                char_keysym(c)
+                    .ok_or_else(|| failure("INVALID_ARGUMENT", format!("Cannot type control character {c:?}")))
+            })
             .collect::<Result<_, _>>()?;
         self.keyboard.modifiers(0, 0, 0, 0);
         let mut sent = false;
@@ -295,11 +340,21 @@ pub fn active_window() -> Result<Option<ActiveWindow>, Failure> {
     let unavailable = |e: String| failure("TARGET_UNAVAILABLE", format!("Compositor IPC failed: {e}"));
     if let Ok(path) = std::env::var("SWAYSOCK") {
         let tree = sway_request(&path, 4).map_err(unavailable)?;
-        return Ok(Some(focused_sway_node(&tree).unwrap_or(ActiveWindow { pid: None, title: String::new(), rect: None })));
+        return Ok(Some(focused_sway_node(&tree).unwrap_or(ActiveWindow {
+            pid: None,
+            title: String::new(),
+            rect: None,
+        })));
     }
     if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
         let window = hyprland_request("j/activewindow").map_err(unavailable)?;
-        let pair = |name: &str| window.get(name).and_then(Value::as_array).filter(|v| v.len() == 2).map(|v| (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0)));
+        let pair = |name: &str| {
+            window
+                .get(name)
+                .and_then(Value::as_array)
+                .filter(|v| v.len() == 2)
+                .map(|v| (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0)))
+        };
         return Ok(Some(ActiveWindow {
             pid: window.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()),
             title: window.get("title").and_then(Value::as_str).unwrap_or_default().to_owned(),
@@ -313,7 +368,8 @@ pub fn active_window() -> Result<Option<ActiveWindow>, Failure> {
 pub fn hyprland_request(command: &str) -> Result<Value, String> {
     let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|e| e.to_string())?;
     let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|e| e.to_string())?;
-    let mut stream = UnixStream::connect(format!("{runtime}/hypr/{signature}/.socket.sock")).map_err(|e| e.to_string())?;
+    let mut stream =
+        UnixStream::connect(format!("{runtime}/hypr/{signature}/.socket.sock")).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
     stream.write_all(command.as_bytes()).map_err(|e| e.to_string())?;
     let mut reply = String::new();
@@ -339,7 +395,9 @@ pub fn sway_request(path: &str, kind: u32) -> Result<Value, String> {
 
 fn focused_sway_node(node: &Value) -> Option<ActiveWindow> {
     if node.get("focused").and_then(Value::as_bool) == Some(true) && node.get("pid").is_some() {
-        let rect = node.get("rect").map(|r| ["x", "y", "width", "height"].map(|k| r.get(k).and_then(Value::as_i64).unwrap_or(0)));
+        let rect = node
+            .get("rect")
+            .map(|r| ["x", "y", "width", "height"].map(|k| r.get(k).and_then(Value::as_i64).unwrap_or(0)));
         return Some(ActiveWindow {
             pid: node.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()),
             title: node.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),

@@ -11,7 +11,9 @@ use wayland_client::{
     protocol::{wl_output, wl_pointer, wl_registry, wl_seat},
 };
 use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1};
-use wayland_protocols_wlr::virtual_pointer::v1::client::{zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1, zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1};
+use wayland_protocols_wlr::virtual_pointer::v1::client::{
+    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1, zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+};
 
 use crate::keyboard::Failure;
 
@@ -69,19 +71,50 @@ struct State {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 impl Dispatch<wl_output::WlOutput, ()> for State {
-    fn event(_: &mut Self, _: &wl_output::WlOutput, _: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_output::WlOutput,
+        _: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ZxdgOutputManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &ZxdgOutputManagerV1, _: <ZxdgOutputManagerV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZxdgOutputManagerV1,
+        _: <ZxdgOutputManagerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zxdg_output_v1::ZxdgOutputV1, usize> for State {
-    fn event(state: &mut Self, _: &zxdg_output_v1::ZxdgOutputV1, event: zxdg_output_v1::Event, index: &usize, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &zxdg_output_v1::ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         let output = &mut state.outputs[*index];
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => (output.0, output.1) = (x, y),
@@ -91,16 +124,33 @@ impl Dispatch<zxdg_output_v1::ZxdgOutputV1, usize> for State {
     }
 }
 impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &ZwlrVirtualPointerManagerV1, _: <ZwlrVirtualPointerManagerV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerManagerV1,
+        _: <ZwlrVirtualPointerManagerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ZwlrVirtualPointerV1, ()> for State {
-    fn event(_: &mut Self, _: &ZwlrVirtualPointerV1, _: <ZwlrVirtualPointerV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerV1,
+        _: <ZwlrVirtualPointerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 /// Reads the current output layout over a connection of its own, so outputs
 /// added or moved since the pointer was created are seen.
 pub fn read_layout() -> Result<Layout, Failure> {
-    let unavailable = |e: String| failure("DEPENDENCY_MISSING", format!("The compositor does not report output positions: {e}"));
+    let unavailable =
+        |e: String| failure("DEPENDENCY_MISSING", format!("The compositor does not report output positions: {e}"));
     let connection = Connection::connect_to_env().map_err(|e| unavailable(e.to_string()))?;
     let (globals, mut queue) = registry_queue_init::<State>(&connection).map_err(|e| unavailable(e.to_string()))?;
     let handle = queue.handle();
@@ -128,14 +178,23 @@ pub struct VirtualPointer {
 
 impl VirtualPointer {
     pub fn connect() -> Result<Self, Failure> {
-        let unavailable = |e: String| failure("DEPENDENCY_MISSING", format!("The compositor offers no virtual pointer: {e}"));
+        let unavailable =
+            |e: String| failure("DEPENDENCY_MISSING", format!("The compositor offers no virtual pointer: {e}"));
         let connection = Connection::connect_to_env().map_err(|e| unavailable(e.to_string()))?;
         let (globals, queue) = registry_queue_init::<State>(&connection).map_err(|e| unavailable(e.to_string()))?;
         let handle = queue.handle();
         let seat: wl_seat::WlSeat = globals.bind(&handle, 1..=1, ()).map_err(|e| unavailable(e.to_string()))?;
-        let manager: ZwlrVirtualPointerManagerV1 = globals.bind(&handle, 1..=2, ()).map_err(|e| unavailable(e.to_string()))?;
+        let manager: ZwlrVirtualPointerManagerV1 =
+            globals.bind(&handle, 1..=2, ()).map_err(|e| unavailable(e.to_string()))?;
         let pointer = manager.create_virtual_pointer(Some(&seat), &handle, ());
-        let mut device = VirtualPointer { _connection: connection, queue, pointer, layout: None, held: Vec::new(), start: Instant::now() };
+        let mut device = VirtualPointer {
+            _connection: connection,
+            queue,
+            pointer,
+            layout: None,
+            held: Vec::new(),
+            start: Instant::now(),
+        };
         device.sync()?;
         // A seat without any pointer gains the capability only now, and clients bind
         // their wl_pointer asynchronously: events sent before that are lost. The
@@ -150,10 +209,11 @@ impl VirtualPointer {
 
     /// Waits until the compositor has handled everything sent so far.
     fn sync(&mut self) -> Result<(), Failure> {
-        self.queue
-            .roundtrip(&mut State::default())
-            .map(|_| ())
-            .map_err(|e| Failure { code: "TARGET_UNAVAILABLE", message: format!("Wayland connection lost: {e}"), sent: true })
+        self.queue.roundtrip(&mut State::default()).map(|_| ()).map_err(|e| Failure {
+            code: "TARGET_UNAVAILABLE",
+            message: format!("Wayland connection lost: {e}"),
+            sent: true,
+        })
     }
 
     /// Moves the pointer to a point in layout coordinates. The layout is read again
@@ -163,7 +223,9 @@ impl VirtualPointer {
             self.layout = Some(read_layout()?);
         }
         let layout = self.layout.unwrap();
-        let (x, y, width, height) = layout.motion(x, y).ok_or_else(|| failure("INVALID_ARGUMENT", format!("({x}, {y}) is outside the outputs")))?;
+        let (x, y, width, height) = layout
+            .motion(x, y)
+            .ok_or_else(|| failure("INVALID_ARGUMENT", format!("({x}, {y}) is outside the outputs")))?;
         self.pointer.motion_absolute(self.time(), x, y, width, height);
         self.pointer.frame();
         self.sync()

@@ -64,20 +64,30 @@ impl Keyboard {
             CreateSessionOptions, PersistMode,
             remote_desktop::{ConnectToEISOptions, DeviceType, RemoteDesktop, SelectDevicesOptions, StartOptions},
         };
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| failure("DEPENDENCY_MISSING", e.to_string()))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| failure("DEPENDENCY_MISSING", e.to_string()))?;
         let (session, fd) = runtime
             .block_on(async {
                 let portal = RemoteDesktop::new().await?;
                 let session = portal.create_session(CreateSessionOptions::default()).await?;
                 portal
-                    .select_devices(&session, SelectDevicesOptions::default().set_devices(ashpd::enumflags2::BitFlags::from(DeviceType::Keyboard)).set_persist_mode(PersistMode::DoNot))
+                    .select_devices(
+                        &session,
+                        SelectDevicesOptions::default()
+                            .set_devices(ashpd::enumflags2::BitFlags::from(DeviceType::Keyboard))
+                            .set_persist_mode(PersistMode::DoNot),
+                    )
                     .await?;
                 portal.start(&session, None, StartOptions::default()).await?.response()?;
                 let fd = portal.connect_to_eis(&session, ConnectToEISOptions::default()).await?;
                 Ok::<_, ashpd::Error>((session, fd))
             })
             .map_err(|error| match error {
-                ashpd::Error::Response(_) => failure("PERMISSION_REQUIRED", "Remote input was not allowed in the system dialog"),
+                ashpd::Error::Response(_) => {
+                    failure("PERMISSION_REQUIRED", "Remote input was not allowed in the system dialog")
+                }
                 other => failure("DEPENDENCY_MISSING", format!("The RemoteDesktop portal is unavailable: {other}")),
             })?;
         Self::connect(Grant::Portal { runtime, session: Box::new(session) }, fd)
@@ -86,11 +96,24 @@ impl Keyboard {
     /// Uses Mutter's RemoteDesktop API without a dialog. Only for isolated test
     /// sessions; the caller must have checked the test opt-in.
     pub fn grant_mutter_for_test() -> Result<Self, Failure> {
-        let unavailable = |e: zbus::Error| failure("DEPENDENCY_MISSING", format!("Mutter RemoteDesktop is unavailable: {e}"));
+        let unavailable =
+            |e: zbus::Error| failure("DEPENDENCY_MISSING", format!("Mutter RemoteDesktop is unavailable: {e}"));
         let bus = zbus::blocking::Connection::session().map_err(unavailable)?;
-        let service = zbus::blocking::Proxy::new(&bus, "org.gnome.Mutter.RemoteDesktop", "/org/gnome/Mutter/RemoteDesktop", "org.gnome.Mutter.RemoteDesktop").map_err(unavailable)?;
+        let service = zbus::blocking::Proxy::new(
+            &bus,
+            "org.gnome.Mutter.RemoteDesktop",
+            "/org/gnome/Mutter/RemoteDesktop",
+            "org.gnome.Mutter.RemoteDesktop",
+        )
+        .map_err(unavailable)?;
         let path: zbus::zvariant::OwnedObjectPath = service.call("CreateSession", &()).map_err(unavailable)?;
-        let session = zbus::blocking::Proxy::new(&bus, "org.gnome.Mutter.RemoteDesktop", path, "org.gnome.Mutter.RemoteDesktop.Session").map_err(unavailable)?;
+        let session = zbus::blocking::Proxy::new(
+            &bus,
+            "org.gnome.Mutter.RemoteDesktop",
+            path,
+            "org.gnome.Mutter.RemoteDesktop.Session",
+        )
+        .map_err(unavailable)?;
         session.call::<_, _, ()>("Start", &()).map_err(unavailable)?;
         let options: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
         let fd: zbus::zvariant::OwnedFd = session.call("ConnectToEIS", &(options,)).map_err(unavailable)?;
@@ -100,8 +123,9 @@ impl Keyboard {
     fn connect(grant: Grant, fd: OwnedFd) -> Result<Self, Failure> {
         let stream = UnixStream::from(fd);
         let context = ei::Context::new(stream).map_err(|e| failure("TARGET_UNAVAILABLE", e.to_string()))?;
-        let handshake = reis::handshake::ei_handshake_blocking(&context, "open-computer-use", ei::handshake::ContextType::Sender)
-            .map_err(|e| failure("TARGET_UNAVAILABLE", format!("EIS handshake failed: {e}")))?;
+        let handshake =
+            reis::handshake::ei_handshake_blocking(&context, "open-computer-use", ei::handshake::ContextType::Sender)
+                .map_err(|e| failure("TARGET_UNAVAILABLE", format!("EIS handshake failed: {e}")))?;
         let mut keyboard = Keyboard {
             _grant: grant,
             context,
@@ -146,7 +170,9 @@ impl Keyboard {
     fn pump(&mut self, timeout: Duration) -> Result<(), Failure> {
         let mut poll = libc::pollfd { fd: self.context.as_raw_fd(), events: libc::POLLIN, revents: 0 };
         let ready = unsafe { libc::poll(&mut poll, 1, timeout.as_millis() as i32) };
-        if ready > 0 && self.context.read().map_err(|e| failure("TARGET_UNAVAILABLE", format!("EIS connection lost: {e}")))? == 0 {
+        if ready > 0
+            && self.context.read().map_err(|e| failure("TARGET_UNAVAILABLE", format!("EIS connection lost: {e}")))? == 0
+        {
             return Err(failure("TARGET_UNAVAILABLE", "The compositor closed the EIS connection"));
         }
         while let Some(result) = self.context.pending_event() {
@@ -161,7 +187,10 @@ impl Keyboard {
         match event {
             ei::Event::Connection(_, ei::connection::Event::Ping { ping }) => ping.done(0),
             ei::Event::Connection(_, ei::connection::Event::Disconnected { explanation, .. }) => {
-                return Err(failure("TARGET_UNAVAILABLE", format!("The compositor ended remote input: {}", explanation.unwrap_or_default())));
+                return Err(failure(
+                    "TARGET_UNAVAILABLE",
+                    format!("The compositor ended remote input: {}", explanation.unwrap_or_default()),
+                ));
             }
             ei::Event::Seat(_, ei::seat::Event::Capability { mask, interface }) => {
                 if interface == "ei_keyboard" {
@@ -196,7 +225,10 @@ impl Keyboard {
             },
             ei::Event::Keyboard(_, ei::keyboard::Event::Keymap { size, keymap, .. }) => {
                 let mut text = Vec::with_capacity(size as usize);
-                File::from(keymap).take(size as u64).read_to_end(&mut text).map_err(|e| failure("TARGET_UNAVAILABLE", e.to_string()))?;
+                File::from(keymap)
+                    .take(size as u64)
+                    .read_to_end(&mut text)
+                    .map_err(|e| failure("TARGET_UNAVAILABLE", e.to_string()))?;
                 self.keymap = Some(Keymap::parse(&text).map_err(|e| failure("DEPENDENCY_MISSING", e))?);
             }
             ei::Event::Keyboard(_, ei::keyboard::Event::Modifiers { serial, locked, group, .. }) => {
@@ -281,11 +313,23 @@ impl Keyboard {
         self.pump(Duration::ZERO)?;
         let mut codes = Vec::new();
         for modifier in modifiers {
-            codes.push(self.resolve(*modifier).ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", format!("The keyboard layout has no modifier {modifier:#x}")))?.code);
+            codes.push(
+                self.resolve(*modifier)
+                    .ok_or_else(|| {
+                        failure("UNSUPPORTED_CAPABILITY", format!("The keyboard layout has no modifier {modifier:#x}"))
+                    })?
+                    .code,
+            );
         }
-        let key = self.resolve(keysym).ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", format!("The keyboard layout has no key {keysym:#x}")))?;
+        let key = self
+            .resolve(keysym)
+            .ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", format!("The keyboard layout has no key {keysym:#x}")))?;
         if key.shift && !modifiers.contains(&SHIFT_L) {
-            codes.push(self.resolve(SHIFT_L).ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", "The keyboard layout has no Shift key"))?.code);
+            codes.push(
+                self.resolve(SHIFT_L)
+                    .ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", "The keyboard layout has no Shift key"))?
+                    .code,
+            );
         }
         self.send(&codes, key.code)
     }
@@ -294,7 +338,10 @@ impl Keyboard {
     pub fn text(&mut self, text: &str) -> Result<(), Failure> {
         let missing = self.missing(text)?;
         if !missing.is_empty() {
-            return Err(failure("UNSUPPORTED_CAPABILITY", format!("The keyboard layout cannot type {:?}", missing.iter().collect::<String>())));
+            return Err(failure(
+                "UNSUPPORTED_CAPABILITY",
+                format!("The keyboard layout cannot type {:?}", missing.iter().collect::<String>()),
+            ));
         }
         let keymap = self.keymap.as_ref().unwrap();
         if keymap.caps_locked(self.locked) && text.chars().any(char::is_alphabetic) {
@@ -357,10 +404,11 @@ impl Keyboard {
 impl Drop for Keyboard {
     fn drop(&mut self) {
         self.release_all();
-        if let Grant::Portal { runtime, session } = &mut self._grant {
-            if let Some(session) = session.downcast_mut::<ashpd::desktop::Session<ashpd::desktop::remote_desktop::RemoteDesktop>>() {
-                let _ = runtime.block_on(session.close());
-            }
+        if let Grant::Portal { runtime, session } = &mut self._grant
+            && let Some(session) =
+                session.downcast_mut::<ashpd::desktop::Session<ashpd::desktop::remote_desktop::RemoteDesktop>>()
+        {
+            let _ = runtime.block_on(session.close());
         }
     }
 }

@@ -3,7 +3,10 @@
 
 use std::{ffi::CString, os::raw::c_char};
 
-use xkbcommon_dl::{XkbCommon, xkb_context, xkb_context_flags, xkb_keymap, xkb_keymap_compile_flags, xkb_keymap_format, xkbcommon_option};
+use xkbcommon_dl::{
+    XkbCommon, xkb_context, xkb_context_flags, xkb_keymap, xkb_keymap_compile_flags, xkb_keymap_format,
+    xkbcommon_option,
+};
 
 pub const SHIFT_L: u32 = 0xffe1;
 const RETURN: u32 = 0xff0d;
@@ -32,7 +35,12 @@ impl Keymap {
             if context.is_null() {
                 return Err("cannot create an XKB context".into());
             }
-            let keymap = (lib.xkb_keymap_new_from_string)(context, text.as_ptr(), xkb_keymap_format::XKB_KEYMAP_FORMAT_TEXT_V1, xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS);
+            let keymap = (lib.xkb_keymap_new_from_string)(
+                context,
+                text.as_ptr(),
+                xkb_keymap_format::XKB_KEYMAP_FORMAT_TEXT_V1,
+                xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS,
+            );
             if keymap.is_null() {
                 (lib.xkb_context_unref)(context);
                 return Err("the compositor sent a keymap libxkbcommon cannot compile".into());
@@ -58,7 +66,8 @@ impl Keymap {
     /// Finds a key producing the keysym in the active layout at level 1 or 2;
     /// higher levels need layout-specific modifiers and are not attempted.
     fn find(&self, layout: u32, matches: impl Fn(u32) -> bool) -> Option<Key> {
-        let (min, max) = unsafe { ((self.lib.xkb_keymap_min_keycode)(self.keymap), (self.lib.xkb_keymap_max_keycode)(self.keymap)) };
+        let (min, max) =
+            unsafe { ((self.lib.xkb_keymap_min_keycode)(self.keymap), (self.lib.xkb_keymap_max_keycode)(self.keymap)) };
         for level in 0..2 {
             for code in min..=max {
                 let layouts = unsafe { (self.lib.xkb_keymap_num_layouts_for_key)(self.keymap, code) };

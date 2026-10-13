@@ -73,14 +73,25 @@ pub fn run() -> Probe {
         },
         wayland: wayland(),
         portal: portal(),
-        compositor: Compositor { sway: var("SWAYSOCK").is_some(), hyprland: var("HYPRLAND_INSTANCE_SIGNATURE").is_some() },
+        compositor: Compositor {
+            sway: var("SWAYSOCK").is_some(),
+            hyprland: var("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+        },
     }
 }
 
 struct Registry;
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Registry {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 fn wayland() -> Wayland {
@@ -104,12 +115,20 @@ fn wayland() -> Wayland {
 }
 
 fn portal() -> Portal {
-    let connection = match zbus::blocking::connection::Builder::session().and_then(|builder| builder.method_timeout(Duration::from_secs(3)).build()) {
+    let connection = match zbus::blocking::connection::Builder::session()
+        .and_then(|builder| builder.method_timeout(Duration::from_secs(3)).build())
+    {
         Ok(connection) => connection,
         Err(error) => return Portal { error: Some(error.to_string()), ..Default::default() },
     };
     let read = |interface: &str, types: &str| -> Option<PortalInterface> {
-        let proxy = zbus::blocking::Proxy::new(&connection, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", interface).ok()?;
+        let proxy = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            interface,
+        )
+        .ok()?;
         Some(PortalInterface { version: proxy.get_property("version").ok()?, types: proxy.get_property(types).ok()? })
     };
     Portal {

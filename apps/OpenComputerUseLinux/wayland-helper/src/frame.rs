@@ -65,7 +65,13 @@ mod tests {
 
     #[test]
     fn rejects_malformed_headers() {
-        for input in ["Content-Length: x\r\n\r\n", "Content-Length: 5\n\n", "\r\n", "Content-Length: 1\r\nContent-Length: 1\r\n\r\n", "Content-Length: 4\r\n"] {
+        for input in [
+            "Content-Length: x\r\n\r\n",
+            "Content-Length: 5\n\n",
+            "\r\n",
+            "Content-Length: 1\r\nContent-Length: 1\r\n\r\n",
+            "Content-Length: 4\r\n",
+        ] {
             assert!(read(&mut io::Cursor::new(input.as_bytes())).is_err(), "{input:?}");
         }
     }

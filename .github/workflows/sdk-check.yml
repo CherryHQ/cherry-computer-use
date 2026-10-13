@@ -102,6 +102,9 @@ jobs:
       - if: runner.os == 'Linux'
         working-directory: apps/OpenComputerUseLinux
         run: |
+          unformatted=$(gofmt -l .)
+          [ -z "$unformatted" ] || { echo "gofmt needed: $unformatted"; exit 1; }
+          go vet ./...
           go test ./...
           go build -o ../../dist/native/open-computer-use .
       - if: runner.os == 'Linux'
@@ -109,6 +112,8 @@ jobs:
         working-directory: apps/OpenComputerUseLinux/wayland-helper
         run: |
           cargo --version
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           cargo build --locked --release
           ls -l target/release/open-computer-use-wayland

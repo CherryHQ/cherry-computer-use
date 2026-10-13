@@ -17,7 +17,9 @@ use wayland_client::{
     protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool},
 };
 use wayland_protocols_wlr::{
-    foreign_toplevel::v1::client::{zwlr_foreign_toplevel_handle_v1 as toplevel, zwlr_foreign_toplevel_manager_v1 as toplevel_manager},
+    foreign_toplevel::v1::client::{
+        zwlr_foreign_toplevel_handle_v1 as toplevel, zwlr_foreign_toplevel_manager_v1 as toplevel_manager,
+    },
     screencopy::v1::client::{zwlr_screencopy_frame_v1, zwlr_screencopy_manager_v1},
 };
 
@@ -36,7 +38,9 @@ pub mod hyprland_export {
     use self::__interfaces::*;
     wayland_scanner::generate_client_code!("protocols/hyprland-toplevel-export-v1.xml");
 }
-use hyprland_export::{hyprland_toplevel_export_frame_v1 as export_frame, hyprland_toplevel_export_manager_v1 as export_manager};
+use hyprland_export::{
+    hyprland_toplevel_export_frame_v1 as export_frame, hyprland_toplevel_export_manager_v1 as export_manager,
+};
 
 fn failure(code: &'static str, message: impl Into<String>) -> Failure {
     Failure { code, message: message.into(), sent: false }
@@ -71,7 +75,13 @@ fn intersects(a: [i64; 4], b: [i64; 4]) -> bool {
 }
 
 /// Collects Sway views with their output and workspace.
-fn sway_views(node: &Value, output: Option<(&str, [i64; 4])>, workspace: Option<&str>, floating: bool, views: &mut Vec<(Window, String, bool)>) {
+fn sway_views(
+    node: &Value,
+    output: Option<(&str, [i64; 4])>,
+    workspace: Option<&str>,
+    floating: bool,
+    views: &mut Vec<(Window, String, bool)>,
+) {
     let kind = node.get("type").and_then(Value::as_str).unwrap_or_default();
     let name = node.get("name").and_then(Value::as_str);
     let output = if kind == "output" { name.map(|n| (n, rect(node.get("rect")))) } else { output };
@@ -86,7 +96,11 @@ fn sway_views(node: &Value, output: Option<(&str, [i64; 4])>, workspace: Option<
             Window {
                 pid: pid as u32,
                 title: name.unwrap_or_default().to_owned(),
-                rect: if content_width > 0 && content_height > 0 { [x + dx, y + dy, content_width, content_height] } else { [x, y, width, height] },
+                rect: if content_width > 0 && content_height > 0 {
+                    [x + dx, y + dy, content_width, content_height]
+                } else {
+                    [x, y, width, height]
+                },
                 frame: [x, y - title_bar, width, height + title_bar],
                 focused: node.get("focused").and_then(Value::as_bool) == Some(true),
                 visible: node.get("visible").and_then(Value::as_bool) == Some(true),
@@ -116,7 +130,13 @@ fn sway_windows(tree: &Value) -> Vec<Window> {
             // Tiled views never overlap; floating views may cover anything on their workspace.
             window.overlapping = views
                 .iter()
-                .filter(|(other, other_ws, other_floating)| *other_floating && other_ws == workspace && other.visible && *other != window && intersects(other.frame, window.rect))
+                .filter(|(other, other_ws, other_floating)| {
+                    *other_floating
+                        && other_ws == workspace
+                        && other.visible
+                        && *other != window
+                        && intersects(other.frame, window.rect)
+                })
                 .map(|(other, _, _)| other.frame)
                 .collect();
             window
@@ -130,16 +150,26 @@ fn hyprland_windows(clients: &Value, active: Option<u64>) -> Vec<Window> {
         .into_iter()
         .flatten()
         .filter_map(|client| {
-            let pair = |name: &str| client.get(name).and_then(Value::as_array).filter(|v| v.len() == 2).map(|v| (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0)));
+            let pair = |name: &str| {
+                client
+                    .get(name)
+                    .and_then(Value::as_array)
+                    .filter(|v| v.len() == 2)
+                    .map(|v| (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0)))
+            };
             let ((x, y), (w, h)) = pair("at").zip(pair("size"))?;
-            let address = client.get("address").and_then(Value::as_str).and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok());
+            let address = client
+                .get("address")
+                .and_then(Value::as_str)
+                .and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok());
             Some(Window {
                 pid: client.get("pid").and_then(Value::as_u64)? as u32,
                 title: client.get("title").and_then(Value::as_str).unwrap_or_default().to_owned(),
                 rect: [x, y, w, h],
                 frame: [x, y, w, h],
                 focused: address.is_some() && address == active,
-                visible: client.get("mapped").and_then(Value::as_bool) == Some(true) && client.get("hidden").and_then(Value::as_bool) != Some(true),
+                visible: client.get("mapped").and_then(Value::as_bool) == Some(true)
+                    && client.get("hidden").and_then(Value::as_bool) != Some(true),
                 address,
                 output: None,
                 output_rect: None,
@@ -158,7 +188,10 @@ pub fn windows() -> Result<Option<Vec<Window>>, Failure> {
     if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
         let clients = wlr::hyprland_request("j/clients").map_err(unavailable)?;
         let active = wlr::hyprland_request("j/activewindow").map_err(unavailable)?;
-        let active = active.get("address").and_then(Value::as_str).and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok());
+        let active = active
+            .get("address")
+            .and_then(Value::as_str)
+            .and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok());
         return Ok(Some(hyprland_windows(&clients, active)));
     }
     Ok(None)
@@ -166,9 +199,12 @@ pub fn windows() -> Result<Option<Vec<Window>>, Failure> {
 
 /// The one window of pid titled title; several matches are refused, as on X11.
 pub fn find(pid: u32, title: &str) -> Result<Window, Failure> {
-    let windows = windows()?.ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", "This compositor has no window IPC the helper knows"))?;
+    let windows = windows()?
+        .ok_or_else(|| failure("UNSUPPORTED_CAPABILITY", "This compositor has no window IPC the helper knows"))?;
     let mut matches = windows.into_iter().filter(|w| w.pid == pid && w.title == title);
-    let window = matches.next().ok_or_else(|| failure("TARGET_UNAVAILABLE", "The compositor lists no window with this process and title"))?;
+    let window = matches
+        .next()
+        .ok_or_else(|| failure("TARGET_UNAVAILABLE", "The compositor lists no window with this process and title"))?;
     if matches.next().is_some() {
         return Err(failure("TARGET_UNAVAILABLE", "Several windows share this process and title"));
     }
@@ -208,28 +244,66 @@ struct Capture {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Capture {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_shm::WlShm, ()> for Capture {
     fn event(_: &mut Self, _: &wl_shm::WlShm, _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 impl Dispatch<wl_shm_pool::WlShmPool, ()> for Capture {
-    fn event(_: &mut Self, _: &wl_shm_pool::WlShmPool, _: wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_shm_pool::WlShmPool,
+        _: wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_buffer::WlBuffer, ()> for Capture {
-    fn event(_: &mut Self, _: &wl_buffer::WlBuffer, _: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_buffer::WlBuffer,
+        _: wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_output::WlOutput, ()> for Capture {
-    fn event(state: &mut Self, output: &wl_output::WlOutput, event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let wl_output::Event::Name { name } = event {
-            if let Some(entry) = state.outputs.iter_mut().find(|(o, _)| o == output) {
-                entry.1 = Some(name);
-            }
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Name { name } = event
+            && let Some(entry) = state.outputs.iter_mut().find(|(o, _)| o == output)
+        {
+            entry.1 = Some(name);
         }
     }
 }
 impl Dispatch<toplevel_manager::ZwlrForeignToplevelManagerV1, ()> for Capture {
-    fn event(state: &mut Self, _: &toplevel_manager::ZwlrForeignToplevelManagerV1, event: toplevel_manager::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &toplevel_manager::ZwlrForeignToplevelManagerV1,
+        event: toplevel_manager::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let toplevel_manager::Event::Toplevel { toplevel } = event {
             state.toplevels.push((toplevel, String::new()));
         }
@@ -239,23 +313,49 @@ impl Dispatch<toplevel_manager::ZwlrForeignToplevelManagerV1, ()> for Capture {
     ]);
 }
 impl Dispatch<toplevel::ZwlrForeignToplevelHandleV1, ()> for Capture {
-    fn event(state: &mut Self, handle: &toplevel::ZwlrForeignToplevelHandleV1, event: toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let toplevel::Event::Title { title } = event {
-            if let Some(entry) = state.toplevels.iter_mut().find(|(h, _)| h == handle) {
-                entry.1 = title;
-            }
+    fn event(
+        state: &mut Self,
+        handle: &toplevel::ZwlrForeignToplevelHandleV1,
+        event: toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let toplevel::Event::Title { title } = event
+            && let Some(entry) = state.toplevels.iter_mut().find(|(h, _)| h == handle)
+        {
+            entry.1 = title;
         }
     }
 }
 impl Dispatch<export_manager::HyprlandToplevelExportManagerV1, ()> for Capture {
-    fn event(_: &mut Self, _: &export_manager::HyprlandToplevelExportManagerV1, _: export_manager::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &export_manager::HyprlandToplevelExportManagerV1,
+        _: export_manager::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<export_frame::HyprlandToplevelExportFrameV1, ()> for Capture {
-    fn event(state: &mut Self, _: &export_frame::HyprlandToplevelExportFrameV1, event: export_frame::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &export_frame::HyprlandToplevelExportFrameV1,
+        event: export_frame::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
-            export_frame::Event::Buffer { format: WEnum::Value(format), width, height, stride } => state.buffer = Some((format as u32, width, height, stride)),
+            export_frame::Event::Buffer { format: WEnum::Value(format), width, height, stride } => {
+                state.buffer = Some((format as u32, width, height, stride))
+            }
             export_frame::Event::BufferDone => state.buffer_done = true,
-            export_frame::Event::Flags { flags: WEnum::Value(flags) } => state.y_invert = flags.contains(export_frame::Flags::YInvert),
+            export_frame::Event::Flags { flags: WEnum::Value(flags) } => {
+                state.y_invert = flags.contains(export_frame::Flags::YInvert)
+            }
             export_frame::Event::Ready { .. } => state.ready = true,
             export_frame::Event::Failed => state.failed = true,
             _ => {}
@@ -263,14 +363,33 @@ impl Dispatch<export_frame::HyprlandToplevelExportFrameV1, ()> for Capture {
     }
 }
 impl Dispatch<zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1, ()> for Capture {
-    fn event(_: &mut Self, _: &zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1, _: zwlr_screencopy_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+        _: zwlr_screencopy_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for Capture {
-    fn event(state: &mut Self, _: &zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, event: zwlr_screencopy_frame_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
+        event: zwlr_screencopy_frame_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
-            zwlr_screencopy_frame_v1::Event::Buffer { format: WEnum::Value(format), width, height, stride } => state.buffer = Some((format as u32, width, height, stride)),
+            zwlr_screencopy_frame_v1::Event::Buffer { format: WEnum::Value(format), width, height, stride } => {
+                state.buffer = Some((format as u32, width, height, stride))
+            }
             zwlr_screencopy_frame_v1::Event::BufferDone => state.buffer_done = true,
-            zwlr_screencopy_frame_v1::Event::Flags { flags: WEnum::Value(flags) } => state.y_invert = flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert),
+            zwlr_screencopy_frame_v1::Event::Flags { flags: WEnum::Value(flags) } => {
+                state.y_invert = flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert)
+            }
             zwlr_screencopy_frame_v1::Event::Ready { .. } => state.ready = true,
             zwlr_screencopy_frame_v1::Event::Failed => state.failed = true,
             _ => {}
@@ -293,8 +412,14 @@ fn wait(queue: &mut EventQueue<Capture>, state: &mut Capture, done: impl Fn(&Cap
 }
 
 /// Copies a frame offered as wl_shm into memory, once the compositor described it.
-fn copy_shm(queue: &mut EventQueue<Capture>, state: &mut Capture, shm: &wl_shm::WlShm, request: impl FnOnce(&wl_buffer::WlBuffer)) -> Result<Image, Failure> {
-    let (format, width, height, stride) = state.buffer.ok_or_else(|| failure("CAPTURE_FAILED", "The compositor offered no shared-memory buffer"))?;
+fn copy_shm(
+    queue: &mut EventQueue<Capture>,
+    state: &mut Capture,
+    shm: &wl_shm::WlShm,
+    request: impl FnOnce(&wl_buffer::WlBuffer),
+) -> Result<Image, Failure> {
+    let (format, width, height, stride) =
+        state.buffer.ok_or_else(|| failure("CAPTURE_FAILED", "The compositor offered no shared-memory buffer"))?;
     if format > 1 {
         return Err(failure("CAPTURE_FAILED", format!("Unsupported pixel format {format}")));
     }
@@ -310,7 +435,15 @@ fn copy_shm(queue: &mut EventQueue<Capture>, state: &mut Capture, shm: &wl_shm::
     file.set_len(size as u64).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
     let handle = queue.handle();
     let pool = shm.create_pool(file.as_fd(), size as i32, &handle, ());
-    let buffer = pool.create_buffer(0, width as i32, height as i32, stride as i32, wl_shm::Format::try_from(format).unwrap_or(wl_shm::Format::Xrgb8888), &handle, ());
+    let buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        stride as i32,
+        wl_shm::Format::try_from(format).unwrap_or(wl_shm::Format::Xrgb8888),
+        &handle,
+        (),
+    );
     request(&buffer);
     let result = wait(queue, state, |s| s.ready);
     buffer.destroy();
@@ -327,24 +460,31 @@ pub fn capture(window: &Window) -> Result<Image, Failure> {
         return Err(failure("CAPTURE_FAILED", "The window is not visible"));
     }
     let connection = Connection::connect_to_env().map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
-    let (globals, mut queue) = registry_queue_init::<Capture>(&connection).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
+    let (globals, mut queue) =
+        registry_queue_init::<Capture>(&connection).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
     let handle = queue.handle();
     let mut state = Capture::default();
     let shm: wl_shm::WlShm = globals.bind(&handle, 1..=1, ()).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
     if let Some(address) = window.address {
-        let manager: export_manager::HyprlandToplevelExportManagerV1 =
-            globals.bind(&handle, 1..=2, ()).map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no window export"))?;
+        let manager: export_manager::HyprlandToplevelExportManagerV1 = globals
+            .bind(&handle, 1..=2, ())
+            .map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no window export"))?;
         // Version 2 names the window by its foreign-toplevel handle; match it by title,
         // which IPC already tied to the target process. Older versions take the low 32
         // bits of the window address.
         let frame = if manager.version() >= 2 {
-            let toplevels: toplevel_manager::ZwlrForeignToplevelManagerV1 =
-                globals.bind(&handle, 1..=3, ()).map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no toplevel list"))?;
+            let toplevels: toplevel_manager::ZwlrForeignToplevelManagerV1 = globals
+                .bind(&handle, 1..=3, ())
+                .map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no toplevel list"))?;
             queue.roundtrip(&mut state).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
             queue.roundtrip(&mut state).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
-            let matches: Vec<_> = state.toplevels.iter().filter(|(_, title)| *title == window.title).map(|(h, _)| h.clone()).collect();
+            let matches: Vec<_> =
+                state.toplevels.iter().filter(|(_, title)| *title == window.title).map(|(h, _)| h.clone()).collect();
             if matches.len() != 1 {
-                return Err(failure("CAPTURE_FAILED", format!("{} toplevels are titled like the target", matches.len())));
+                return Err(failure(
+                    "CAPTURE_FAILED",
+                    format!("{} toplevels are titled like the target", matches.len()),
+                ));
             }
             let frame = manager.capture_toplevel_with_wlr_toplevel_handle(0, &matches[0], &handle, ());
             let _ = toplevels;
@@ -361,18 +501,34 @@ pub fn capture(window: &Window) -> Result<Image, Failure> {
     if !window.overlapping.is_empty() {
         return Err(failure("CAPTURE_FAILED", "A floating window overlaps the target; an output region would show it"));
     }
-    let manager: zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1 =
-        globals.bind(&handle, 1..=3, ()).map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no screencopy"))?;
+    let manager: zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1 = globals
+        .bind(&handle, 1..=3, ())
+        .map_err(|_| failure("UNSUPPORTED_CAPABILITY", "The compositor offers no screencopy"))?;
     for global in globals.contents().clone_list().into_iter().filter(|g| g.interface == "wl_output") {
         let output: wl_output::WlOutput = globals.registry().bind(global.name, global.version.min(4), &handle, ());
         state.outputs.push((output, None));
     }
     queue.roundtrip(&mut state).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
     let wanted = window.output.clone().unwrap_or_default();
-    let output = state.outputs.iter().find(|(_, name)| name.as_deref() == Some(&wanted)).map(|(o, _)| o.clone()).ok_or_else(|| failure("CAPTURE_FAILED", "The window's output is not available"))?;
-    let origin = window.output_rect.ok_or_else(|| failure("CAPTURE_FAILED", "The window's output geometry is unknown"))?;
+    let output = state
+        .outputs
+        .iter()
+        .find(|(_, name)| name.as_deref() == Some(&wanted))
+        .map(|(o, _)| o.clone())
+        .ok_or_else(|| failure("CAPTURE_FAILED", "The window's output is not available"))?;
+    let origin =
+        window.output_rect.ok_or_else(|| failure("CAPTURE_FAILED", "The window's output geometry is unknown"))?;
     let [x, y, w, h] = window.rect;
-    let frame = manager.capture_output_region(0, &output, (x - origin[0]) as i32, (y - origin[1]) as i32, w as i32, h as i32, &handle, ());
+    let frame = manager.capture_output_region(
+        0,
+        &output,
+        (x - origin[0]) as i32,
+        (y - origin[1]) as i32,
+        w as i32,
+        h as i32,
+        &handle,
+        (),
+    );
     wait(&mut queue, &mut state, |s| s.buffer_done || s.buffer.is_some())?;
     let image = copy_shm(&mut queue, &mut state, &shm, |buffer| frame.copy(buffer));
     frame.destroy();
