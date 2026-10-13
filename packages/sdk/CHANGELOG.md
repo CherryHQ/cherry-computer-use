@@ -1,5 +1,13 @@
 # @cherrystudio/computer-use
 
+## 0.1.3
+
+### Patch Changes
+
+- [#12](https://github.com/CherryHQ/cherry-computer-use/pull/12) [`c749f60`](https://github.com/CherryHQ/cherry-computer-use/commit/c749f60239b20823dabc34795dde9fde3f9e6d1a) Thanks [@DeJeune](https://github.com/DeJeune)! - On GNOME Wayland, the Linux runtime can now capture windows and send pointer and keyboard input through the Cherry Computer Use GNOME Shell extension (GNOME 46–50). Install it with `open-computer-use install-gnome-extension` and log in again; `requestPermissions({ ids: ['gnomeShell'] })` then shows the Shell's dialog, and a top bar indicator stops desktop control at any time. The extension captures covered windows, clicks only when the target owns the point, sends keys only to the focus window, and types any Unicode into text-input clients. `getPermissionStatus` reports `gnomeShell` on GNOME. Without the extension, GNOME keeps the RemoteDesktop portal keyboard.
+
+- [#14](https://github.com/CherryHQ/cherry-computer-use/pull/14) [`2cee038`](https://github.com/CherryHQ/cherry-computer-use/commit/2cee0387d445f4b9055978d69a05dffc3ea5f7de) Thanks [@DeJeune](https://github.com/DeJeune)! - On KDE Plasma 6 (Wayland), the Linux runtime can now capture windows and send pointer and keyboard input through KWin. Run `open-computer-use install-kde-integration` once (no new login): it authorizes the runtime's helper for KWin's window capture and input. Clicks are pressed only once the cursor is at the point and the target is the topmost window there, so panels, notifications and other windows are detected; keys go only to the active target, and text the keyboard layout lacks is refused unless it goes into a focused text field. `getPermissionStatus` reports `kdeIntegration`.
+
 ## 0.1.2
 
 ### Patch Changes
