@@ -48,7 +48,7 @@ def request(method, args, token):
     sub = bus.signal_subscribe(PORTAL, "org.freedesktop.portal.Request", "Response", handle, None,
                                Gio.DBusSignalFlags.NO_MATCH_RULE, on_response)
     call(RD, method, args)
-    GLib.timeout_add_seconds(60, loop.quit)
+    GLib.timeout_add_seconds(20, loop.quit)
     loop.run()
     bus.signal_unsubscribe(sub)
     return result.get("code"), result.get("results", {})
@@ -192,6 +192,46 @@ try:
     report["after_keycode"] = text()
 except GLib.Error as e:
     report["error"] = e.message
+
+# The same pre-libei methods on Mutter's own RemoteDesktop session, which the
+# portal's GNOME backend forwards to once the user allows it.
+MUTTER = "org.gnome.Mutter.RemoteDesktop"
+try:
+    path = call(MUTTER, "CreateSession", None, path="/org/gnome/Mutter/RemoteDesktop", dest=MUTTER).unpack()[0]
+    mcall = lambda method, args: call(MUTTER + ".Session", method, args, path=path, dest=MUTTER)
+    mcall("Start", None)
+
+    def mkeysym(sym):
+        for pressed in (True, False):
+            mcall("NotifyKeyboardKeysym", GLib.Variant("(ub)", (sym, pressed)))
+            time.sleep(0.02)
+
+    mkeysym(0xffe1)  # Shift alone: GNOME adds the keyboard to the seat on its first key
+    time.sleep(0.3)
+    subprocess.run(["gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
+                    "--method", "org.gnome.Shell.Eval",
+                    "global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === 'Legacy Portal')"
+                    ".activate(global.get_current_time()); 'ok'"], capture_output=True)
+    app = next(a for a in apps() if a and a.get_process_id() == fixture.pid)
+    field = find(app, lambda n: n.get_name() == "Second field")
+    Atspi.EditableText.set_text_contents(field, "")
+    Atspi.Component.grab_focus(field)
+    time.sleep(0.5)
+    text = lambda: Atspi.Text.get_text(field, 0, Atspi.Text.get_character_count(field))
+    for sym in (0x68, 0x69):  # h i
+        mkeysym(sym)
+    time.sleep(0.5)
+    report["mutter_keysym"] = text()
+    mkeysym(0x01000000 | 0x4e2d)  # 中 has no key in the layout
+    time.sleep(0.5)
+    report["mutter_unicode"] = text()
+    for pressed in (True, False):  # evdev 30 is "a" on a US layout
+        mcall("NotifyKeyboardKeycode", GLib.Variant("(ub)", (30, pressed)))
+    time.sleep(0.5)
+    report["mutter_keycode"] = text()
+    mcall("Stop", None)
+except (GLib.Error, StopIteration) as e:
+    report["mutter_error"] = getattr(e, "message", repr(e))
 finally:
     fixture.kill()
 print(json.dumps(report, default=str))

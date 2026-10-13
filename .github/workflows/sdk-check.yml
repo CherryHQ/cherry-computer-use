@@ -275,23 +275,6 @@ jobs:
           cd apps/OpenComputerUseLinux
           XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh sh -c 'python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py; echo "--- shell log"; tail -25 "$OCU_GNOME_SESSION_ROOT/shell.log"' 2>&1 | grep -vE "dbus-daemon\[" | tail -45
 
-  legacy-portal-probe-debian-12:
-    if: github.event_name == 'workflow_dispatch'
-    name: Legacy portal probe (GNOME 43, debian-12)
-    runs-on: ubuntu-24.04
-    container: debian:12
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      - run: |
-          apt-get update
-          apt-get install -y --no-install-recommends gnome-shell xdg-desktop-portal xdg-desktop-portal-gnome at-spi2-core dbus dbus-x11 python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 libglib2.0-bin procps fuse3
-          gnome-shell --version
-          dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
-      - run: |
-          cd apps/OpenComputerUseLinux
-          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh sh -c 'python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py; echo "--- shell log"; tail -25 "$OCU_GNOME_SESSION_ROOT/shell.log"' 2>&1 | grep -vE "dbus-daemon\[" | tail -45
-
   linux-hyprland:
     name: Linux Hyprland (nested in headless labwc, ubuntu-26.04)
     runs-on: ubuntu-26.04
@@ -394,6 +377,9 @@ jobs:
           echo "before: $before; vgem: $vgem"
           [ -n "$vgem" ]
           [ "$vgem" = card1 ] || { sudo touch /dev/dri/card1; sudo mount --bind "/dev/dri/$vgem" /dev/dri/card1; }
+          # udev sets the new nodes' owner and mode after modprobe returns; wait
+          # for it, or it undoes the chmod.
+          sudo udevadm settle
           sudo chmod a+rw /dev/dri/*
           ls -l /dev/dri
       - name: Capture and input through KWin

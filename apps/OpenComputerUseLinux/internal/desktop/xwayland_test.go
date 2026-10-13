@@ -58,16 +58,16 @@ func TestXWaylandXTEST(t *testing.T) {
 	text := func(n Node) string { return n.Text }
 	name := func(n Node) string { return n.Name }
 
-	node, window := field()
-	target := GlobalTarget{PID: app.PID, Title: title, Window: window.Ref}
 	// Under GNOME, XWayland holds XTEST input for a portal dialog; the
 	// compositor's own route, which the GNOME tests cover, serves X11 windows.
 	if os.Getenv("OPEN_COMPUTER_USE_LINUX_GNOME_TEST") == "1" {
-		if engine.x11Input(ctx, target) {
+		if engine.x11Input(ctx, GlobalTarget{PID: app.PID, Title: title}) {
 			t.Fatal("XWayland windows under GNOME must not take XTEST input")
 		}
 		return
 	}
+	node, window := field()
+	target := GlobalTarget{PID: app.PID, Title: title, Window: window.Ref}
 	if !engine.x11Input(ctx, target) {
 		t.Fatal("an XWayland window in a Wayland session must take XTEST input when the caller allows it")
 	}
