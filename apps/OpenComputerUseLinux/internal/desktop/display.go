@@ -348,6 +348,23 @@ func (e *Engine) ElementCenter(ctx context.Context, target GlobalTarget, node No
 	if err != nil {
 		return Point{}, err
 	}
+	if e.x11Backend().HasWindow(ctx, target.native()) {
+		// XWayland windows report screen coordinates, XWayland's root coordinates;
+		// their window coordinates are unusable where the toolkit draws shadows
+		// inside the X window (GTK under Mutter). The root coordinates are the
+		// compositor's while the accessible window lies on the content it shows.
+		var frame, element struct{ X, Y, Width, Height int32 }
+		content := located.Bounds()
+		if err := e.call(ctx, target.Window, "Component.GetExtents", uint32(0)).Store(&frame); err != nil ||
+			math.Abs(float64(frame.X)-content.X) > 2 || math.Abs(float64(frame.Y)-content.Y) > 2 ||
+			math.Abs(float64(frame.Width)-content.Width) > 2 || math.Abs(float64(frame.Height)-content.Height) > 2 {
+			return Point{}, fail("TARGET_UNAVAILABLE", "The accessible X11 window is at %d,%d %dx%d but the compositor shows %.0f,%.0f %.0fx%.0f; element positions cannot be mapped", frame.X, frame.Y, frame.Width, frame.Height, content.X, content.Y, content.Width, content.Height)
+		}
+		if err := e.call(ctx, node.Ref, "Component.GetExtents", uint32(0)).Store(&element); err != nil || element.Width <= 0 || element.Height <= 0 {
+			return Point{}, fail("TARGET_UNAVAILABLE", "Element no longer has bounds")
+		}
+		return Point{X: float64(element.X) + float64(element.Width)/2, Y: float64(element.Y) + float64(element.Height)/2}, nil
+	}
 	// Toolkit window coordinates start at the client surface (on GNOME it includes
 	// client-side shadows). They map to the screen only while the accessible window
 	// has the surface's size; a pending resize would shift every point.

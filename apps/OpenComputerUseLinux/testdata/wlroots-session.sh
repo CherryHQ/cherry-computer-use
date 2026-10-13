@@ -7,7 +7,8 @@
 #   testdata/wlroots-session.sh hyprland <command...>
 #
 # sway runs headless with software rendering. Hyprland has no headless mode, so it
-# runs nested inside a headless labwc, which needs a GPU render node for dmabuf.
+# runs nested inside a headless labwc, which needs a DRM render node for dmabuf
+# (on a machine without a GPU, vgem with Mesa's software renderer will do).
 # Where a headless parent gives it no monitor, OCU_HYPRLAND_PARENT=wayland-0 nests
 # it in that display instead: a window appears there, but input still goes only to
 # the nested Hyprland's own seat.
@@ -99,6 +100,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# hold_seat <display> <name>: gives that compositor's seat a virtual keyboard and
+# pointer until the session ends (needs OPEN_COMPUTER_USE_WAYLAND_HELPER).
+hold_seat() {
+  mkfifo "$root/seat-$2"
+  python3 -c '
+import json, sys
+def call(method, **params):
+    body = json.dumps({"id": 1, "method": method, "params": params}).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
+call("hello", protocol=1)
+call("vkeyboard.prepare")
+call("vpointer.prepare")
+open(sys.argv[1]).read()
+' "$root/seat-$2" | WAYLAND_DISPLAY="$1" "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
+  pids="$pids $!"
+  sleep 1
+}
+
 # wait_for_socket <pid> <count>: until the runtime directory holds count Wayland
 # sockets, or the compositor exits. Prints the newest socket name.
 wait_for_socket() {
@@ -148,6 +168,11 @@ case "$compositor" in
       pids="$!"
       WAYLAND_DISPLAY=$(wait_for_socket "$!" 1)
       sockets=2
+      # Nested Hyprland creates its output only once the parent's seat has input
+      # devices, as a desktop's has.
+      [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ] && hold_seat "$WAYLAND_DISPLAY" parent
+      # labwc runs an XWayland of its own; Hyprland's is the one started next.
+      x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
     fi
     export WAYLAND_DISPLAY
     mkdir -p "$XDG_CONFIG_HOME/hypr"
@@ -192,23 +217,9 @@ pids="$pids $!"
 sleep 1
 # A headless compositor has no keyboard or pointer, and clients bind one only
 # after the seat gains it, losing input sent meanwhile. Hold a virtual keyboard
-# and pointer for the whole run, as physical devices do (needs
-# OPEN_COMPUTER_USE_WAYLAND_HELPER).
+# and pointer for the whole run, as physical devices do.
 if [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ]; then
-  mkfifo "$root/keyboard"
-  python3 -c '
-import json, sys
-def call(method, **params):
-    body = json.dumps({"id": 1, "method": method, "params": params}).encode()
-    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
-    sys.stdout.buffer.flush()
-call("hello", protocol=1)
-call("vkeyboard.prepare")
-call("vpointer.prepare")
-open(sys.argv[1]).read()
-' "$root/keyboard" | "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
-  pids="$pids $!"
-  sleep 1
+  hold_seat "$WAYLAND_DISPLAY" session
 fi
 backend=wayland
 if [ "$xwayland" = force ]; then

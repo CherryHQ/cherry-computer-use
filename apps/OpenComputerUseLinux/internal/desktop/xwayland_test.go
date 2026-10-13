@@ -23,15 +23,19 @@ func TestXWaylandXTEST(t *testing.T) {
 	engine := New(Config{WaylandHelper: os.Getenv("OPEN_COMPUTER_USE_WAYLAND_HELPER"), XWaylandInput: true, InputGuard: testGuard})
 	t.Cleanup(func() { _ = engine.Close() })
 	app := resolveEventually(t, ctx, engine, title)
+	// An X11 window's accessible tree can fill in after the window appears.
 	find := func(match func(Node) bool) (Node, Window) {
-		observation, err := engine.Observe(ctx, app, TreeOptions{MaxNodes: 200, MaxDepth: 20, TextReadLimit: -1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, node := range observation.Nodes {
-			if match(node) {
-				return node, observation.Window
+		for attempt := 0; attempt < 50; attempt++ {
+			observation, err := engine.Observe(ctx, app, TreeOptions{MaxNodes: 200, MaxDepth: 20, TextReadLimit: -1})
+			if err != nil {
+				t.Fatal(err)
 			}
+			for _, node := range observation.Nodes {
+				if match(node) {
+					return node, observation.Window
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 		t.Fatal("no matching node")
 		return Node{}, Window{}

@@ -49,8 +49,6 @@ fi
 # Notification banners can cover test windows; actions there are rightly refused.
 gsettings set org.gnome.desktop.notifications show-banners false
 # Unsafe mode allows org.gnome.Shell.Eval, used below only inside this session.
-# XWayland's sockets live in the shared /tmp/.X11-unix; the new one is ours.
-x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
 x11=--no-x11
 [ "${OCU_XWAYLAND:-}" = 1 ] && x11=
 gnome-shell --headless --unsafe-mode --wayland $x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
@@ -129,14 +127,19 @@ open(sys.argv[1]).read()
 fi
 backend=wayland
 if [ -z "$x11" ]; then
+  # Mutter's XWayland requires the authorization file Mutter wrote; take both
+  # from the shell's own environment.
   for _ in $(seq 100); do
-    x_socket=$(ls /tmp/.X11-unix 2>/dev/null | grep -vxF "$x_before" | head -1 || true)
-    [ -n "$x_socket" ] && break
+    x_env=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval \
+      'imports.gi.GLib.getenv("DISPLAY") + " " + imports.gi.GLib.getenv("XAUTHORITY")' 2>/dev/null |
+      sed -n "s/^(true, '\"\(:[0-9]*\) \(.*\)\"')$/\1 \2/p")
+    [ -n "$x_env" ] && break
     sleep 0.1
   done
-  [ -n "$x_socket" ] || { echo "gnome-session.sh: XWayland did not start" >&2; exit 1; }
-  DISPLAY=":${x_socket#X}"
-  export DISPLAY
+  [ -n "$x_env" ] || { echo "gnome-session.sh: XWayland did not start" >&2; exit 1; }
+  DISPLAY=${x_env%% *}
+  XAUTHORITY=${x_env#* }
+  export DISPLAY XAUTHORITY
   backend=x11
 fi
 env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND="$backend" \
