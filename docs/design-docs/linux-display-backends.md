@@ -165,6 +165,7 @@ AT-SPI 语义动作（读取无障碍树、按元素执行动作、向聚焦的�
 | RHEL 10 系 | GNOME 47，只有 Wayland 会话 | GNOME + 扩展 | ☑️ |
 | Linux Mint（Cinnamon、MATE、Xfce） | X11 | X11 | ☑️ Cinnamon 的 Wayland 会话仍为实验性质，其合成器没有我们可用的接口 |
 | Pop!_OS 24.04 | COSMIC | 其他合成器 | 未验证，按探测结果拼装 |
+| Omarchy（基于 Arch） | Hyprland | Hyprland | ☑️ 路线只在本地 Hyprland 0.53.3 上验证；Omarchy 紧跟 Hyprland 新版本，IPC 或 `hyprland_toplevel_export` 变化时可能受影响。无需一次性设置 |
 | Fedora Silverblue、Kinoite 等不可变发行版 | GNOME / Plasma 6 | 同可变版本 | ☑️ 扩展与 `.desktop` 都写在用户目录，不改动系统 |
 | NixOS | 任意 | 按桌面 | 辅助进程位于 Nix store，每次升级路径都会变：KDE 需重新运行 `install-kde-integration`，GNOME 的 Shell 内授权也会重新询问 |
 | glibc 早于 2.28 的发行版（Ubuntu 18.04、CentOS 7） | — | 只有 X11 | Wayland 辅助进程按 glibc 2.28 链接，无法启动；Go 运行时不依赖 glibc，X11 路线可用 |
