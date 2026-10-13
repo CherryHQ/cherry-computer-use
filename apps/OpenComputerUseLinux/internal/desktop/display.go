@@ -352,12 +352,15 @@ func (e *Engine) ElementCenter(ctx context.Context, target GlobalTarget, node No
 		// XWayland windows report screen coordinates, XWayland's root coordinates;
 		// their window coordinates are unusable where the toolkit draws shadows
 		// inside the X window (GTK under Mutter). The root coordinates are the
-		// compositor's while the accessible window lies on the content it shows.
+		// compositor's while the accessible window lines up with the content it
+		// shows: GTK includes a server-side title bar (KWin) above the content,
+		// so only the other edges must match.
 		var frame, element struct{ X, Y, Width, Height int32 }
 		content := located.Bounds()
+		near := func(a, b float64) bool { return math.Abs(a-b) <= 2 }
 		if err := e.call(ctx, target.Window, "Component.GetExtents", uint32(0)).Store(&frame); err != nil ||
-			math.Abs(float64(frame.X)-content.X) > 2 || math.Abs(float64(frame.Y)-content.Y) > 2 ||
-			math.Abs(float64(frame.Width)-content.Width) > 2 || math.Abs(float64(frame.Height)-content.Height) > 2 {
+			!near(float64(frame.X), content.X) || !near(float64(frame.X+frame.Width), content.X+content.Width) ||
+			!near(float64(frame.Y+frame.Height), content.Y+content.Height) || float64(frame.Y) > content.Y+2 {
 			return Point{}, fail("TARGET_UNAVAILABLE", "The accessible X11 window is at %d,%d %dx%d but the compositor shows %.0f,%.0f %.0fx%.0f; element positions cannot be mapped", frame.X, frame.Y, frame.Width, frame.Height, content.X, content.Y, content.Width, content.Height)
 		}
 		if err := e.call(ctx, node.Ref, "Component.GetExtents", uint32(0)).Store(&element); err != nil || element.Width <= 0 || element.Height <= 0 {
@@ -522,9 +525,23 @@ func (e *Engine) pointAt(ctx context.Context, target GlobalTarget, point Point) 
 }
 
 // x11Input reports whether input for target goes through XTEST: always in X11,
-// and in Wayland only for XWayland windows when the caller allows it.
+// and in Wayland only for XWayland windows when the caller allows it. Never
+// under GNOME: Mutter starts XWayland with -enable-ei-portal, which holds XTEST
+// input until the user allows it in a portal dialog and drops it meanwhile, so
+// XWayland windows take the same route as native ones there.
 func (e *Engine) x11Input(ctx context.Context, target GlobalTarget) bool {
-	return !e.Wayland() || (e.config.XWaylandInput && e.x11Backend().HasWindow(ctx, target.native()))
+	if !e.Wayland() {
+		return true
+	}
+	if !e.config.XWaylandInput {
+		return false
+	}
+	for _, desktop := range strings.Split(e.env("XDG_CURRENT_DESKTOP"), ":") {
+		if strings.EqualFold(desktop, "GNOME") {
+			return false
+		}
+	}
+	return e.x11Backend().HasWindow(ctx, target.native())
 }
 
 func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) error {

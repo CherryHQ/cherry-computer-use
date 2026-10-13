@@ -76,7 +76,10 @@ def apps():
 def approve_dialog(stop):
     """Presses the confirming button of the portal dialog until the portal answers."""
     while not stop.is_set():
+        seen = report.setdefault("apps_seen", [])
         for app in apps():
+            if app and app.get_name() not in seen:
+                seen.append(app.get_name())
             if not app or "portal" not in (app.get_name() or ""):
                 continue
             buttons = []

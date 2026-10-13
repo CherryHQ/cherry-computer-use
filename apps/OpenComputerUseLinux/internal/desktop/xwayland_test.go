@@ -11,7 +11,9 @@ import (
 
 // TestXWaylandXTEST drives an XWayland window with XTEST, as the CLI does in a
 // Wayland session, inside a session script run with OCU_XWAYLAND=1. The other
-// tests for each compositor cover the same windows through the compositor.
+// tests for each compositor cover the same windows through the compositor. Run
+// it in a session of its own: a compositor may leave windows of its own on the
+// X root that rightly block XTEST clicks (KWin after a drag).
 func TestXWaylandXTEST(t *testing.T) {
 	if os.Getenv("OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST") != "1" {
 		t.Skip("run inside a Wayland session script with OCU_XWAYLAND=1")
@@ -58,6 +60,14 @@ func TestXWaylandXTEST(t *testing.T) {
 
 	node, window := field()
 	target := GlobalTarget{PID: app.PID, Title: title, Window: window.Ref}
+	// Under GNOME, XWayland holds XTEST input for a portal dialog; the
+	// compositor's own route, which the GNOME tests cover, serves X11 windows.
+	if os.Getenv("OPEN_COMPUTER_USE_LINUX_GNOME_TEST") == "1" {
+		if engine.x11Input(ctx, target) {
+			t.Fatal("XWayland windows under GNOME must not take XTEST input")
+		}
+		return
+	}
 	if !engine.x11Input(ctx, target) {
 		t.Fatal("an XWayland window in a Wayland session must take XTEST input when the caller allows it")
 	}

@@ -145,12 +145,13 @@ jobs:
       - if: runner.os == 'Linux'
         name: Linux wlroots input and capture (isolated headless Sway)
         run: |
-          sudo apt-get install -y --no-install-recommends sway
+          sudo apt-get install -y --no-install-recommends sway xwayland
           sway --version
           cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
           session="$PWD/apps/OpenComputerUseLinux/testdata/wlroots-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" sway go test -count=1 -run Wlroots -v ./internal/desktop/)
+          (cd apps/OpenComputerUseLinux && OCU_XWAYLAND=1 "$session" sway go test -count=1 -run 'Wlroots|XWayland' -v ./internal/desktop/)
           "$session" sway sh -c '
             python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Sway" & fixture=$!
             for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
@@ -229,7 +230,7 @@ jobs:
       - name: Install headless GNOME
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0 wayland-utils
+          sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0 wayland-utils xwayland
           gnome-shell --version
       - name: Portal keyboard without the Shell extension
         run: |
@@ -244,6 +245,11 @@ jobs:
           session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOMEShell -v ./internal/desktop/)
           "$session" sh -c "$SDK_TEST"
+      - name: XWayland windows through the Shell extension
+        run: |
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_GNOME_SHELL_EXTENSION="$PWD/dist/native/open-computer-use" OCU_XWAYLAND=1
+          session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run 'GNOMEShell|XWayland' -v ./internal/desktop/)
     env:
       SDK_TEST: |
         python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
@@ -267,7 +273,7 @@ jobs:
           dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
       - run: |
           cd apps/OpenComputerUseLinux
-          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py 2>&1 | tail -30
+          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh sh -c 'python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py; echo "--- shell log"; tail -25 "$OCU_GNOME_SESSION_ROOT/shell.log"' 2>&1 | grep -vE "dbus-daemon\[" | tail -45
 
   legacy-portal-probe-debian-12:
     if: github.event_name == 'workflow_dispatch'
@@ -284,7 +290,7 @@ jobs:
           dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
       - run: |
           cd apps/OpenComputerUseLinux
-          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py 2>&1 | tail -30
+          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh sh -c 'python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py; echo "--- shell log"; tail -25 "$OCU_GNOME_SESSION_ROOT/shell.log"' 2>&1 | grep -vE "dbus-daemon\[" | tail -45
 
   linux-hyprland:
     name: Linux Hyprland (nested in headless labwc, ubuntu-26.04)
@@ -311,7 +317,7 @@ jobs:
       - name: Install Hyprland and labwc
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hyprland labwc mesa-libgallium libgl1-mesa-dri libgbm1 libegl-mesa0 at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends hyprland labwc xwayland mesa-libgallium libgl1-mesa-dri libgbm1 libegl-mesa0 at-spi2-core dbus python3-gi gir1.2-gtk-3.0
           Hyprland --version | head -1
           labwc --version
       - name: Give the compositors a DRM device
@@ -340,6 +346,7 @@ jobs:
           ls -l /dev/dri
           session="$PWD/apps/OpenComputerUseLinux/testdata/wlroots-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" hyprland go test -count=1 -run Wlroots -v ./internal/desktop/)
+          (cd apps/OpenComputerUseLinux && OCU_XWAYLAND=1 "$session" hyprland go test -count=1 -run 'Wlroots|XWayland' -v ./internal/desktop/)
           "$session" hyprland sh -c '
             python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Hyprland" & fixture=$!
             for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
@@ -372,7 +379,7 @@ jobs:
       - name: Install KWin
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends kwin-wayland kwin-common mesa-libgallium libgl1-mesa-dri libgbm1 libkf6service-bin libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends kwin-wayland kwin-common xwayland mesa-libgallium libgl1-mesa-dri libgbm1 libkf6service-bin libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
           kwin_wayland --version
       - name: Give KWin a DRM device
         # KWin's virtual backend composites with OpenGL only on a DRM device, and
@@ -395,6 +402,10 @@ jobs:
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_KDE_INTEGRATION="$PWD/dist/native/open-computer-use" OCU_KWIN_DEBUG=1
           session="$PWD/apps/OpenComputerUseLinux/testdata/kwin-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run KDE -v ./internal/desktop/)
+          # XWayland windows; XTEST in a session of its own, since KWin's drag
+          # proxy window stays on the X root after the KDE test's drag.
+          (cd apps/OpenComputerUseLinux && OCU_XWAYLAND=1 "$session" go test -count=1 -run KDE -v ./internal/desktop/)
+          (cd apps/OpenComputerUseLinux && OCU_XWAYLAND=1 "$session" go test -count=1 -run XWayland -v ./internal/desktop/)
           "$session" sh -c '
             python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI KDE" & fixture=$!
             for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
