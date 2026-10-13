@@ -105,7 +105,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | 会话 / 合成器 | 定位与焦点 | 截图 | 键盘/文本 | 指针 | 授权 |
 | --- | --- | --- | --- | --- | --- |
 | X11 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ✅ XTEST + guard | ✅ XTEST，校验落点 | 无 |
-| Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
+| Wayland 会话中的 XWayland 窗口 | ✅ 与原生窗口相同，由合成器定位；元素按屏幕坐标（XWayland 根坐标）放置 | ✅ 与原生窗口相同，由合成器截取 | ✅ SDK 走合成器路线；CLI 走 XTEST，GNOME 下也走合成器路线 | ✅ 同左 | 同所在会话 |
 | wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
 | GNOME（Mutter） | ✅ Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4） | ✅ Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 扩展内虚拟键盘，文本经输入法提交任意 Unicode（W4）；无扩展时门户 RemoteDesktop + libei | ✅ 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 扩展由用户安装、重新登录，并在 Shell 内授权；无扩展时门户弹窗 |
 | KDE（KWin，Plasma 6） | ✅ KWin 脚本：窗口的 PID、标题、几何、层叠、激活窗口、光标与 `windowAt`（W5） | ✅ `ScreenShot2.CaptureWindow`，被遮挡也可截取（W5） | ✅ `fake_input` 键码，按键前确认激活窗口（W5）；无集成时门户 + libei | ✅ `fake_input` 绝对坐标，移动后确认光标到位且 `windowAt` 最上层是目标（W5） | `install-kde-integration` 写入声明受限接口的 `.desktop`，无需重新登录；无集成时门户弹窗 |
@@ -139,14 +139,14 @@ AT-SPI 语义动作（读取无障碍树、按元素执行动作、向聚焦的�
 | 路线 | 窗口定位 | 截图 | 被遮挡窗口截图 | 坐标点击、拖拽 | 按键、翻页滚动 | 布局外字符（如中文） | 一次性设置 | 验证 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | X11 会话 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ⚠️ 取决于窗口管理器是否合成 | ✅ XTEST，校验落点 | ✅ XTEST，确认焦点 | ✅ 临时改键位映射 | 无 | ✅ CI（Xvfb） |
-| Wayland 中的 XWayland 窗口 | 🧪 XID | 🧪 `GetImage` | 🧪 | 🧪 XTEST | 🧪 XTEST | 🧪 | 无 | 🧪 |
+| Wayland 中的 XWayland 窗口 | 同所在合成器的路线 | 同左 | 同左 | 同左；CLI 走 XTEST（GNOME 除外） | 同左；CLI 走 XTEST（GNOME 除外） | GNOME 扩展下 ⛔ 发送前拒绝（X11 客户端不接受输入法提交）；XTEST ✅ | 同所在会话 | ✅ CI：Sway、Hyprland、GNOME 46/50、KWin |
 | GNOME 46–50 + Shell 扩展 | ✅ PID、几何、层叠、焦点 | ✅ | ✅ | ✅ 同一调用内确认落点窗口 | ✅ 确认焦点 | ✅ 经输入法提交 | `install-gnome-extension`、重新登录、在 Shell 对话框中允许 | ✅ CI（GNOME 50、46）与真实桌面（GNOME 50.1） |
 | GNOME 无扩展（含 45 及更早） | ⚠️ 只有 AT-SPI ACTIVE，无几何 | ⛔ | ⛔ | ⛔ | ✅ 门户 RemoteDesktop + libei，确认 ACTIVE；需要门户支持 `ConnectToEIS` | ⛔ 发送前拒绝 | 首次使用时系统对话框 | ✅ GNOME 50（W3） |
 | KDE Plasma 6 + 集成 | ✅ PID、几何、层叠、激活窗口、`windowAt` | ✅ | ✅ | ✅ 确认光标到位且目标在最上层 | ✅ 确认激活窗口 | ⛔ 发送前拒绝 | `install-kde-integration`，无需重新登录 | ✅ 隔离 KWin 6.6.6 与 CI |
 | KDE 无集成 | ⚠️ 只有 AT-SPI ACTIVE | ⛔ | ⛔ | ⛔ | ☑️ 门户 RemoteDesktop + libei | ⛔ | 首次使用时系统对话框 | ☑️ |
 | KDE Plasma 5 | ⚠️ 只有 AT-SPI ACTIVE | ⛔ 集成需要 Plasma 6 的 KWin 脚本接口 | ⛔ | ⛔ | ☑️ 视门户是否支持 `ConnectToEIS` | ⛔ | — | ☑️ |
 | Sway | ✅ IPC | ✅ 截取输出中的窗口区域 | ⛔ 与浮动窗口重叠时拒绝 | ✅ 移动后要求 IPC 焦点为目标 | ✅ 虚拟键盘，确认 IPC 焦点 | ✅ 自定义键位表 | 无 | ✅ CI |
-| Hyprland | ✅ IPC | ✅ 按窗口导出 | ☑️ | ✅ 同 Sway | ✅ 同 Sway | ✅ | 无 | ✅ 本地（CI 无 GPU） |
+| Hyprland | ✅ IPC | ✅ 按窗口导出 | ☑️ | ✅ 同 Sway | ✅ 同 Sway | ✅ | 无 | ✅ CI（嵌套在无头 labwc 中） |
 | 其他 wlroots（labwc、Wayfire、river 等） | ⚠️ 只有 AT-SPI ACTIVE | ⛔ 没有 IPC 给出窗口几何 | ⛔ | ⛔ 无法确认焦点窗口 | ☑️ 有虚拟键盘协议时可用 | ☑️ | 无 | ☑️ |
 | COSMIC 等其他合成器 | 按探测到的协议拼装，都没有时 ⛔ | 同左 | 同左 | 同左 | 同左 | 同左 | — | 未验证 |
 
@@ -161,11 +161,11 @@ AT-SPI 语义动作（读取无障碍树、按元素执行动作、向聚焦的�
 | Ubuntu 24.04 | GNOME 46，Wayland（可选 Xorg 会话） | GNOME + 扩展 | ✅ CI；无头会话中 GTK 不报告 ACTIVE，真实桌面不受影响 |
 | Kubuntu 24.04 | Plasma 5.27 | KDE Plasma 5 | ⛔ 集成需要 Plasma 6；建议登录 X11 会话 |
 | Debian 13 | GNOME 48 / Plasma 6.3 | GNOME + 扩展 / KDE + 集成 | ☑️ Plasma 6.3 早于验证过的 6.6 |
-| Ubuntu 22.04、Debian 12、RHEL 9 系（Rocky、Alma） | GNOME 42 / 43 / 40，默认 Wayland；Kubuntu 22.04 与 Debian 12 的 Plasma 为 5.x | GNOME 无扩展 / KDE Plasma 5 | ⛔ 扩展只支持 GNOME 46–50；☑️ 这些版本的门户不支持 `ConnectToEIS`，Wayland 下按键也不可用，只剩 AT-SPI 语义动作与 XWayland 应用。建议登录 Xorg 会话，走完整的 X11 路线 |
+| Ubuntu 22.04、Debian 12、RHEL 9 系（Rocky、Alma） | GNOME 42 / 43 / 40，默认 Wayland；Kubuntu 22.04 与 Debian 12 的 Plasma 为 5.x | GNOME 无扩展 / KDE Plasma 5 | ⛔ 扩展只支持 GNOME 46–50；门户不支持 `ConnectToEIS`（GNOME 42 实测，见"旧门户按键接口"），目前 Wayland 下按键也不可用，只剩 AT-SPI 语义动作与 XWayland 应用。建议登录 Xorg 会话，走完整的 X11 路线 |
 | RHEL 10 系 | GNOME 47，只有 Wayland 会话 | GNOME + 扩展 | ☑️ |
 | Linux Mint（Cinnamon、MATE、Xfce） | X11 | X11 | ☑️ Cinnamon 的 Wayland 会话仍为实验性质，其合成器没有我们可用的接口 |
 | Pop!_OS 24.04 | COSMIC | 其他合成器 | 未验证，按探测结果拼装 |
-| Omarchy（基于 Arch） | Hyprland | Hyprland | ☑️ 路线只在本地 Hyprland 0.53.3 上验证；Omarchy 紧跟 Hyprland 新版本，IPC 或 `hyprland_toplevel_export` 变化时可能受影响。无需一次性设置 |
+| Omarchy（基于 Arch） | Hyprland | Hyprland | ☑️ 路线在 CI 中以 Hyprland 0.53.3 验证，未在 Omarchy 上运行；Omarchy 紧跟 Hyprland 新版本，IPC 或 `hyprland_toplevel_export` 变化时可能受影响。无需一次性设置 |
 | Fedora Silverblue、Kinoite 等不可变发行版 | GNOME / Plasma 6 | 同可变版本 | ☑️ 扩展与 `.desktop` 都写在用户目录，不改动系统 |
 | NixOS | 任意 | 按桌面 | 辅助进程位于 Nix store，每次升级路径都会变：KDE 需重新运行 `install-kde-integration`，GNOME 的 Shell 内授权也会重新询问 |
 | glibc 早于 2.28 的发行版（Ubuntu 18.04、CentOS 7） | — | 只有 X11 | Wayland 辅助进程按 glibc 2.28 链接，无法启动；Go 运行时不依赖 glibc，X11 路线可用 |
@@ -224,10 +224,11 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | --- | --- | --- |
 | x11 | Xvfb / Xephyr（已有 `x11-session.sh`） | ✅ 已接入 |
 | 辅助进程协议与清理 | `cargo test` 加 Go 端假辅助进程测试（EOF、崩溃、超时） | 可接入 |
-| wlroots | `testdata/wlroots-session.sh sway`：无头 Sway、软件渲染、私有 XDG 目录 | 可接入（无需 GPU） |
-| Hyprland | `testdata/wlroots-session.sh hyprland`：Hyprland 0.53 无无头模式，嵌套在无头 labwc 中（需要 GPU render node 提供 dmabuf） | GitHub 运行器无 `/dev/dri`，预计无法接入 |
+| wlroots | `testdata/wlroots-session.sh sway`：无头 Sway、软件渲染、私有 XDG 目录 | ✅ 已接入（`ubuntu-24.04`） |
+| Hyprland | `testdata/wlroots-session.sh hyprland`：Hyprland 0.53 无无头模式，嵌套在无头 labwc 中；父合成器的座位需要有输入设备 | ✅ 已接入（`ubuntu-26.04`），见"Hyprland 接入 CI" |
 | GNOME | `testdata/gnome-session.sh`：无头 GNOME Shell、私有 XDG 目录，用 Mutter RemoteDesktop API 代替无人点击的门户对话框 | ✅ 已接入，独立的 `ubuntu-26.04` 任务（GNOME 50）；`ubuntu-24.04` 的 GNOME 46 在无头会话中聚焦了窗口，但 GTK 从不报告其为 ACTIVE，按键因此被拒绝 |
-| KDE | 🧪 `kwin_wayland --virtual` | 待定 |
+| KDE | `testdata/kwin-session.sh`：`kwin_wayland --virtual`、私有 XDG 目录 | ✅ 已接入（`ubuntu-26.04`），用 vgem 提供 OpenGL 合成 |
+| XWayland 窗口 | 各会话脚本的 `OCU_XWAYLAND=1`：合成器运行 XWayland，测试夹具以 X11 窗口运行 | ✅ Sway、Hyprland、GNOME、KWin 的任务都对 XWayland 窗口再运行一遍各自的测试 |
 
 任何后端的全局输入测试都只在隔离会话中运行，不向开发者正在使用的桌面注入。
 
@@ -237,7 +238,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | --- | --- | --- |
 | W0 | 用 Rust 原型（`experiments/` 下）实验：GNOME 门户会话（只读，不发输入）与窗口流坐标；XWayland 下 XTEST/GetImage；libei 与门户会话断开时是否松键；无头 mutter/sway 能否跑门户。同时验证 Rust 在 CI 中构建 x64/arm64 与产物大小 | 结论写入本文与执行计划 |
 | W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；打包见「构建与分发」 |
-| W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
+| W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；两者都接入 CI |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
 | W4 ✅ | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权，`install-gnome-extension`（见「GNOME Shell 扩展」） | 隔离的无头 GNOME 中由运行时自己安装扩展后，引擎与 SDK 测试通过；CI 覆盖 GNOME 50 与 46 |
 | W5 ✅ | KDE Plasma 6：KWin 脚本、`ScreenShot2`、`fake_input` 与 `.desktop` 授权，`install-kde-integration`（见「KDE Plasma」） | 隔离的 KWin 6.6.6 中由运行时自己安装授权后，引擎与 SDK 测试通过；CI 在 `ubuntu-26.04` 上运行 |
@@ -255,7 +256,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 门户对话框没有父窗口时不会被提到前台（日志："Failed to associate portal window with parent window"），用户需要从概览中找到它。宿主发起授权时应提供父窗口标识。
 - XWayland 窗口在真实 Wayland 会话中可用 X11 `GetImage` 正确截取（含 GNOME 50 由 `mutter-x11-frames` 绘制的标题栏）。同时发现：按标题查找会命中 `mutter-x11-frames` 这个注册了相同窗口标题的进程，应用解析需要排除它。
 - W1 辅助进程在同一会话的探测：40 个 Wayland 全局对象，没有 wlroots 虚拟输入、foreign-toplevel、screencopy，也没有 `ext-image-copy-capture`。GNOME 50 只能走门户与（可选的）Shell 扩展。
-- 尚未验证（需要发送输入，只能在隔离会话中做）：遮挡时窗口坐标输入是否仍送达该窗口；断开 EIS/门户会话时是否松开按住的键；XWayland 上 XTEST 的送达范围；无头 GNOME 能否运行门户。
+- 尚未验证（需要发送输入，只能在隔离会话中做）：遮挡时窗口坐标输入是否仍送达该窗口；断开 EIS/门户会话时是否松开按住的键；XWayland 上 XTEST 的送达范围（后来验证，见"XWayland 窗口"）；无头 GNOME 能否运行门户。
 
 ## W3 结论（2026-10-10，GNOME Shell 50.1）
 
@@ -265,7 +266,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 清理：在隔离会话中让辅助进程按住 Shift 后被 SIGKILL，新会话输入的仍是小写，即 Mutter 在 EIS 客户端断开时释放其按键，GNOME 上不需要额外 guard。辅助进程正常退出时也会先释放并停止模拟。
 - 测试环境：无头 GNOME 起初没有键盘，第一个 EIS 键盘出现后客户端才异步绑定键盘，这段时间内的按键会丢失；`testdata/gnome-session.sh` 在会话开始时保持一个键盘，模拟有物理键盘的桌面。
 - 测试隔离事故：最初的会话脚本与真实桌面共用 `XDG_RUNTIME_DIR` 和配置目录，退出时删除了真实会话的 AT-SPI 总线 socket，并写入了真实的 GNOME Shell 状态文件。脚本现为每个会话创建私有的运行时、配置、数据、缓存与状态目录，并验证真实目录前后不变。
-- CLI：X11 与 XWayland 窗口仍走 XTEST；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
+- CLI：X11 与 XWayland 窗口仍走 XTEST（GNOME 下的 XWayland 窗口后来改走合成器路线，见"XWayland 窗口"）；原生 Wayland 窗口走门户键盘。SDK：Wayland 下 `pressKey`、`scroll`（翻页键）与无焦点文本框时的 `typeText` 需要 `allowGlobalInput` 与 `remoteDesktop` 权限；指针仍为 unsupported。
 - 未覆盖：真实 GNOME 桌面上的门户对话框流程（W0 已人工确认对话框可用，但键盘输入只在隔离会话中验证）、KDE、门户授权持久化。CI 在无头 GNOME 中运行引擎与 SDK 键盘测试。
 
 ## W2 键盘结论（2026-10-12，Sway 1.11 / Hyprland 0.53.3）
@@ -285,7 +286,39 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 - 指针：`zwlr_virtual_pointer` 以绝对坐标移动，范围是 `xdg_output` 报告的所有输出逻辑矩形的外包框（wlroots 对未绑定输出的绝对设备即如此映射），每个手势重新读取输出布局。Go 端先确认目标可见且包含该点，移动指针，再要求 IPC 报告的焦点窗口是目标（焦点跟随鼠标，Sway 与 Hyprland 的默认设置），并再次确认目标仍包含该点，然后才按键；否则以 effect `none` 拒绝。面板、通知等不获取焦点的表面无法这样识别。拖拽在按下后分 10 步移动。
 - 元素点击：Wayland 下 AT-SPI 不知道窗口位置，元素中心取窗口坐标系的 extents 加上合成器报告的窗口原点。
 - 设备生命周期：无头合成器没有物理指针，每次新建、销毁虚拟指针会让座位的指针能力反复出现，客户端异步绑定 `wl_pointer` 期间的点击会丢失（测试中偶发）。虚拟指针因此在辅助进程生命周期内常驻，首次创建后等待 200 ms；`wlroots-session.sh` 也在会话开始时保持一个指针。
-- Hyprland：嵌套在无头父合成器（labwc、无头 GNOME）中时没有显示器，窗口只有 5x5；`OCU_HYPRLAND_PARENT=wayland-0` 让它嵌套到真实显示中（出现一个窗口，输入只进入嵌套 Hyprland 自己的座位），在 virgl 加速的虚拟机中获得 1024x768 显示器，键盘、截图、指针测试与 SDK 测试通过。toplevel export 只含窗口内容（GTK 3 的客户端阴影不在其中，AT-SPI 窗口尺寸与 IPC 一致），被浮动窗口遮挡时仍能截图；遮挡时点击同样因焦点落到遮挡窗口而被拒绝。
+- Hyprland：嵌套在无头父合成器（labwc、无头 GNOME）中时没有显示器，窗口只有 5x5（原因后来查明：父合成器的座位没有输入设备，见"Hyprland 接入 CI"）；`OCU_HYPRLAND_PARENT=wayland-0` 让它嵌套到真实显示中（出现一个窗口，输入只进入嵌套 Hyprland 自己的座位），在 virgl 加速的虚拟机中获得 1024x768 显示器，键盘、截图、指针测试与 SDK 测试通过。toplevel export 只含窗口内容（GTK 3 的客户端阴影不在其中，AT-SPI 窗口尺寸与 IPC 一致），被浮动窗口遮挡时仍能截图；遮挡时点击同样因焦点落到遮挡窗口而被拒绝。
+
+## Hyprland 接入 CI（2026-10-14，Hyprland 0.53.3 / labwc 0.9.3，`ubuntu-26.04`）
+
+- 显示器：嵌套的 Hyprland（aquamarine 的 Wayland 后端）只有在父合成器的座位有键盘和指针时才创建输出；无头 labwc 与无头 GNOME 都没有输入设备，Hyprland 因此一直没有显示器，此前只能嵌套在真实显示中。`wlroots-session.sh` 现在先用辅助进程给 labwc 的座位一个虚拟键盘和指针（与给 Hyprland 自己的座位相同），并以 `WLR_HEADLESS_OUTPUTS=1` 给 labwc 一个输出。Sway 1.11 不能做父合成器：Hyprland 要求 `xdg_wm_base` 版本 6，Sway 只有 5。
+- DRM 设备：labwc 与 Hyprland 都经 DRM 设备渲染并交换 dmabuf；runner 没有 GPU，用 vgem 加 Mesa 软件渲染。Mesa 的软件渲染要分配 dumb buffer，vgem 只在主节点（`card*`）上允许，而 Hyprland 打开的是渲染节点，CI 因此把 vgem 的主节点挂载到其渲染节点上。`modprobe` 返回后 udev 才设置新节点的属主与权限，要先 `udevadm settle` 再放开权限，否则 udev 会覆盖 `chmod`（KDE 任务同样如此，此前偶发退回 QPainter 即为此）。
+- labwc 自己也运行 XWayland，取 Hyprland 的 `DISPLAY` 时要排除它。
+
+## XWayland 窗口（2026-10-14，Sway 1.11、Hyprland 0.53.3、GNOME 46/50、KWin 6.6.6）
+
+各会话脚本以 `OCU_XWAYLAND=1` 让合成器运行 XWayland，并以 `GDK_BACKEND=x11` 让测试夹具成为 X11 窗口，然后运行各合成器自己的测试；`TestXWaylandXTEST` 另外覆盖 CLI 的 XTEST 路线。
+
+- 合成器路线：Sway、Hyprland、GNOME 扩展与 KWin 都能定位、截取、点击 XWayland 窗口并向其发送按键，与原生窗口相同。
+- 元素坐标：XWayland 窗口报告屏幕坐标（XWayland 的根坐标），与合成器的逻辑坐标一致；它的窗口坐标不可用：Mutter 下 GTK 把客户端阴影画在 X 窗口内，按钮的窗口坐标为 0,0、窗口为 -37。元素因此按屏幕坐标放置，前提是可访问窗口的左、右、下边与合成器显示的内容区重合（GTK 把 KWin 的服务端标题栏算进窗口，上边可以更高）；不重合（例如缩放不一致）时拒绝。
+- GNOME 下的文本：扩展经输入法提交任意文本，X11 客户端不接受，布局外的字符在发送前拒绝，ASCII 照常输入。
+- GNOME 下的 XTEST：Mutter 以 `-enable-ei-portal` 启动 XWayland，XTEST 经门户转发，用户在对话框中允许之前输入被丢弃，引擎却会报告成功。GNOME 下的 XWayland 窗口因此不再走 XTEST，与原生窗口一样走扩展或门户键盘。Sway、Hyprland、KWin 的 XWayland 直接接受 XTEST，CLI 在那里照旧使用。
+- GNOME 的 XWayland 要求 Mutter 写下的授权文件，测试脚本从 Shell 的环境读取 `DISPLAY` 与 `XAUTHORITY`。
+- KWin：拖拽之后 KWin 的拖放代理窗口会留在 X 根窗口上，XTEST 点击会落到它上面并被正确拒绝；CI 把 XTEST 测试放在单独的会话中运行。
+
+## 旧门户按键接口（2026-10-14，GNOME 42 / `ubuntu-22.04` 与 GNOME 50）
+
+问题：GNOME 45 及更早的门户没有 `ConnectToEIS`，当前的门户键盘因此不可用。RemoteDesktop 门户的第一版就有 `NotifyKeyboardKeysym` / `NotifyKeyboardKeycode`，能否作为后备？用一个探测脚本在隔离会话中验证（未入库，结论如下）。
+
+| 项目 | GNOME 42（Ubuntu 22.04：Mutter 42.9、xdg-desktop-portal 1.14.4、xdg-desktop-portal-gnome 42.1） | GNOME 50 |
+| --- | --- | --- |
+| 门户 RemoteDesktop | 版本 1：`NotifyKeyboardKeysym`、`NotifyKeyboardKeycode`、指针与触摸方法；没有 `ConnectToEIS` | 版本 2：同上，另有 `ConnectToEIS` |
+| 门户对话框 | 无头会话中没有出现在 AT-SPI 中，无法在测试里允许，门户到 Mutter 的完整路径未验证 | 打开"允许远程交互"开关后"共享"才可用；允许后 `Start` 返回键盘设备 |
+| 按 keysym 输入（Mutter 会话直接调用，与门户转发的接口相同） | ✅ "hi" 送达 GTK 输入框 | ✅（门户与 Mutter 会话两条路径都送达） |
+| 按键码输入 | ✅ | ✅ |
+| 布局外的 keysym（如"中"） | 静默丢弃 | 静默丢弃 |
+| 第一个键 | 与 libei 相同：座位在第一个键之后才有键盘，需要先发一个无字符的键（Shift） | 同左 |
+
+结论：后备可行。实现时需要：从 Wayland 的 `wl_keyboard` 键位表在发送前检查字符（合成器会静默丢弃布局外的 keysym）；先发 Shift 唤醒座位；授权仍由门户对话框完成，与现有路线相同。GNOME 42 上门户对话框与门户转发还要在真实桌面上确认。
 
 ## GNOME Shell 扩展（W4，2026-10-13 方案与验证）
 

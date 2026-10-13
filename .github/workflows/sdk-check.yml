@@ -258,23 +258,6 @@ jobs:
         node --test protocol/linux-desktop.test.mjs; code=$?
         kill $fixture; exit $code
 
-  legacy-portal-probe-ubuntu-2204:
-    # Temporary experiment: does the pre-libei RemoteDesktop keyboard work on GNOME 42?
-    if: github.event_name == 'workflow_dispatch'
-    name: Legacy portal probe (GNOME 42, ubuntu-22.04)
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gnome-shell xdg-desktop-portal xdg-desktop-portal-gnome at-spi2-core dbus python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 libglib2.0-bin
-          gnome-shell --version
-          dpkg -l | grep -E "xdg-desktop-portal|mutter" | awk '{print $2, $3}'
-      - run: |
-          cd apps/OpenComputerUseLinux
-          XDG_CURRENT_DESKTOP=GNOME sh testdata/gnome-session.sh sh -c 'python3 testdata/legacy_portal_probe.py testdata/gtk_fixture.py; echo "--- shell log"; tail -25 "$OCU_GNOME_SESSION_ROOT/shell.log"' 2>&1 | grep -vE "dbus-daemon\[" | tail -45
-
   linux-hyprland:
     name: Linux Hyprland (nested in headless labwc, ubuntu-26.04)
     runs-on: ubuntu-26.04
