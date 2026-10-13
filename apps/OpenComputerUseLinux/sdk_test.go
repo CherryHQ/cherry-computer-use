@@ -48,7 +48,7 @@ func TestSDKGlobalInputNeedsExplicitPermissionOnX11(t *testing.T) {
 	}
 }
 
-func TestSDKOnWaylandRefusesPointerAndNeedsTheHelperForKeys(t *testing.T) {
+func TestSDKOnWaylandNeedsTheHelperForGlobalInput(t *testing.T) {
 	driver := testDesktop(map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"})
 	observation := sdk.Observation{Native: desktop.Observation{}}
 	clickable := &sdk.Element{Native: desktop.Node{Actions: []desktop.Action{{Index: 0, Name: "click"}}}}
@@ -58,11 +58,8 @@ func TestSDKOnWaylandRefusesPointerAndNeedsTheHelperForKeys(t *testing.T) {
 			element = nil
 		}
 		testCase.action.AllowGlobalInput = true
-		// Pointer input is never translated into XWayland input; keys need the helper.
-		want := "UNSUPPORTED_CAPABILITY"
-		if testCase.action.Type == "pressKey" || testCase.action.Type == "scroll" {
-			want = "DEPENDENCY_MISSING"
-		}
+		// Pointer and keys go through the Wayland helper, never XWayland's XTEST.
+		want := "DEPENDENCY_MISSING"
 		err := driver.Act(context.Background(), sdk.Target{}, observation, element, testCase.action)
 		var domain *sdk.DomainError
 		if !errors.As(err, &domain) || domain.Code != want || domain.Effect != "none" {
@@ -91,20 +88,16 @@ func TestSDKWaylandPermissionsNeedTheSession(t *testing.T) {
 }
 
 func TestSDKCapabilitiesFollowTheDisplayServer(t *testing.T) {
-	for env, want := range map[string]string{"": "unavailable", ":99": "available", "wayland": "unsupported"} {
+	// Wayland input and capture go through the helper, which this test does not install.
+	for env, want := range map[string]string{"": "unavailable", ":99": "available", "wayland": "unavailable"} {
 		vars := map[string]string{"DISPLAY": env}
 		if env == "wayland" {
 			vars = map[string]string{"DISPLAY": ":0", "XDG_SESSION_TYPE": "wayland"}
 		}
 		capabilities := testDesktop(vars).Capabilities(context.Background())
-		for _, name := range []string{"scroll", "drag", "pressKey"} {
-			expected := want
-			if env == "wayland" && name != "drag" {
-				// Keys go through the Wayland helper, which this test does not install.
-				expected = "unavailable"
-			}
-			if capabilities[name].Status != expected {
-				t.Fatalf("%s with %q = %+v, want %s", name, env, capabilities[name], expected)
+		for _, name := range []string{"scroll", "drag", "pressKey", "screenshot"} {
+			if capabilities[name].Status != want {
+				t.Fatalf("%s with %q = %+v, want %s", name, env, capabilities[name], want)
 			}
 		}
 	}

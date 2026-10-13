@@ -107,30 +107,81 @@ func (e *Engine) Report(ctx context.Context) Report {
 		return report
 	}
 	report.Session = "wayland"
-	report.Capture = display.Unsupported("Wayland capture is not connected")
-	if report.GlobalInput.Status == "available" {
-		report.GlobalInput.Message = "XTEST reaches XWayland windows only; native Wayland windows are refused"
-	}
 	report.Helper = &HelperReport{Availability: display.Available()}
 	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		report.Helper.Availability = availabilityOf(err)
+		report.Capture, report.GlobalInput = report.Helper.Availability, report.Helper.Availability
+		return report
+	}
+	report.Helper.Version, report.Helper.Probe = helper.Version(), helper.Probe().Raw
+	report.Capture = helper.Probe().CaptureAvailable()
+	report.GlobalInput = helper.Probe().VirtualPointerAvailable()
+	if report.GlobalInput.Status != "available" && e.Display() != "" {
+		report.GlobalInput.Message += "; XTEST reaches XWayland windows only"
+	}
+	return report
+}
+
+func availabilityOf(err error) display.Availability {
+	var native *Error
+	if !errors.As(err, &native) {
+		native = fail("TARGET_UNAVAILABLE", "%v", err)
+	}
+	return display.Unavailable(native.Code, native.Message)
+}
+
+// CaptureAvailability reports whether windows can be captured in this session:
+// always on X11, and on Wayland where the helper supports the compositor.
+func (e *Engine) CaptureAvailability(ctx context.Context) display.Availability {
+	if !e.Wayland() {
+		if e.Display() == "" {
+			return display.Unavailable("DEPENDENCY_MISSING", "An X11 display is required for window capture")
+		}
+		return display.Available()
+	}
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return availabilityOf(err)
+	}
+	return helper.Probe().CaptureAvailable()
+}
+
+// PointerAvailability reports whether pointer input can be offered: XTEST on
+// X11, and on Wayland the wlroots virtual pointer with compositor IPC.
+func (e *Engine) PointerAvailability(ctx context.Context) display.Availability {
+	if !e.Wayland() {
+		if e.Display() == "" {
+			return display.Unavailable("DEPENDENCY_MISSING", "Global input needs an X11 display")
+		}
+		return display.Available()
+	}
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return availabilityOf(err)
+	}
+	return helper.Probe().VirtualPointerAvailable()
+}
+
+// capturer selects the backend for window capture in this session.
+func (e *Engine) capturer(ctx context.Context) (display.Capturer, *Error) {
+	if !e.Wayland() {
+		return e.x11Backend(), nil
+	}
+	helper, err := e.waylandHelper(ctx)
+	if err == nil {
+		if availability := helper.Probe().CaptureAvailable(); availability.Status != "available" {
+			err = fail(availability.Code, "%s", availability.Message)
+		}
+	}
 	if err != nil {
 		var native *Error
 		if !errors.As(err, &native) {
 			native = fail("TARGET_UNAVAILABLE", "%v", err)
 		}
-		report.Helper.Availability = display.Unavailable(native.Code, native.Message)
-		return report
+		return nil, native
 	}
-	report.Helper.Version, report.Helper.Probe = helper.Version(), helper.Probe().Raw
-	return report
-}
-
-// capturer selects the backend for window capture in this session.
-func (e *Engine) capturer() (display.Capturer, *Error) {
-	if e.Wayland() {
-		return nil, fail("UNSUPPORTED_CAPABILITY", "Wayland capture is not connected")
-	}
-	return e.x11Backend(), nil
+	return helper, nil
 }
 
 // injector selects the backend for global input. XTEST reaches X11 sessions and,
@@ -139,7 +190,7 @@ func (e *Engine) injector() display.Injector { return e.x11Backend() }
 
 // Capture captures the window of pid whose title is the observed accessible title.
 func (e *Engine) Capture(ctx context.Context, pid uint32, title string) Capture {
-	capturer, reason := e.capturer()
+	capturer, reason := e.capturer(ctx)
 	if reason != nil {
 		return Capture{Reason: reason}
 	}
@@ -154,26 +205,180 @@ func (e *Engine) Capture(ctx context.Context, pid uint32, title string) Capture 
 	return Capture{PNG: image.PNG, Width: image.Width, Height: image.Height}
 }
 
+// WindowRect is the target window in screen coordinates: X11 root coordinates,
+// or Wayland layout coordinates from the compositor's IPC.
 func (e *Engine) WindowRect(ctx context.Context, target GlobalTarget) (Rect, error) {
-	return e.injector().WindowRect(ctx, target.native())
+	if e.x11Input(ctx, target) {
+		return e.injector().WindowRect(ctx, target.native())
+	}
+	pointer, err := e.waylandPointer(ctx)
+	if err != nil {
+		return Rect{}, err
+	}
+	window, err := pointer.FindWindow(ctx, target.native())
+	return window.Bounds(), err
+}
+
+// ElementCenter is the screen point at the center of a revalidated element. On
+// Wayland, AT-SPI cannot know where a window is, so the element's window-relative
+// extents are placed at the compositor's window origin.
+func (e *Engine) ElementCenter(ctx context.Context, target GlobalTarget, node Node) (Point, error) {
+	if node.Extents == nil {
+		return Point{}, fail("TARGET_UNAVAILABLE", "Element no longer has bounds")
+	}
+	if e.x11Input(ctx, target) {
+		return Point{X: node.Extents.X + node.Extents.Width/2, Y: node.Extents.Y + node.Extents.Height/2}, nil
+	}
+	var box struct{ X, Y, Width, Height int32 }
+	if err := e.call(ctx, node.Ref, "Component.GetExtents", uint32(1)).Store(&box); err != nil || box.Width <= 0 || box.Height <= 0 {
+		return Point{}, fail("TARGET_UNAVAILABLE", "Element no longer has bounds")
+	}
+	window, err := e.WindowRect(ctx, target)
+	if err != nil {
+		return Point{}, err
+	}
+	// Window coordinates start at the client's content only when the accessible
+	// window has the compositor's content size; client-drawn shadows or a pending
+	// resize would shift every point.
+	var frame struct{ X, Y, Width, Height int32 }
+	if err := e.call(ctx, target.Window, "Component.GetExtents", uint32(1)).Store(&frame); err != nil ||
+		math.Abs(float64(frame.Width)-window.Width) > 2 || math.Abs(float64(frame.Height)-window.Height) > 2 {
+		return Point{}, fail("TARGET_UNAVAILABLE", "The accessible window is %dx%d but the compositor shows %.0fx%.0f; element positions cannot be mapped", frame.Width, frame.Height, window.Width, window.Height)
+	}
+	return Point{X: window.X + float64(box.X) + float64(box.Width)/2, Y: window.Y + float64(box.Y) + float64(box.Height)/2}, nil
 }
 
 func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Point, button byte, count int) error {
-	return e.injector().PointerClick(ctx, target.native(), point, button, count)
+	if e.x11Input(ctx, target) {
+		return e.injector().PointerClick(ctx, target.native(), point, button, count)
+	}
+	name, ok := buttonNames[button]
+	if !ok || count < 1 || count > 3 {
+		return fail("INVALID_ARGUMENT", "Unsupported button or click count")
+	}
+	pointer, err := e.pointAt(ctx, target, point)
+	if err != nil {
+		return err
+	}
+	if err := pointer.PointerClick(ctx, name, count); err != nil {
+		return possibly(err)
+	}
+	return nil
 }
 
 func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) error {
-	return e.injector().Drag(ctx, target.native(), from, to)
+	if e.x11Input(ctx, target) {
+		return e.injector().Drag(ctx, target.native(), from, to)
+	}
+	pointer, err := e.pointAt(ctx, target, from)
+	if err != nil {
+		return err
+	}
+	if err := pointer.PointerPress(ctx, "left"); err != nil {
+		return possibly(err)
+	}
+	// Intermediate motion lets the application see a drag rather than a jump.
+	const steps = 10
+	for i := 1; i <= steps; i++ {
+		point := Point{X: from.X + (to.X-from.X)*float64(i)/steps, Y: from.Y + (to.Y-from.Y)*float64(i)/steps}
+		if err := pointer.PointerMove(ctx, point); err != nil {
+			_ = pointer.PointerRelease(context.WithoutCancel(ctx), "left")
+			return possibly(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := pointer.PointerRelease(ctx, "left"); err != nil {
+		return possibly(err)
+	}
+	return nil
 }
 
-// x11Keys reports whether keys for target go through XTEST: always in X11, and in
-// Wayland only for XWayland windows when the caller allows it.
-func (e *Engine) x11Keys(ctx context.Context, target GlobalTarget) bool {
+var buttonNames = map[byte]string{1: "left", 2: "middle", 3: "right"}
+
+// possibly marks a failure after the pointer reached the target as one whose
+// effect is unknown.
+func possibly(err error) error {
+	var native *Error
+	if errors.As(err, &native) && native.Effect == "possible" {
+		return err
+	}
+	return uncertain("Wayland pointer input stopped part way: %v", err)
+}
+
+// waylandPointer is the helper when this session offers the virtual pointer.
+func (e *Engine) waylandPointer(ctx context.Context) (*wayland.Helper, error) {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if availability := helper.Probe().VirtualPointerAvailable(); availability.Status != "available" {
+		return nil, fail(availability.Code, "%s", availability.Message)
+	}
+	return helper, nil
+}
+
+// pointAt moves the pointer onto point in the target window and confirms it
+// landed there before any button is pressed. The compositor moves keyboard focus
+// to the window under the pointer (focus follows the mouse, the Sway and
+// Hyprland default), so its IPC must then name the target, and the target must
+// still contain the point. Surfaces that never take focus, such as panels and
+// notifications, cannot be told apart this way.
+func (e *Engine) pointAt(ctx context.Context, target GlobalTarget, point Point) (*wayland.Helper, error) {
+	pointer, err := e.waylandPointer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	contains := func() error {
+		window, err := pointer.FindWindow(ctx, target.native())
+		if err != nil {
+			return err
+		}
+		bounds := window.Bounds()
+		if !window.Visible || point.X < bounds.X || point.Y < bounds.Y || point.X >= bounds.X+bounds.Width || point.Y >= bounds.Y+bounds.Height {
+			return fail("TARGET_UNAVAILABLE", "The point is not on the visible target window")
+		}
+		return nil
+	}
+	if err := contains(); err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, cancelled()
+	}
+	if err := pointer.PointerMove(ctx, point); err != nil {
+		return nil, err
+	}
+	var focused bool
+	for attempt := 0; attempt < 20 && !focused; attempt++ {
+		if attempt > 0 {
+			time.Sleep(25 * time.Millisecond)
+		}
+		active, err := pointer.ActiveWindow(ctx)
+		if err != nil {
+			return nil, err
+		}
+		focused = active.Available && active.PID != nil && *active.PID == target.PID && active.Title == target.Title
+	}
+	if !focused {
+		return nil, fail("TARGET_UNAVAILABLE", "The target window did not take focus under the pointer; the click could reach another window. Wayland pointer input needs focus to follow the mouse")
+	}
+	if err := contains(); err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, cancelled()
+	}
+	return pointer, nil
+}
+
+// x11Input reports whether input for target goes through XTEST: always in X11,
+// and in Wayland only for XWayland windows when the caller allows it.
+func (e *Engine) x11Input(ctx context.Context, target GlobalTarget) bool {
 	return !e.Wayland() || (e.config.XWaylandInput && e.x11Backend().HasWindow(ctx, target.native()))
 }
 
 func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) error {
-	if e.x11Keys(ctx, target) {
+	if e.x11Input(ctx, target) {
 		return e.injector().PressKey(ctx, target.native(), key)
 	}
 	chord, err := display.ParseKeyChord(key)
@@ -184,7 +389,7 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) 
 }
 
 func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string) error {
-	if e.x11Keys(ctx, target) {
+	if e.x11Input(ctx, target) {
 		return e.injector().TypeKeys(ctx, target.native(), text)
 	}
 	keyboard, err := e.keyboard(ctx)
@@ -206,7 +411,7 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 }
 
 func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction string, pages float64) error {
-	if e.x11Keys(ctx, target) {
+	if e.x11Input(ctx, target) {
 		return e.injector().PageScroll(ctx, target.native(), direction, pages)
 	}
 	key := map[string]string{"up": "Page_Up", "down": "Page_Down", "left": "Left", "right": "Right"}[direction]

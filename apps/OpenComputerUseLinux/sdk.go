@@ -10,6 +10,7 @@ import (
 
 	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 )
 
 // linuxDesktop adapts the shared engine to SDK sessions; runtime-go owns identities and snapshots.
@@ -19,28 +20,26 @@ func newLinuxDesktop() *linuxDesktop {
 	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard, WaylandHelper: waylandHelperPath()})}
 }
 
-// pointerInput reports whether pointer input can be offered: X11 only.
-func (d *linuxDesktop) pointerInput() sdkruntime.Availability {
-	if d.engine.Wayland() {
-		return sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland pointer input is not connected"}}
+// pointerInput reports whether pointer input can be offered: XTEST on X11, and
+// on Wayland the wlroots virtual pointer with compositor IPC (Sway, Hyprland).
+func (d *linuxDesktop) pointerInput(ctx context.Context) sdkruntime.Availability {
+	return availability(d.engine.PointerAvailability(ctx))
+}
+
+func availability(native display.Availability) sdkruntime.Availability {
+	if native.Status == "available" {
+		return sdkruntime.Availability{Status: "available"}
 	}
-	if d.engine.Display() == "" {
-		return sdkruntime.Unavailable("DEPENDENCY_MISSING", "Global input needs an X11 display")
-	}
-	return sdkruntime.Availability{Status: "available"}
+	return sdkruntime.Availability{Status: native.Status, Reason: &sdkruntime.Reason{Code: native.Code, Message: native.Message}}
 }
 
 // keyboardInput reports whether keys can be sent: XTEST on X11, and on Wayland
 // libei through the RemoteDesktop portal, which also needs the remoteDesktop permission.
 func (d *linuxDesktop) keyboardInput(ctx context.Context) sdkruntime.Availability {
 	if !d.engine.Wayland() {
-		return d.pointerInput()
+		return d.pointerInput(ctx)
 	}
-	availability := d.engine.KeyboardAvailability(ctx)
-	if availability.Status == "available" {
-		return sdkruntime.Availability{Status: "available"}
-	}
-	return sdkruntime.Availability{Status: availability.Status, Reason: &sdkruntime.Reason{Code: availability.Code, Message: availability.Message}}
+	return availability(d.engine.KeyboardAvailability(ctx))
 }
 
 const remoteDesktopPermission = "remoteDesktop"
@@ -89,17 +88,12 @@ func (d *linuxDesktop) Capabilities(ctx context.Context) map[string]sdkruntime.A
 	if err := d.engine.Connect(ctx); err != nil {
 		available = sdkruntime.Unavailable("DEPENDENCY_MISSING", err.Error())
 	}
-	capture := sdkruntime.Unavailable("DEPENDENCY_MISSING", "An X11 display is required for window capture")
-	if d.engine.Wayland() {
-		capture = sdkruntime.Availability{Status: "unsupported", Reason: &sdkruntime.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland capture is not connected"}}
-	} else if d.engine.Display() != "" {
-		capture = sdkruntime.Availability{Status: "available"}
-	}
+	capture := availability(d.engine.CaptureAvailability(ctx))
 	keyboard := d.keyboardInput(ctx)
 	return map[string]sdkruntime.Availability{
 		"accessibility": available, "screenshot": capture,
 		"click": available, "performSecondaryAction": available, "setValue": available, "typeText": available,
-		"scroll": keyboard, "drag": d.pointerInput(), "pressKey": keyboard,
+		"scroll": keyboard, "drag": d.pointerInput(ctx), "pressKey": keyboard,
 	}
 }
 
@@ -140,7 +134,7 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 	if native.DepthTruncated {
 		tree.Truncated = append(tree.Truncated, "depth")
 	}
-	pointer := d.pointerInput().Status == "available"
+	pointer := d.pointerInput(ctx).Status == "available"
 	for index, node := range native.Nodes {
 		element := sdkruntime.Element{ID: strconv.Itoa(index), Role: node.Role, Name: options.LimitText(node.Name, &tree), Native: node}
 		if node.Parent >= 0 {
@@ -201,8 +195,8 @@ func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, obse
 }
 
 // Act prefers semantic actions. Pointer and keyboard variants need
-// allowGlobalInput; pointer input needs X11, keys need X11 or the Wayland
-// remoteDesktop permission. Targets are checked before any input is sent.
+// allowGlobalInput; pointer input needs X11 or the wlroots virtual pointer, keys
+// need X11, the wlroots virtual keyboard or the Wayland remoteDesktop permission. Targets are checked before any input is sent.
 func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
 	native := observation.Native.(desktop.Observation)
 	var node desktop.Node
@@ -216,7 +210,7 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 		if element != nil && semantic && action.Button == "left" && action.Count == 1 {
 			return sdkError(d.engine.DoAction(ctx, native.Window, node, click))
 		}
-		if err := d.requireGlobalInput(action, d.pointerInput()); err != nil {
+		if err := d.requireGlobalInput(action, d.pointerInput(ctx)); err != nil {
 			return err
 		}
 		button := map[string]byte{"left": 1, "middle": 2, "right": 3}[action.Button]
@@ -234,10 +228,10 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 		if err != nil {
 			return sdkError(err)
 		}
-		if current.Extents == nil {
-			return sdkruntime.Error("TARGET_UNAVAILABLE", "Element no longer has bounds")
+		center, err := d.engine.ElementCenter(ctx, target, current)
+		if err != nil {
+			return sdkError(err)
 		}
-		center := desktop.Point{X: current.Extents.X + current.Extents.Width/2, Y: current.Extents.Y + current.Extents.Height/2}
 		return sdkError(d.engine.PointerClick(ctx, target, center, button, action.Count))
 	case "performSecondaryAction":
 		for _, candidate := range node.Actions {
@@ -271,7 +265,7 @@ func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation
 		}
 		return sdkError(d.engine.PageScroll(ctx, target, action.Direction, action.Pages))
 	case "drag":
-		if err := d.requireGlobalInput(action, d.pointerInput()); err != nil {
+		if err := d.requireGlobalInput(action, d.pointerInput(ctx)); err != nil {
 			return err
 		}
 		from, err := d.windowPoint(ctx, target, *action.From)
@@ -300,7 +294,7 @@ func (d *linuxDesktop) requireGlobalInput(action sdkruntime.Action, availability
 	return nil
 }
 
-// windowPoint maps screenshot coordinates, relative to the observed X window, to
+// windowPoint maps screenshot coordinates, relative to the observed window, to
 // the screen and refuses points outside that window.
 func (d *linuxDesktop) windowPoint(ctx context.Context, target desktop.GlobalTarget, point sdkruntime.Point) (desktop.Point, error) {
 	window, err := d.engine.WindowRect(ctx, target)

@@ -8,6 +8,9 @@
 #
 # sway runs headless with software rendering. Hyprland has no headless mode, so it
 # runs nested inside a headless labwc, which needs a GPU render node for dmabuf.
+# Where a headless parent gives it no monitor, OCU_HYPRLAND_PARENT=wayland-0 nests
+# it in that display instead: a window appears there, but input still goes only to
+# the nested Hyprland's own seat.
 # The command gets WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland, SWAYSOCK or
 # HYPRLAND_INSTANCE_SIGNATURE, and OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST=<compositor>.
 set -eu
@@ -26,6 +29,14 @@ if [ "${OCU_WLROOTS_SESSION_INNER:-}" != 1 ]; then
   # socket paths are limited to 108 bytes.
   root=$(mktemp -d "${TMPDIR:-/tmp}/ocu-wl.XXXXXX")
   for dir in run config data cache state; do mkdir -m 700 "$root/$dir"; done
+  if [ -n "${OCU_HYPRLAND_PARENT:-}" ]; then
+    case "$OCU_HYPRLAND_PARENT" in
+      /*) ;;
+      *) OCU_HYPRLAND_PARENT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$OCU_HYPRLAND_PARENT" ;;
+    esac
+    [ -S "$OCU_HYPRLAND_PARENT" ] || { echo "wlroots-session.sh: no Wayland display at $OCU_HYPRLAND_PARENT" >&2; exit 1; }
+    export OCU_HYPRLAND_PARENT
+  fi
   if command -v go >/dev/null 2>&1; then
     GOCACHE=$(go env GOCACHE)
     export GOCACHE
@@ -112,17 +123,28 @@ case "$compositor" in
       echo "wlroots-session.sh: nested Hyprland needs a GPU render node in /dev/dri" >&2
       exit 1
     fi
-    # An empty config directory: no system or user autostart.
-    mkdir -m 700 "$root/labwc"
-    WLR_BACKENDS=headless WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
-      labwc -C "$root/labwc" > "$root/parent.log" 2>&1 &
-    pids="$!"
-    WAYLAND_DISPLAY=$(wait_for_socket "$!" 1)
+    sockets=1
+    if [ -n "${OCU_HYPRLAND_PARENT:-}" ]; then
+      WAYLAND_DISPLAY=$OCU_HYPRLAND_PARENT
+    else
+      # An empty config directory: no system or user autostart.
+      mkdir -m 700 "$root/labwc"
+      WLR_BACKENDS=headless WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
+        labwc -C "$root/labwc" > "$root/parent.log" 2>&1 &
+      pids="$!"
+      WAYLAND_DISPLAY=$(wait_for_socket "$!" 1)
+      sockets=2
+    fi
     export WAYLAND_DISPLAY
     mkdir -p "$XDG_CONFIG_HOME/hypr"
     cat > "$XDG_CONFIG_HOME/hypr/hyprland.conf" <<'CONF'
 monitor = , 1024x768, auto, 1
 xwayland {
+  enabled = false
+}
+# Window animations advance per rendered frame; a nested headless output may
+# barely render, leaving new windows at their tiny opening size.
+animations {
   enabled = false
 }
 misc {
@@ -137,7 +159,7 @@ CONF
     HYPRLAND_NO_CRASHREPORTER=1 XDG_CURRENT_DESKTOP=Hyprland \
       Hyprland --config "$XDG_CONFIG_HOME/hypr/hyprland.conf" > "$root/compositor.log" 2>&1 &
     pids="$! $pids"
-    WAYLAND_DISPLAY=$(wait_for_socket "$!" 2)
+    WAYLAND_DISPLAY=$(wait_for_socket "$!" "$sockets")
     for _ in $(seq 50); do
       HYPRLAND_INSTANCE_SIGNATURE=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
       [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ] && break
@@ -152,9 +174,10 @@ launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launch
 "$launcher" --launch-immediately >/dev/null 2>&1 &
 pids="$pids $!"
 sleep 1
-# A headless compositor has no keyboard, and clients bind one only after the
-# seat gains it, losing keys sent meanwhile. Hold a virtual keyboard for the
-# whole run, as a physical keyboard does (needs OPEN_COMPUTER_USE_WAYLAND_HELPER).
+# A headless compositor has no keyboard or pointer, and clients bind one only
+# after the seat gains it, losing input sent meanwhile. Hold a virtual keyboard
+# and pointer for the whole run, as physical devices do (needs
+# OPEN_COMPUTER_USE_WAYLAND_HELPER).
 if [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ]; then
   mkfifo "$root/keyboard"
   python3 -c '
@@ -165,6 +188,7 @@ def call(method, **params):
     sys.stdout.buffer.flush()
 call("hello", protocol=1)
 call("vkeyboard.prepare")
+call("vpointer.prepare")
 open(sys.argv[1]).read()
 ' "$root/keyboard" | "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
   pids="$pids $!"

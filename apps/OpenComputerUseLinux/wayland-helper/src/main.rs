@@ -11,6 +11,7 @@
 mod frame;
 mod keyboard;
 mod keymap;
+mod pointer;
 mod probe;
 mod window;
 mod wlr;
@@ -36,6 +37,7 @@ struct Request {
 struct Helper {
     keyboard: Option<keyboard::Keyboard>,
     virtual_keyboard: Option<wlr::VirtualKeyboard>,
+    virtual_pointer: Option<pointer::VirtualPointer>,
 }
 
 fn main() {
@@ -115,6 +117,42 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
             None => Ok(json!({ "available": false })),
             Some(window) => Ok(json!({ "available": true, "pid": window.pid, "title": window.title, "rect": window.rect })),
         },
+        "vpointer.move" => {
+            let coordinate = |name: &str| request.params.get(name).and_then(Value::as_f64).ok_or_else(|| refuse("INVALID_ARGUMENT", format!("{name} is required")));
+            let (x, y) = (coordinate("x")?, coordinate("y")?);
+            if helper.virtual_pointer.is_none() {
+                helper.virtual_pointer = Some(pointer::VirtualPointer::connect()?);
+            }
+            let result = helper.virtual_pointer.as_mut().unwrap().move_to(x, y).map(|()| json!({}));
+            // A lost Wayland connection takes the device with it; create a new one next time.
+            if result.as_ref().is_err_and(|f| f.message.contains("Wayland connection lost")) {
+                helper.virtual_pointer = None;
+            }
+            result
+        }
+        "vpointer.prepare" => {
+            if helper.virtual_pointer.is_none() {
+                helper.virtual_pointer = Some(pointer::VirtualPointer::connect()?);
+            }
+            Ok(json!({}))
+        }
+        method if method.starts_with("vpointer.") => {
+            let pointer = helper.virtual_pointer.as_mut().ok_or_else(|| refuse("INVALID_ARGUMENT", "Move the pointer before pressing a button"))?;
+            let button = pointer::button_code(text("button")?).ok_or_else(|| refuse("INVALID_ARGUMENT", "button is left, middle or right"))?;
+            let result = match method {
+                "vpointer.click" => {
+                    let count = request.params.get("count").and_then(Value::as_u64).filter(|c| (1..=3).contains(c)).ok_or_else(|| refuse("INVALID_ARGUMENT", "count is 1 to 3"))?;
+                    pointer.click(button, count as u32)
+                }
+                "vpointer.press" => pointer.press(button),
+                "vpointer.release" => pointer.release(button),
+                other => return Err(refuse("UNSUPPORTED_CAPABILITY", format!("unknown helper method {other:?}"))),
+            };
+            if result.as_ref().is_err_and(|f| f.message.contains("Wayland connection lost")) {
+                helper.virtual_pointer = None;
+            }
+            result.map(|()| json!({}))
+        }
         method if method.starts_with("vkeyboard.") => {
             if helper.virtual_keyboard.is_none() {
                 helper.virtual_keyboard = Some(wlr::VirtualKeyboard::connect()?);

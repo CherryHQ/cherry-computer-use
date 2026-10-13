@@ -65,7 +65,11 @@ accept the same background messages.
 Follow the [Python-free Docker instructions](../../experiments/LinuxNativeProbe/README.md).
 That runner builds a GTK fixture and executes both native lifecycle and desktop
 tests before the standalone probe. SDK capture discovers the window by PID/title;
-it does not receive the probe's fixture window ID. Wayland capture is unsupported.
+it does not receive the probe's fixture window ID. Wayland capture works on Sway and
+Hyprland only; `testdata/wlroots-session.sh` runs the capture and pointer tests in an
+isolated headless Sway, and in a nested Hyprland
+(`OCU_HYPRLAND_PARENT=wayland-0` nests it as a window in the current desktop; test
+input stays on the nested seat, so leave that window alone while the tests run).
 
 ### Linux semantic actions (signed-in desktop)
 

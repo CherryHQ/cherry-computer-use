@@ -137,7 +137,7 @@ jobs:
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
       - if: runner.os == 'Linux'
-        name: Linux wlroots virtual keyboard (isolated headless Sway)
+        name: Linux wlroots input and capture (isolated headless Sway)
         run: |
           sudo apt-get install -y --no-install-recommends sway
           sway --version

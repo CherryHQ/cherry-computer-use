@@ -503,6 +503,7 @@ dependencies = [
  "tokio",
  "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",

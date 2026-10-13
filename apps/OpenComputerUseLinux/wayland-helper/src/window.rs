@@ -47,7 +47,10 @@ fn failure(code: &'static str, message: impl Into<String>) -> Failure {
 pub struct Window {
     pub pid: u32,
     pub title: String,
+    /// The client's content, which screenshots show and pointer points fall in.
     pub rect: [i64; 4],
+    /// Content plus the compositor's borders and title bar, which can cover others.
+    pub frame: [i64; 4],
     pub focused: bool,
     pub visible: bool,
     /// Hyprland window address, or the Sway output holding the window.
@@ -74,11 +77,17 @@ fn sway_views(node: &Value, output: Option<(&str, [i64; 4])>, workspace: Option<
     let output = if kind == "output" { name.map(|n| (n, rect(node.get("rect")))) } else { output };
     let workspace = if kind == "workspace" { name } else { workspace };
     if let Some(pid) = node.get("pid").and_then(Value::as_u64) {
+        // `rect` is the container below its title bar; `window_rect` places the
+        // client's content inside it, past the borders.
+        let [x, y, width, height] = rect(node.get("rect"));
+        let [dx, dy, content_width, content_height] = rect(node.get("window_rect"));
+        let title_bar = rect(node.get("deco_rect"))[3];
         views.push((
             Window {
                 pid: pid as u32,
                 title: name.unwrap_or_default().to_owned(),
-                rect: rect(node.get("rect")),
+                rect: if content_width > 0 && content_height > 0 { [x + dx, y + dy, content_width, content_height] } else { [x, y, width, height] },
+                frame: [x, y - title_bar, width, height + title_bar],
                 focused: node.get("focused").and_then(Value::as_bool) == Some(true),
                 visible: node.get("visible").and_then(Value::as_bool) == Some(true),
                 address: None,
@@ -107,8 +116,8 @@ fn sway_windows(tree: &Value) -> Vec<Window> {
             // Tiled views never overlap; floating views may cover anything on their workspace.
             window.overlapping = views
                 .iter()
-                .filter(|(other, other_ws, other_floating)| *other_floating && other_ws == workspace && other.visible && *other != window && intersects(other.rect, window.rect))
-                .map(|(other, _, _)| other.rect)
+                .filter(|(other, other_ws, other_floating)| *other_floating && other_ws == workspace && other.visible && *other != window && intersects(other.frame, window.rect))
+                .map(|(other, _, _)| other.frame)
                 .collect();
             window
         })
@@ -128,6 +137,7 @@ fn hyprland_windows(clients: &Value, active: Option<u64>) -> Vec<Window> {
                 pid: client.get("pid").and_then(Value::as_u64)? as u32,
                 title: client.get("title").and_then(Value::as_str).unwrap_or_default().to_owned(),
                 rect: [x, y, w, h],
+                frame: [x, y, w, h],
                 focused: address.is_some() && address == active,
                 visible: client.get("mapped").and_then(Value::as_bool) == Some(true) && client.get("hidden").and_then(Value::as_bool) != Some(true),
                 address,
@@ -377,13 +387,19 @@ mod tests {
     fn sway_tree_reports_overlapping_floating_windows() {
         let tree = json!({"type": "root", "nodes": [{"type": "output", "name": "HEADLESS-1", "rect": {"x": 0, "y": 0, "width": 1024, "height": 768}, "nodes": [
             {"type": "workspace", "name": "1", "nodes": [
-                {"type": "con", "pid": 10, "name": "Tiled", "focused": true, "visible": true, "rect": {"x": 0, "y": 0, "width": 512, "height": 768}}],
+                {"type": "con", "pid": 10, "name": "Tiled", "focused": true, "visible": true, "rect": {"x": 0, "y": 25, "width": 512, "height": 743},
+                 "window_rect": {"x": 2, "y": 0, "width": 508, "height": 741}, "deco_rect": {"x": 0, "y": 0, "width": 512, "height": 25}}],
              "floating_nodes": [
-                {"type": "floating_con", "pid": 11, "name": "Dialog", "visible": true, "rect": {"x": 400, "y": 100, "width": 300, "height": 200}}]}]}]});
+                {"type": "floating_con", "pid": 11, "name": "Dialog", "visible": true, "rect": {"x": 400, "y": 100, "width": 300, "height": 200},
+                 "window_rect": {"x": 2, "y": 0, "width": 296, "height": 198}, "deco_rect": {"x": 400, "y": 75, "width": 300, "height": 25}},
+                {"type": "floating_con", "pid": 12, "name": "Above", "visible": true, "rect": {"x": 520, "y": 10, "width": 100, "height": 50},
+                 "window_rect": {"x": 2, "y": 0, "width": 96, "height": 48}, "deco_rect": {"x": 520, "y": -15, "width": 100, "height": 25}}]}]}]});
         let windows = sway_windows(&tree);
         let tiled = windows.iter().find(|w| w.title == "Tiled").unwrap();
         assert_eq!(tiled.output.as_deref(), Some("HEADLESS-1"));
-        assert_eq!(tiled.overlapping, vec![[400, 100, 300, 200]]);
+        // The content excludes the borders; a floating window counts with its title bar.
+        assert_eq!(tiled.rect, [2, 25, 508, 741]);
+        assert_eq!(tiled.overlapping, vec![[400, 75, 300, 225]]);
         assert!(windows.iter().find(|w| w.title == "Dialog").unwrap().overlapping.is_empty());
     }
 

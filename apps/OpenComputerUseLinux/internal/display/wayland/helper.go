@@ -37,6 +37,11 @@ type Probe struct {
 		RemoteDesktop *PortalInterface `json:"remote_desktop"`
 		Screencast    *PortalInterface `json:"screencast"`
 	} `json:"portal"`
+	// Compositor names the compositor IPC the helper can use.
+	Compositor struct {
+		Sway     bool `json:"sway"`
+		Hyprland bool `json:"hyprland"`
+	} `json:"compositor"`
 	Raw json.RawMessage `json:"-"`
 }
 

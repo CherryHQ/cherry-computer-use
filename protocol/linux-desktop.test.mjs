@@ -60,6 +60,11 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   const wayland = session_type ? session_type === 'wayland' : Boolean(process.env.WAYLAND_DISPLAY)
   const capabilities = (await client.getCapabilities()).capabilities
   const keyboard = capabilities.find(item => item.name === 'pressKey').availability
+  // X11 and wlroots compositors (virtual pointer, compositor IPC) offer the pointer.
+  const pointer = capabilities.find(item => item.name === 'drag').availability
+  const screenshot = capabilities.find(item => item.name === 'screenshot').availability
+  assert.equal(snapshot.screenshot.status, screenshot.status === 'available' ? 'available' : 'unavailable', JSON.stringify(snapshot.screenshot))
+  if (screenshot.status === 'available') assert.equal(snapshot.screenshot.image.mimeType, 'image/png')
   const pointerActions = [
     { type: 'drag', from: { x: 20, y: 20 }, to: { x: 60, y: 20 } },
     { type: 'click', x: 20, y: 20 },
@@ -69,18 +74,20 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
     { type: 'scroll', direction: 'down', pages: 1 },
   ]
   const global = action => client.act({ appSessionId: session.id, snapshotId: snapshot.id, ...action, allowGlobalInput: true })
-  // Without allowGlobalInput nothing global is sent; Wayland has no pointer input.
+  // Without allowGlobalInput nothing global is sent.
   for (const action of [...pointerActions, ...keyActions]) {
     await state(() => true)
-    const pointer = pointerActions.includes(action)
-    const expected = wayland && pointer ? 'UNSUPPORTED_CAPABILITY' : keyboard.status === 'available' || pointer ? 'PERMISSION_REQUIRED' : keyboard.reason.code
+    const availability = pointerActions.includes(action) ? pointer : keyboard
+    const expected = availability.status === 'available' ? 'PERMISSION_REQUIRED' : availability.reason.code
     await assert.rejects(act(action), refused(expected))
   }
-  if (wayland) {
+  if (pointer.status !== 'available') {
     for (const action of pointerActions) {
       await state(() => true)
-      await assert.rejects(global(action), refused('UNSUPPORTED_CAPABILITY'))
+      await assert.rejects(global(action), refused(pointer.reason.code))
     }
+  }
+  if (wayland) {
     // Portal sessions (GNOME, KDE) list remoteDesktop; the wlroots virtual keyboard needs no grant.
     const permissions = (await client.getPermissionStatus()).permissions
     const portal = permissions.some(permission => permission.id === 'remoteDesktop')
@@ -105,8 +112,8 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   await state(elements => elements.some(element => element.name === 'Second field' && element.value === 'X'))
   await state(() => true)
   assert.equal((await global({ type: 'scroll', direction: 'down', pages: 1 })).status, 'completed')
-  if (wayland) return
-  // X11 pointer: a double click presses the counter twice; points outside the window are refused.
+  if (pointer.status !== 'available') return
+  // Pointer: a double click presses the counter twice; points outside the window are refused.
   await state(() => true)
   await global({ type: 'click', elementId: named(`Count: ${count + 1}`).id, count: 2 })
   await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))

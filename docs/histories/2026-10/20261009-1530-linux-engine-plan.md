@@ -372,3 +372,35 @@ wlroots 合成器开放虚拟键盘和带 PID 的 IPC，能把输入绑定到具
 ### Validation
 
 - GNOME 50 本地照跑新任务的步骤通过；远端 `ubuntu-26.04` 任务待首次运行确认镜像可用。
+- 后续：`ubuntu-26.04` 上同样失败；诊断显示座位已有键盘、外壳焦点是夹具窗口。GTK 3 只在收到 `wl_keyboard.enter` 后变为 ACTIVE，而外壳启动时处于 overview，键盘焦点留在其搜索框。焦点处理改为先退出 overview 再激活窗口后，CI 全部通过。
+
+## [2026-10-12 19:00] | Task: W2 wlroots 截图与虚拟指针
+
+### Execution Context
+
+- Agent ID: `/root`
+- Base Model: Claude Opus 5.5
+- Runtime: Claude Code (desktop app)
+
+### User Query
+
+> CI 过了之后继续 W2 剩下的部分。
+
+### Changes Overview
+
+Scope: Rust 辅助进程、Go 引擎与 SDK、测试脚本、CI 与文档。
+
+- 辅助进程：`window.find`/`window.capture`（Sway IPC + screencopy 区域截图，有浮动窗口重叠时拒绝；Hyprland IPC + toplevel export，协议文件取自 hyprland-protocols v0.7.1，BSD-3）；新增 `pointer.rs`：`zwlr_virtual_pointer` 绝对移动（`xdg_output` 布局外包框）、按键、点击与释放，设备常驻。
+- Go：`internal/display/wayland` 新增窗口查找、截图（共享内存帧转 PNG 并缩放到逻辑尺寸）与指针调用；引擎在 Sway/Hyprland 上为原生 Wayland 窗口提供截图、`WindowRect`、点击、拖拽，点击前移动指针并要求 IPC 焦点为目标；元素中心用窗口坐标系 extents 加窗口原点。SDK 的截图与指针可用性来自引擎。
+- 测试：新增 `TestWlrootsPointerAndCapture`（截图尺寸与内容、元素单击与双击、拖拽、窗口外拒绝、浮动窗口遮挡时拒绝点击与截图）、截图格式与缩放单元测试；SDK 协议测试按指针可用性断言；CI Sway 步骤改名为输入与截图。
+
+### Design Intent
+
+指针绑定目标的依据是合成器 IPC：移动后焦点跟随鼠标落到目标窗口，才按下按键。这样不需要合成器暴露「指针下方是哪个窗口」，代价是关闭焦点跟随鼠标的配置会被拒绝。截图按逻辑尺寸输出，使截图坐标与指针坐标在缩放输出上一致。
+
+### Validation
+
+- 隔离 Sway 中引擎测试连续 5 次通过，SDK 协议测试通过；隔离 X11 中引擎与 SDK 测试通过（无回归）。
+- 实测问题：无头会话没有物理指针，每次手势新建虚拟指针会让座位指针能力反复出现，GTK 异步绑定期间的点击偶发丢失；改为设备常驻并在会话中预热后稳定。
+- Sway 窗口几何修正：IPC 的 `rect` 包含边框，客户端内容需加 `window_rect` 偏移（实测 1024x743 → 1020x741）；元素坐标前新增 AT-SPI 与合成器窗口尺寸一致性检查。
+- Hyprland：嵌套到真实桌面（`OCU_HYPRLAND_PARENT=wayland-0`）后有显示器，引擎测试连续 3 次通过、SDK 测试通过，截图人工检查正确；遮挡测试覆盖两种合成器。真实会话、`/var/crash` 前后不变，无残留。

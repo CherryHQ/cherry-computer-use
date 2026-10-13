@@ -16,7 +16,11 @@ virtual keyboard with no dialog, can type any character, and require the
 compositor to report the target as the focused window. Elsewhere (GNOME, KDE) keys go
 through the RemoteDesktop portal: request the `remoteDesktop` permission (the system
 shows a dialog); the target window must be active and characters the keyboard
-layout lacks are refused. Wayland pointer input is unsupported. Query capabilities and element actions before
+layout lacks are refused. On Sway and Hyprland, screenshots and pointer input also
+work for native Wayland windows: the pointer moves first and a button is pressed only
+when the compositor then reports the target as the focused window, which needs focus
+to follow the mouse (the default). Other Wayland compositors report capture and
+pointer input as unsupported. Query capabilities and element actions before
 acting. Windows message delivery does not guarantee that every application accepts
 background input; multi-window selection and GPU window capture remain limited.
 macOS supports explicit permission requests. SDK 0.1.1 includes matching native
