@@ -7,12 +7,16 @@
 #   testdata/wlroots-session.sh hyprland <command...>
 #
 # sway runs headless with software rendering. Hyprland has no headless mode, so it
-# runs nested inside a headless labwc, which needs a GPU render node for dmabuf.
+# runs nested inside a headless labwc, which needs a DRM render node for dmabuf
+# (on a machine without a GPU, vgem with Mesa's software renderer will do).
 # Where a headless parent gives it no monitor, OCU_HYPRLAND_PARENT=wayland-0 nests
 # it in that display instead: a window appears there, but input still goes only to
 # the nested Hyprland's own seat.
 # The command gets WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland, SWAYSOCK or
 # HYPRLAND_INSTANCE_SIGNATURE, and OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST=<compositor>.
+# OCU_WLROOTS_DEBUG=1 prints the compositors' logs when the run fails.
+# OCU_XWAYLAND=1 runs XWayland too and gives the command its DISPLAY with
+# GDK_BACKEND=x11, so GTK test windows are X11 windows.
 set -eu
 compositor=${1:-}
 case "$compositor" in
@@ -68,7 +72,13 @@ session_processes() {
 }
 # Cleanup must never change the command's exit status.
 cleanup() {
+  code=$?
   set +e
+  if [ "$code" != 0 ] && [ "${OCU_WLROOTS_DEBUG:-}" = 1 ]; then
+    for log in "$root/parent.log" "$root/compositor.log" "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log; do
+      [ -s "$log" ] && { echo "wlroots-session.sh: $log:" >&2; tail -40 "$log" >&2; }
+    done
+  fi
   [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && hyprctl dispatch exit >/dev/null 2>&1
   for pid in $pids; do kill "$pid" 2>/dev/null; done
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -90,6 +100,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# hold_seat <display> <name>: gives that compositor's seat a virtual keyboard and
+# pointer until the session ends (needs OPEN_COMPUTER_USE_WAYLAND_HELPER).
+hold_seat() {
+  mkfifo "$root/seat-$2"
+  python3 -c '
+import json, sys
+def call(method, **params):
+    body = json.dumps({"id": 1, "method": method, "params": params}).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
+call("hello", protocol=1)
+call("vkeyboard.prepare")
+call("vpointer.prepare")
+open(sys.argv[1]).read()
+' "$root/seat-$2" | WAYLAND_DISPLAY="$1" "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
+  pids="$pids $!"
+  sleep 1
+}
+
 # wait_for_socket <pid> <count>: until the runtime directory holds count Wayland
 # sockets, or the compositor exits. Prints the newest socket name.
 wait_for_socket() {
@@ -106,11 +135,15 @@ wait_for_socket() {
   return 1
 }
 
+# XWayland's sockets live in the shared /tmp/.X11-unix; the new one is ours.
+x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
+xwayland=disable
+[ "${OCU_XWAYLAND:-}" = 1 ] && xwayland=force
 case "$compositor" in
   sway)
     # Our own config only: the system config would export this session's
     # environment into the user's systemd manager.
-    printf 'output HEADLESS-1 resolution 1024x768\nxwayland disable\n' > "$root/sway.conf"
+    printf 'output HEADLESS-1 resolution 1024x768\nxwayland %s\n' "$xwayland" > "$root/sway.conf"
     WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 XDG_CURRENT_DESKTOP=sway \
       sway -c "$root/sway.conf" > "$root/compositor.log" 2>&1 &
     pids="$!"
@@ -129,18 +162,24 @@ case "$compositor" in
     else
       # An empty config directory: no system or user autostart.
       mkdir -m 700 "$root/labwc"
-      WLR_BACKENDS=headless WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
+      # labwc starts without outputs; Hyprland's window needs one to be shown on.
+      WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=gles2 WLR_LIBINPUT_NO_DEVICES=1 \
         labwc -C "$root/labwc" > "$root/parent.log" 2>&1 &
       pids="$!"
       WAYLAND_DISPLAY=$(wait_for_socket "$!" 1)
       sockets=2
+      # Nested Hyprland creates its output only once the parent's seat has input
+      # devices, as a desktop's has.
+      [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ] && hold_seat "$WAYLAND_DISPLAY" parent
+      # labwc runs an XWayland of its own; Hyprland's is the one started next.
+      x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
     fi
     export WAYLAND_DISPLAY
     mkdir -p "$XDG_CONFIG_HOME/hypr"
     cat > "$XDG_CONFIG_HOME/hypr/hyprland.conf" <<'CONF'
 monitor = , 1024x768, auto, 1
 xwayland {
-  enabled = false
+  enabled = XWAYLAND_ENABLED
 }
 # Window animations advance per rendered frame; a nested headless output may
 # barely render, leaving new windows at their tiny opening size.
@@ -156,6 +195,8 @@ ecosystem {
   no_donation_nag = true
 }
 CONF
+    sed -i "s/XWAYLAND_ENABLED/$([ "$xwayland" = force ] && echo true || echo false)/" "$XDG_CONFIG_HOME/hypr/hyprland.conf"
+    [ "${OCU_WLROOTS_DEBUG:-}" = 1 ] && printf 'debug {\n  disable_logs = false\n}\n' >> "$XDG_CONFIG_HOME/hypr/hyprland.conf"
     HYPRLAND_NO_CRASHREPORTER=1 XDG_CURRENT_DESKTOP=Hyprland \
       Hyprland --config "$XDG_CONFIG_HOME/hypr/hyprland.conf" > "$root/compositor.log" 2>&1 &
     pids="$! $pids"
@@ -176,25 +217,24 @@ pids="$pids $!"
 sleep 1
 # A headless compositor has no keyboard or pointer, and clients bind one only
 # after the seat gains it, losing input sent meanwhile. Hold a virtual keyboard
-# and pointer for the whole run, as physical devices do (needs
-# OPEN_COMPUTER_USE_WAYLAND_HELPER).
+# and pointer for the whole run, as physical devices do.
 if [ -n "${OPEN_COMPUTER_USE_WAYLAND_HELPER:-}" ]; then
-  mkfifo "$root/keyboard"
-  python3 -c '
-import json, sys
-def call(method, **params):
-    body = json.dumps({"id": 1, "method": method, "params": params}).encode()
-    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
-    sys.stdout.buffer.flush()
-call("hello", protocol=1)
-call("vkeyboard.prepare")
-call("vpointer.prepare")
-open(sys.argv[1]).read()
-' "$root/keyboard" | "$OPEN_COMPUTER_USE_WAYLAND_HELPER" >/dev/null &
-  pids="$pids $!"
-  sleep 1
+  hold_seat "$WAYLAND_DISPLAY" session
+fi
+backend=wayland
+if [ "$xwayland" = force ]; then
+  for _ in $(seq 100); do
+    x_socket=$(ls /tmp/.X11-unix 2>/dev/null | grep -vxF "$x_before" | head -1 || true)
+    [ -n "$x_socket" ] && break
+    sleep 0.1
+  done
+  [ -n "$x_socket" ] || { echo "wlroots-session.sh: XWayland did not start" >&2; exit 1; }
+  DISPLAY=":${x_socket#X}"
+  export DISPLAY
+  backend=x11
 fi
 status=0
 case "$compositor" in sway) desktop=sway ;; *) desktop=Hyprland ;; esac
-env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP="$desktop" GDK_BACKEND=wayland OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" "$@" || status=$?
+env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP="$desktop" GDK_BACKEND="$backend" OPEN_COMPUTER_USE_LINUX_WLROOTS_TEST="$compositor" \
+  OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST="$([ "$backend" = x11 ] && echo 1)" "$@" || status=$?
 exit "$status"

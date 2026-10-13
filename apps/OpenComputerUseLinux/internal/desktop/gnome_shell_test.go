@@ -222,10 +222,19 @@ func TestGNOMEShellExtension(t *testing.T) {
 	if err := engine.PressKey(ctx, target, "ctrl+a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.TypeKeys(ctx, target, "Hello, 中文 😀"); err != nil {
+	// X11 clients (XWayland) take no input method text from the Shell, so text
+	// outside ASCII is refused before anything is sent.
+	text := "Hello, 中文 😀"
+	if os.Getenv("OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST") == "1" {
+		if c, effect := code(engine.TypeKeys(ctx, target, text)); c != "UNSUPPORTED_CAPABILITY" || effect != "none" {
+			t.Fatalf("Unicode text into an X11 window: %s/%s", c, effect)
+		}
+		text = "Hello, X11!"
+	}
+	if err := engine.TypeKeys(ctx, target, text); err != nil {
 		t.Fatal(err)
 	}
-	eventually("field", func() string { return field().Text }, "Hello, 中文 😀")
+	eventually("field", func() string { return field().Text }, text)
 	place(cover, 50, 50, 600, 500)
 	time.Sleep(500 * time.Millisecond)
 	if c, effect := code(engine.TypeKeys(ctx, target, "x")); c != "TARGET_UNAVAILABLE" || effect != "none" {
@@ -237,5 +246,5 @@ func TestGNOMEShellExtension(t *testing.T) {
 	if c, _ := code(engine.PressKey(ctx, target, "Return")); c != "PERMISSION_REQUIRED" {
 		t.Fatalf("keys after revoking: %s", c)
 	}
-	eventually("field", func() string { return field().Text }, "Hello, 中文 😀")
+	eventually("field", func() string { return field().Text }, text)
 }

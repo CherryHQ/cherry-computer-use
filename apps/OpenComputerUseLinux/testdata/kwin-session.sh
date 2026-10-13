@@ -14,6 +14,8 @@
 # OCU_KWIN_SCALE and OCU_KWIN_OUTPUTS set the virtual outputs' scale and count.
 # OCU_KDE_INTEGRATION=<open-computer-use executable> runs its
 # install-kde-integration once KWin is up, as a user would.
+# OCU_XWAYLAND=1 runs XWayland too and gives the command its DISPLAY with
+# GDK_BACKEND=x11, so GTK test windows are X11 windows.
 # OCU_KWIN_DEBUG=1 logs KWin's core decisions, such as which clients may use
 # restricted Wayland interfaces.
 set -eu
@@ -103,8 +105,12 @@ if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
   export QT_LOGGING_RULES="kwin_core.debug=true;KWIN_UTILS.debug=true;kf.service.*.debug=true"
   export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"
 fi
+# XWayland's sockets live in the shared /tmp/.X11-unix; the new one is ours.
+x_before=$(ls /tmp/.X11-unix 2>/dev/null || true)
+xwayland=
+[ "${OCU_XWAYLAND:-}" = 1 ] && xwayland=--xwayland
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
-  kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
+  kwin_wayland $xwayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &
 kwin=$!
 for _ in $(seq 100); do
@@ -148,6 +154,18 @@ launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launch
 "$launcher" --launch-immediately >/dev/null 2>&1 &
 sleep 1
 status=0
-env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE GDK_BACKEND=wayland QT_QPA_PLATFORM=wayland \
-  OPEN_COMPUTER_USE_LINUX_KDE_TEST=1 "$@" || status=$?
+backend=wayland
+if [ -n "$xwayland" ]; then
+  for _ in $(seq 100); do
+    x_socket=$(ls /tmp/.X11-unix 2>/dev/null | grep -vxF "$x_before" | head -1 || true)
+    [ -n "$x_socket" ] && break
+    sleep 0.1
+  done
+  [ -n "$x_socket" ] || { echo "kwin-session.sh: XWayland did not start" >&2; exit 1; }
+  DISPLAY=":${x_socket#X}"
+  export DISPLAY
+  backend=x11
+fi
+env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE GDK_BACKEND="$backend" QT_QPA_PLATFORM=wayland \
+  OPEN_COMPUTER_USE_LINUX_KDE_TEST=1 OPEN_COMPUTER_USE_LINUX_XWAYLAND_TEST="$([ "$backend" = x11 ] && echo 1)" "$@" || status=$?
 exit "$status"
