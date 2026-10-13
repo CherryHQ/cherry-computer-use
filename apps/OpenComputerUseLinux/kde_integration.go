@@ -22,8 +22,9 @@ type kdeHost struct {
 	extensionHost
 	// helper is the canonical path of the Wayland helper.
 	helper func() (string, error)
-	// served reports whether KWin serves the helper both ScreenShot2 and fake_input.
-	served func() (bool, error)
+	// served reports whether KWin serves the helper both ScreenShot2 and
+	// fake_input, and otherwise what is missing.
+	served func() (bool, string, error)
 	wait   time.Duration
 }
 
@@ -36,18 +37,19 @@ func systemKDEHost() kdeHost {
 		}
 		return filepath.EvalSymlinks(path)
 	}
-	host.served = func() (bool, error) {
+	host.served = func() (bool, string, error) {
 		path, err := host.helper()
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		helper, err := wayland.Start(context.Background(), path, os.Environ(), 5*time.Second)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		defer helper.Close()
 		probe := helper.Probe()
-		return probe.KWinInput() && probe.KWinCapture(), nil
+		detail := fmt.Sprintf("KWin found: %v, fake_input offered: %v, ScreenShot2 allowed: %v", probe.KWin != nil, probe.KWinInput(), probe.KWinCapture())
+		return probe.KWinInput() && probe.KWinCapture(), detail, nil
 	}
 	return host
 }
@@ -112,7 +114,7 @@ func installKDEIntegration(stdout io.Writer, host kdeHost) error {
 	// KWin reads the application cache lazily; wait until both interfaces serve the helper.
 	deadline := time.Now().Add(host.wait)
 	for {
-		served, err := host.served()
+		served, detail, err := host.served()
 		if served {
 			fmt.Fprintln(stdout, "KWin now serves the helper. Reinstall after moving or upgrading Cherry Computer Use, since the authorization names the helper's path.")
 			return nil
@@ -121,7 +123,7 @@ func installKDEIntegration(stdout io.Writer, host kdeHost) error {
 			if err != nil {
 				return fmt.Errorf("KWin did not serve the helper yet: %w", err)
 			}
-			return fmt.Errorf("KWin did not serve the helper within %s; check that this is KDE Plasma 6 and try again", host.wait)
+			return fmt.Errorf("KWin did not serve the helper within %s (%s); check that this is KDE Plasma 6 and try again", host.wait, detail)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

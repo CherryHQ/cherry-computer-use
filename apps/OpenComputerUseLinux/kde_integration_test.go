@@ -30,7 +30,7 @@ func TestKDEIntegrationWritesTheAuthorizationAndWaitsForKWin(t *testing.T) {
 		},
 		helper: func() (string, error) { return helper, nil },
 		// KWin rereads its application cache lazily: the second check succeeds.
-		served: func() (bool, error) { checks++; return checks > 1, nil },
+		served: func() (bool, string, error) { checks++; return checks > 1, "", nil },
 		wait:   5 * time.Second,
 	}
 	var out bytes.Buffer
@@ -70,12 +70,12 @@ func TestKDEIntegrationReportsWhenKWinNeverServes(t *testing.T) {
 			run: func(string, ...string) (string, error) { return "", errors.New("missing") },
 		},
 		helper: func() (string, error) { return helper, nil },
-		served: func() (bool, error) { return false, nil },
+		served: func() (bool, string, error) { return false, "fake_input offered: false", nil },
 		wait:   0,
 	}
 	var out bytes.Buffer
 	err := installKDEIntegration(&out, host)
-	if err == nil || !strings.Contains(err.Error(), "did not serve") || !strings.Contains(out.String(), "kbuildsycoca6 did not run") {
+	if err == nil || !strings.Contains(err.Error(), "did not serve") || !strings.Contains(err.Error(), "fake_input offered: false") || !strings.Contains(out.String(), "kbuildsycoca6 did not run") {
 		t.Fatalf("err %v, output %s", err, out.String())
 	}
 	// Outside KDE nothing is waited for.

@@ -107,7 +107,11 @@ if [ "${OCU_KWIN_PLASMASHELL:-}" = 1 ]; then
   sleep 2
 fi
 if [ -n "${OCU_KDE_INTEGRATION:-}" ]; then
-  WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE "$OCU_KDE_INTEGRATION" install-kde-integration
+  WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE "$OCU_KDE_INTEGRATION" install-kde-integration || {
+    echo "kwin-session.sh: install-kde-integration failed; KWin log:" >&2
+    tail -40 "$root/kwin.log" >&2
+    exit 1
+  }
 fi
 launcher=$(command -v at-spi-bus-launcher || echo /usr/libexec/at-spi-bus-launcher)
 "$launcher" --launch-immediately >/dev/null 2>&1 &
