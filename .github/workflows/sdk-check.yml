@@ -279,6 +279,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends kwin-wayland kwin-common mesa-libgallium libgl1-mesa-dri libgbm1 libkf6service-bin libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0
           kwin_wayland --version
+      - name: Give KWin a DRM device
+        # KWin's virtual backend composites with OpenGL only on a DRM device, and
+        # captures windows only with OpenGL. The runner has no GPU; vgem, as in
+        # KWin's own CI, gives Mesa's software renderer a device.
+        run: |
+          sudo modprobe vgem || { sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" && sudo modprobe vgem; }
+          sudo chmod a+rw /dev/dri/*
+          ls -l /dev/dri
       - name: Capture and input through KWin
         run: |
           # The runtime's own install-kde-integration authorizes the helper once KWin is up.
