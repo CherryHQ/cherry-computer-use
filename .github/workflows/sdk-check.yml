@@ -282,9 +282,16 @@ jobs:
       - name: Give KWin a DRM device
         # KWin's virtual backend composites with OpenGL only on a DRM device, and
         # captures windows only with OpenGL. The runner has no GPU; vgem, as in
-        # KWin's own CI, gives Mesa's software renderer a device.
+        # KWin's own CI, gives Mesa's software renderer a device. With CI set,
+        # KWin opens /dev/dri/card1, which on the runner is a Hyper-V display
+        # that cannot render, so vgem's node is mounted over it.
         run: |
+          before=$(ls /dev/dri 2>/dev/null || true)
           sudo modprobe vgem || { sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" && sudo modprobe vgem; }
+          vgem=$(ls /dev/dri | grep -x 'card[0-9]*' | grep -vxF "$before" || true)
+          echo "before: $before; vgem: $vgem"
+          [ -n "$vgem" ]
+          [ "$vgem" = card1 ] || { sudo touch /dev/dri/card1; sudo mount --bind "/dev/dri/$vgem" /dev/dri/card1; }
           sudo chmod a+rw /dev/dri/*
           ls -l /dev/dri
       - name: Capture and input through KWin

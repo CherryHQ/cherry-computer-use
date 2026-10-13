@@ -103,10 +103,7 @@ if [ "${OCU_KWIN_DEBUG:-}" = 1 ]; then
   export QT_LOGGING_RULES="kwin_core.debug=true;KWIN_UTILS.debug=true;kf.service.*.debug=true"
   export QT_MESSAGE_PATTERN="%{time process} %{category}: %{message}"
 fi
-# With CI set, KWin's virtual backend opens /dev/dri/card1 instead of looking
-# for a usable DRM device (a workaround for KWin's own CI); on a CI runner that
-# is often a display without rendering, which leaves KWin on QPainter.
-env -u CI XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
+XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
   kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &
 kwin=$!
