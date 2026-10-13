@@ -74,6 +74,7 @@ const DRAG_STEPS = 10;
 // a press in the same instant as the motion can reach a client that has not
 // handled the motion yet.
 const SETTLE_MS = 40;
+const MOTION_ATTEMPTS = 5;
 const CLICK_GAP_MS = 30;
 
 const delay = ms => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
@@ -369,14 +370,23 @@ export default class ComputerUseExtension extends Extension {
             devices.held.keys.delete(keyval);
     }
 
-    // Moves the pointer, lets clients see the motion, and confirms the target owns
-    // the point right before anything is pressed.
+    // Moves the pointer, confirms the cursor is really there (a busy compositor can
+    // drop a new device's first motion, and a press then lands wherever the cursor
+    // was), and confirms the target owns the point right before anything is pressed.
     async _pointAt(devices, target, x, y) {
         const [width, height] = global.display.get_size();
         if (!(x >= 0 && y >= 0 && x < width && y < height))
             throw new Refusal(ERROR.invalid, 'The point is outside the desktop');
-        devices.pointer.notify_absolute_motion(now(), x, y);
-        await delay(SETTLE_MS);
+        let cursor = [];
+        for (let attempt = 0; attempt < MOTION_ATTEMPTS; attempt++) {
+            devices.pointer.notify_absolute_motion(now(), x, y);
+            await delay(SETTLE_MS);
+            cursor = global.get_pointer();
+            if (Math.abs(cursor[0] - x) <= 1 && Math.abs(cursor[1] - y) <= 1)
+                break;
+        }
+        if (!(Math.abs(cursor[0] - x) <= 1 && Math.abs(cursor[1] - y) <= 1))
+            throw new Refusal(ERROR.target, `The pointer stayed at (${cursor[0]}, ${cursor[1]}) instead of moving to (${Math.round(x)}, ${Math.round(y)})`);
         const {window} = this._target(...target);
         if (this._windowAt(x, y) !== window)
             throw new Refusal(ERROR.target, `The point (${Math.round(x)}, ${Math.round(y)}) shows ${this._describeAt(x, y)}, not the target; the click would not reach it`);
