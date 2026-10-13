@@ -19,7 +19,7 @@ import (
 	sdkruntime "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 )
 
-var version = "0.1.3"
+var version = "0.1.4"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 
