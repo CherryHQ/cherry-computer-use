@@ -23,7 +23,7 @@ use wayland_protocols_wlr::{
     screencopy::v1::client::{zwlr_screencopy_frame_v1, zwlr_screencopy_manager_v1},
 };
 
-use crate::{keyboard::Failure, wlr};
+use crate::{keyboard::Failure, shell, wlr};
 
 #[allow(non_upper_case_globals, non_camel_case_types, unused_imports, missing_docs, clippy::all)]
 pub mod hyprland_export {
@@ -55,6 +55,11 @@ pub struct Window {
     pub rect: [i64; 4],
     /// Content plus the compositor's borders and title bar, which can cover others.
     pub frame: [i64; 4],
+    /// Where toolkit window coordinates (AT-SPI) start: the client surface, which
+    /// on GNOME includes client-side shadows. Equals `rect` elsewhere.
+    pub client: [i64; 4],
+    /// Mutter's window id when the GNOME Shell extension lists the window.
+    pub shell_id: Option<u32>,
     pub focused: bool,
     pub visible: bool,
     /// Hyprland window address, or the Sway output holding the window.
@@ -92,19 +97,22 @@ fn sway_views(
         let [x, y, width, height] = rect(node.get("rect"));
         let [dx, dy, content_width, content_height] = rect(node.get("window_rect"));
         let title_bar = rect(node.get("deco_rect"))[3];
+        let content = if content_width > 0 && content_height > 0 {
+            [x + dx, y + dy, content_width, content_height]
+        } else {
+            [x, y, width, height]
+        };
         views.push((
             Window {
                 pid: pid as u32,
                 title: name.unwrap_or_default().to_owned(),
-                rect: if content_width > 0 && content_height > 0 {
-                    [x + dx, y + dy, content_width, content_height]
-                } else {
-                    [x, y, width, height]
-                },
+                rect: content,
                 frame: [x, y - title_bar, width, height + title_bar],
+                client: content,
                 focused: node.get("focused").and_then(Value::as_bool) == Some(true),
                 visible: node.get("visible").and_then(Value::as_bool) == Some(true),
                 address: None,
+                shell_id: None,
                 output: output.map(|(n, _)| n.to_owned()),
                 output_rect: output.map(|(_, r)| r),
                 overlapping: Vec::new(),
@@ -167,10 +175,12 @@ fn hyprland_windows(clients: &Value, active: Option<u64>) -> Vec<Window> {
                 title: client.get("title").and_then(Value::as_str).unwrap_or_default().to_owned(),
                 rect: [x, y, w, h],
                 frame: [x, y, w, h],
+                client: [x, y, w, h],
                 focused: address.is_some() && address == active,
                 visible: client.get("mapped").and_then(Value::as_bool) == Some(true)
                     && client.get("hidden").and_then(Value::as_bool) != Some(true),
                 address,
+                shell_id: None,
                 output: None,
                 output_rect: None,
                 overlapping: Vec::new(),
@@ -194,7 +204,37 @@ pub fn windows() -> Result<Option<Vec<Window>>, Failure> {
             .and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok());
         return Ok(Some(hyprland_windows(&clients, active)));
     }
+    if shell::running() == Some(shell::PROTOCOL) {
+        return Ok(Some(shell::windows()?.iter().filter_map(shell_window).collect()));
+    }
     Ok(None)
+}
+
+/// A window from the GNOME Shell extension's list.
+fn shell_window(value: &Value) -> Option<Window> {
+    let quad = |name: &str| -> Option<[i64; 4]> {
+        let values = value.get(name)?.as_array()?;
+        let mut out = [0; 4];
+        for (slot, value) in out.iter_mut().zip(values) {
+            *slot = value.as_f64()?.round() as i64;
+        }
+        (values.len() == 4).then_some(out)
+    };
+    let frame = quad("frame")?;
+    Some(Window {
+        pid: u32::try_from(value.get("pid")?.as_u64()?).ok()?,
+        title: value.get("title")?.as_str()?.to_owned(),
+        rect: frame,
+        frame,
+        client: quad("buffer")?,
+        shell_id: u32::try_from(value.get("id")?.as_u64()?).ok(),
+        focused: value.get("focused").and_then(Value::as_bool) == Some(true),
+        visible: value.get("visible").and_then(Value::as_bool) == Some(true),
+        address: None,
+        output: None,
+        output_rect: None,
+        overlapping: Vec::new(),
+    })
 }
 
 /// The one window of pid titled title; several matches are refused, as on X11.
@@ -212,23 +252,25 @@ pub fn find(pid: u32, title: &str) -> Result<Window, Failure> {
 }
 
 pub fn describe(window: &Window) -> Value {
-    json!({ "pid": window.pid, "title": window.title, "rect": window.rect, "focused": window.focused, "visible": window.visible })
+    json!({ "pid": window.pid, "title": window.title, "rect": window.rect, "client": window.client,
+        "focused": window.focused, "visible": window.visible })
 }
 
-/// Pixels of one window: 32-bit little-endian XRGB/ARGB rows.
-pub struct Image {
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub format: u32,
-    pub y_invert: bool,
-    pub data: Vec<u8>,
+/// Pixels of one window: 32-bit little-endian XRGB/ARGB rows, or a PNG the GNOME
+/// Shell extension encoded.
+pub enum Image {
+    Raw { width: u32, height: u32, stride: u32, format: u32, y_invert: bool, data: Vec<u8> },
+    Png { width: u32, height: u32, data: Vec<u8> },
 }
 
 impl Image {
     pub fn to_json(&self) -> Value {
-        json!({ "width": self.width, "height": self.height, "stride": self.stride, "format": self.format,
-            "yInvert": self.y_invert, "data": base64::engine::general_purpose::STANDARD.encode(&self.data) })
+        let encode = |data: &[u8]| base64::engine::general_purpose::STANDARD.encode(data);
+        match self {
+            Image::Raw { width, height, stride, format, y_invert, data } => json!({ "width": width, "height": height,
+                "stride": stride, "format": format, "yInvert": y_invert, "data": encode(data) }),
+            Image::Png { width, height, data } => json!({ "width": width, "height": height, "png": encode(data) }),
+        }
     }
 }
 
@@ -451,13 +493,17 @@ fn copy_shm(
     result?;
     let mut data = Vec::with_capacity(size);
     (&file).read_to_end(&mut data).map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
-    Ok(Image { width, height, stride, format, y_invert: state.y_invert, data })
+    Ok(Image::Raw { width, height, stride, format, y_invert: state.y_invert, data })
 }
 
 /// Captures one window without activating it.
 pub fn capture(window: &Window) -> Result<Image, Failure> {
     if !window.visible {
         return Err(failure("CAPTURE_FAILED", "The window is not visible"));
+    }
+    if let Some(id) = window.shell_id {
+        let (data, width, height) = shell::capture(&shell::Target { id, pid: window.pid, title: &window.title })?;
+        return Ok(Image::Png { width, height, data });
     }
     let connection = Connection::connect_to_env().map_err(|e| failure("CAPTURE_FAILED", e.to_string()))?;
     let (globals, mut queue) =
@@ -566,5 +612,18 @@ mod tests {
         assert_eq!(windows[0].rect, [21, 21, 982, 726]);
         assert_eq!(windows[0].address, Some(0x55d1a2b3c4d0));
         assert!(windows[0].focused && windows[0].visible);
+    }
+
+    #[test]
+    fn shell_windows_carry_id_and_client_surface() {
+        let value = json!({"id": 7, "pid": 42, "title": "Target", "frame": [100, 100, 400, 363], "buffer": [74, 77, 452, 415],
+            "focused": true, "visible": true, "stacking": 1, "scale": 1});
+        let window = shell_window(&value).unwrap();
+        assert_eq!((window.shell_id, window.pid, window.title.as_str()), (Some(7), 42, "Target"));
+        assert_eq!((window.rect, window.client), ([100, 100, 400, 363], [74, 77, 452, 415]));
+        assert!(window.focused && window.visible);
+        assert!(
+            shell_window(&json!({"id": 7, "pid": 42, "title": "T", "frame": [1, 2], "buffer": [0, 0, 1, 1]})).is_none()
+        );
     }
 }

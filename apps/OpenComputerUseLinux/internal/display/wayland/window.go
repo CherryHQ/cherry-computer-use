@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
@@ -16,9 +17,14 @@ import (
 func (p Probe) WindowsAvailable() bool { return p.Compositor.Sway || p.Compositor.Hyprland }
 
 // CaptureAvailable reports whether the helper can capture one window: Sway
-// copies the window's region of its output, Hyprland exports the toplevel.
+// copies the window's region of its output, Hyprland exports the toplevel, and
+// the GNOME Shell extension paints the window itself.
 func (p Probe) CaptureAvailable() display.Availability {
 	switch {
+	case p.ShellAvailable():
+		return display.Available()
+	case p.GNOME():
+		return p.ShellMissing()
 	case p.Compositor.Sway && p.HasGlobal("zwlr_screencopy_manager_v1"):
 		return display.Available()
 	case p.Compositor.Hyprland && p.HasGlobal("hyprland_toplevel_export_manager_v1"):
@@ -29,10 +35,16 @@ func (p Probe) CaptureAvailable() display.Availability {
 	return display.Unsupported("Wayland window capture needs Sway or Hyprland; this compositor is not supported yet")
 }
 
-// VirtualPointerAvailable reports whether the helper can move and press the
-// pointer: the wlroots virtual pointer, output positions, and IPC naming the
-// focused window so a click can be bound to its target.
-func (p Probe) VirtualPointerAvailable() display.Availability {
+// PointerAvailable reports whether pointer input can be bound to a target: the
+// GNOME Shell extension checks the window at the point itself; elsewhere the
+// wlroots virtual pointer needs output positions and IPC naming the focused window.
+func (p Probe) PointerAvailable() display.Availability {
+	if p.ShellAvailable() {
+		return display.Available()
+	}
+	if p.GNOME() {
+		return p.ShellMissing()
+	}
 	if !p.WindowsAvailable() {
 		return display.Unsupported("Wayland pointer input needs Sway or Hyprland; this compositor is not supported yet")
 	}
@@ -43,20 +55,32 @@ func (p Probe) VirtualPointerAvailable() display.Availability {
 }
 
 // Window is a compositor window found by PID and title; Rect is in logical
-// layout coordinates.
+// layout coordinates. Client is where toolkit window coordinates start: the client
+// surface, which on GNOME includes client-side shadows.
 type Window struct {
 	PID     uint32    `json:"pid"`
 	Title   string    `json:"title"`
 	Rect    []float64 `json:"rect"`
+	Client  []float64 `json:"client"`
 	Focused bool      `json:"focused"`
 	Visible bool      `json:"visible"`
 }
 
-func (w Window) Bounds() display.Rect {
-	if len(w.Rect) != 4 {
+func (w Window) Bounds() display.Rect { return rect(w.Rect) }
+
+// ClientBounds is the client surface; it equals Bounds where clients draw no shadows.
+func (w Window) ClientBounds() display.Rect {
+	if len(w.Client) != 4 {
+		return w.Bounds()
+	}
+	return rect(w.Client)
+}
+
+func rect(values []float64) display.Rect {
+	if len(values) != 4 {
 		return display.Rect{}
 	}
-	return display.Rect{X: w.Rect[0], Y: w.Rect[1], Width: w.Rect[2], Height: w.Rect[3]}
+	return display.Rect{X: values[0], Y: values[1], Width: values[2], Height: values[3]}
 }
 
 // FindWindow locates the one window of target's PID with target's title; the
@@ -77,6 +101,9 @@ const (
 )
 
 type capturedFrame struct {
+	// PNG is set when the GNOME Shell extension encoded the image; the raw
+	// fields describe a shared-memory copy otherwise.
+	PNG     string `json:"png"`
 	Data    string `json:"data"`
 	Format  uint32 `json:"format"`
 	Width   int    `json:"width"`
@@ -96,11 +123,14 @@ func (h *Helper) Capture(ctx context.Context, target display.Target) (display.Im
 	if err := h.Call(ctx, "window.capture", map[string]any{"pid": target.PID, "title": target.Title}, &frame); err != nil {
 		return display.Image{}, err
 	}
+	bounds := window.Bounds()
+	if frame.PNG != "" {
+		return scaledPNG(frame, bounds)
+	}
 	pixels, err := frame.image()
 	if err != nil {
 		return display.Image{}, err
 	}
-	bounds := window.Bounds()
 	if width, height := int(bounds.Width+0.5), int(bounds.Height+0.5); width > 0 && height > 0 && (width != frame.Width || height != frame.Height) {
 		pixels = downscale(pixels, width, height)
 	}
@@ -109,6 +139,31 @@ func (h *Helper) Capture(ctx context.Context, target display.Target) (display.Im
 		return display.Image{}, display.Fail("CAPTURE_FAILED", "Could not encode the window image: %v", err)
 	}
 	return display.Image{PNG: out.Bytes(), Width: pixels.Bounds().Dx(), Height: pixels.Bounds().Dy()}, nil
+}
+
+// scaledPNG passes an encoded image through, or rescales it to the window's
+// logical size when the output is scaled.
+func scaledPNG(frame capturedFrame, bounds display.Rect) (display.Image, error) {
+	data, err := base64.StdEncoding.DecodeString(frame.PNG)
+	if err != nil {
+		return display.Image{}, display.Fail("CAPTURE_FAILED", "The helper returned a malformed window image")
+	}
+	width, height := int(bounds.Width+0.5), int(bounds.Height+0.5)
+	if width <= 0 || height <= 0 || (width == frame.Width && height == frame.Height) {
+		return display.Image{PNG: data, Width: frame.Width, Height: frame.Height}, nil
+	}
+	decoded, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return display.Image{}, display.Fail("CAPTURE_FAILED", "The helper returned an unreadable window image: %v", err)
+	}
+	pixels := image.NewRGBA(decoded.Bounds())
+	draw.Draw(pixels, pixels.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	pixels = downscale(pixels, width, height)
+	var out bytes.Buffer
+	if err := png.Encode(&out, pixels); err != nil {
+		return display.Image{}, display.Fail("CAPTURE_FAILED", "Could not encode the window image: %v", err)
+	}
+	return display.Image{PNG: out.Bytes(), Width: width, Height: height}, nil
 }
 
 // image converts the helper's shared-memory copy to opaque RGBA.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
@@ -116,7 +117,7 @@ func (e *Engine) Report(ctx context.Context) Report {
 	}
 	report.Helper.Version, report.Helper.Probe = helper.Version(), helper.Probe().Raw
 	report.Capture = helper.Probe().CaptureAvailable()
-	report.GlobalInput = helper.Probe().VirtualPointerAvailable()
+	report.GlobalInput = helper.Probe().PointerAvailable()
 	if report.GlobalInput.Status != "available" && e.Display() != "" {
 		report.GlobalInput.Message += "; XTEST reaches XWayland windows only"
 	}
@@ -148,7 +149,8 @@ func (e *Engine) CaptureAvailability(ctx context.Context) display.Availability {
 }
 
 // PointerAvailability reports whether pointer input can be offered: XTEST on
-// X11, and on Wayland the wlroots virtual pointer with compositor IPC.
+// X11, and on Wayland the GNOME Shell extension or the wlroots virtual pointer
+// with compositor IPC.
 func (e *Engine) PointerAvailability(ctx context.Context) display.Availability {
 	if !e.Wayland() {
 		if e.Display() == "" {
@@ -160,7 +162,74 @@ func (e *Engine) PointerAvailability(ctx context.Context) display.Availability {
 	if err != nil {
 		return availabilityOf(err)
 	}
-	return helper.Probe().VirtualPointerAvailable()
+	return helper.Probe().PointerAvailable()
+}
+
+// granted runs op, which may go through the GNOME Shell extension. When the
+// extension has not been allowed and this engine grants on demand (the CLI), it
+// shows the Shell's dialog once and retries.
+func (e *Engine) granted(ctx context.Context, op func() error) error {
+	err := op()
+	var native *Error
+	if !errors.As(err, &native) || native.Code != "PERMISSION_REQUIRED" || !e.Wayland() {
+		return err
+	}
+	helper, helperErr := e.waylandHelper(ctx)
+	if helperErr != nil || !helper.Probe().ShellAvailable() {
+		return err
+	}
+	if !e.config.GrantOnDemand {
+		return fail("PERMISSION_REQUIRED", "GNOME desktop control has not been allowed; request the %s permission", ShellPermissionID)
+	}
+	status, grantErr := helper.ShellAuthorize(ctx)
+	if grantErr != nil {
+		return grantErr
+	}
+	if status != "granted" {
+		return fail("PERMISSION_REQUIRED", "GNOME desktop control was not allowed")
+	}
+	return op()
+}
+
+// ShellPermissionID names the GNOME Shell extension's grant in SDK permissions.
+const ShellPermissionID = "gnomeShell"
+
+// ShellPermission reports the GNOME desktop-control grant, and whether this
+// session has one at all: "unavailable" until the extension runs (install it and
+// log in again), then "notDetermined", "granted" or "denied".
+func (e *Engine) ShellPermission(ctx context.Context) (status string, applies bool) {
+	if !e.Wayland() {
+		return "", false
+	}
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		gnome := false
+		for _, desktop := range strings.Split(e.env("XDG_CURRENT_DESKTOP"), ":") {
+			gnome = gnome || strings.EqualFold(desktop, "GNOME")
+		}
+		return "unavailable", gnome
+	}
+	if !helper.Probe().ShellAvailable() {
+		return "unavailable", helper.Probe().GNOME()
+	}
+	status, err = helper.ShellAuthorization(ctx)
+	if err != nil {
+		return "unavailable", true
+	}
+	return status, true
+}
+
+// RequestShell shows the Shell's dialog unless desktop control is already allowed.
+func (e *Engine) RequestShell(ctx context.Context) (string, error) {
+	helper, err := e.waylandHelper(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !helper.Probe().ShellAvailable() {
+		availability := helper.Probe().ShellMissing()
+		return "unavailable", fail(availability.Code, "%s", availability.Message)
+	}
+	return helper.ShellAuthorize(ctx)
 }
 
 // capturer selects the backend for window capture in this session.
@@ -194,7 +263,11 @@ func (e *Engine) Capture(ctx context.Context, pid uint32, title string) Capture 
 	if reason != nil {
 		return Capture{Reason: reason}
 	}
-	image, err := capturer.Capture(ctx, display.Target{PID: pid, Title: title})
+	var image display.Image
+	err := e.granted(ctx, func() (err error) {
+		image, err = capturer.Capture(ctx, display.Target{PID: pid, Title: title})
+		return err
+	})
 	if err != nil {
 		var native *Error
 		if !errors.As(err, &native) {
@@ -211,12 +284,21 @@ func (e *Engine) WindowRect(ctx context.Context, target GlobalTarget) (Rect, err
 	if e.x11Input(ctx, target) {
 		return e.injector().WindowRect(ctx, target.native())
 	}
-	pointer, err := e.waylandPointer(ctx)
-	if err != nil {
-		return Rect{}, err
-	}
-	window, err := pointer.FindWindow(ctx, target.native())
+	window, err := e.waylandWindow(ctx, target)
 	return window.Bounds(), err
+}
+
+// waylandWindow locates target through the compositor's IPC or the GNOME Shell extension.
+func (e *Engine) waylandWindow(ctx context.Context, target GlobalTarget) (window wayland.Window, err error) {
+	helper, err := e.waylandPointer(ctx)
+	if err != nil {
+		return window, err
+	}
+	err = e.granted(ctx, func() (err error) {
+		window, err = helper.FindWindow(ctx, target.native())
+		return err
+	})
+	return window, err
 }
 
 // ElementCenter is the screen point at the center of a revalidated element. On
@@ -233,13 +315,14 @@ func (e *Engine) ElementCenter(ctx context.Context, target GlobalTarget, node No
 	if err := e.call(ctx, node.Ref, "Component.GetExtents", uint32(1)).Store(&box); err != nil || box.Width <= 0 || box.Height <= 0 {
 		return Point{}, fail("TARGET_UNAVAILABLE", "Element no longer has bounds")
 	}
-	window, err := e.WindowRect(ctx, target)
+	located, err := e.waylandWindow(ctx, target)
 	if err != nil {
 		return Point{}, err
 	}
-	// Window coordinates start at the client's content only when the accessible
-	// window has the compositor's content size; client-drawn shadows or a pending
-	// resize would shift every point.
+	// Toolkit window coordinates start at the client surface (on GNOME it includes
+	// client-side shadows). They map to the screen only while the accessible window
+	// has the surface's size; a pending resize would shift every point.
+	window := located.ClientBounds()
 	var frame struct{ X, Y, Width, Height int32 }
 	if err := e.call(ctx, target.Window, "Component.GetExtents", uint32(1)).Store(&frame); err != nil ||
 		math.Abs(float64(frame.Width)-window.Width) > 2 || math.Abs(float64(frame.Height)-window.Height) > 2 {
@@ -256,6 +339,10 @@ func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Po
 	if !ok || count < 1 || count > 3 {
 		return fail("INVALID_ARGUMENT", "Unsupported button or click count")
 	}
+	if helper, ok := e.shellHelper(ctx); ok {
+		// The extension confirms the window at the point in the same call that clicks.
+		return e.granted(ctx, func() error { return helper.ShellClick(ctx, target.native(), point, button, count) })
+	}
 	pointer, err := e.pointAt(ctx, target, point)
 	if err != nil {
 		return err
@@ -269,6 +356,9 @@ func (e *Engine) PointerClick(ctx context.Context, target GlobalTarget, point Po
 func (e *Engine) Drag(ctx context.Context, target GlobalTarget, from, to Point) error {
 	if e.x11Input(ctx, target) {
 		return e.injector().Drag(ctx, target.native(), from, to)
+	}
+	if helper, ok := e.shellHelper(ctx); ok {
+		return e.granted(ctx, func() error { return helper.ShellDrag(ctx, target.native(), from, to) })
 	}
 	pointer, err := e.pointAt(ctx, target, from)
 	if err != nil {
@@ -305,13 +395,23 @@ func possibly(err error) error {
 	return uncertain("Wayland pointer input stopped part way: %v", err)
 }
 
-// waylandPointer is the helper when this session offers the virtual pointer.
+// shellHelper is the helper when the GNOME Shell extension serves this session.
+func (e *Engine) shellHelper(ctx context.Context) (*wayland.Helper, bool) {
+	if !e.Wayland() {
+		return nil, false
+	}
+	helper, err := e.waylandHelper(ctx)
+	return helper, err == nil && helper.Probe().ShellAvailable()
+}
+
+// waylandPointer is the helper when this session can locate windows and bind
+// pointer input to them: the GNOME Shell extension or the wlroots virtual pointer.
 func (e *Engine) waylandPointer(ctx context.Context) (*wayland.Helper, error) {
 	helper, err := e.waylandHelper(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if availability := helper.Probe().VirtualPointerAvailable(); availability.Status != "available" {
+	if availability := helper.Probe().PointerAvailable(); availability.Status != "available" {
 		return nil, fail(availability.Code, "%s", availability.Message)
 	}
 	return helper, nil
@@ -385,7 +485,7 @@ func (e *Engine) PressKey(ctx context.Context, target GlobalTarget, key string) 
 	if err != nil {
 		return err
 	}
-	return e.waylandKeys(ctx, target, 1, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, chord) })
+	return e.waylandKeys(ctx, target, 1, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, target, chord) })
 }
 
 func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string) error {
@@ -395,6 +495,10 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 	keyboard, err := e.keyboard(ctx)
 	if err != nil {
 		return err
+	}
+	if keyboard.shell {
+		// One call: the extension checks focus and commits the whole text.
+		return e.granted(ctx, func() error { return keyboard.helper.ShellText(ctx, target.native(), text) })
 	}
 	if !keyboard.virtual {
 		// The portal keyboard can only type what the compositor's layout holds.
@@ -407,7 +511,9 @@ func (e *Engine) TypeKeys(ctx context.Context, target GlobalTarget, text string)
 		}
 	}
 	characters := []rune(text)
-	return e.waylandKeys(ctx, target, len(characters), func(i int, keyboard waylandKeyboard) error { return keyboard.text(ctx, string(characters[i])) })
+	return e.waylandKeys(ctx, target, len(characters), func(i int, keyboard waylandKeyboard) error {
+		return keyboard.text(ctx, target, string(characters[i]))
+	})
 }
 
 func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction string, pages float64) error {
@@ -420,25 +526,33 @@ func (e *Engine) PageScroll(ctx context.Context, target GlobalTarget, direction 
 	}
 	chord, _ := display.ParseKeyChord(key)
 	count := int(math.Ceil(pages))
-	return e.waylandKeys(ctx, target, count, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, chord) })
+	return e.waylandKeys(ctx, target, count, func(_ int, keyboard waylandKeyboard) error { return keyboard.chord(ctx, target, chord) })
 }
 
-// waylandKeyboard is the route Wayland keys take in this session: the wlroots
-// virtual keyboard, or the RemoteDesktop portal's libei keyboard.
+// waylandKeyboard is the route Wayland keys take in this session: the GNOME Shell
+// extension, the wlroots virtual keyboard, or the RemoteDesktop portal's libei keyboard.
 type waylandKeyboard struct {
 	helper  *wayland.Helper
 	virtual bool
+	// shell keys are checked against the focus window by the extension itself.
+	shell bool
 }
 
-func (k waylandKeyboard) chord(ctx context.Context, chord display.KeyChord) error {
-	if k.virtual {
+func (k waylandKeyboard) chord(ctx context.Context, target GlobalTarget, chord display.KeyChord) error {
+	switch {
+	case k.shell:
+		return k.helper.ShellChord(ctx, target.native(), chord)
+	case k.virtual:
 		return k.helper.VirtualChord(ctx, chord)
 	}
 	return k.helper.Chord(ctx, chord)
 }
 
-func (k waylandKeyboard) text(ctx context.Context, text string) error {
-	if k.virtual {
+func (k waylandKeyboard) text(ctx context.Context, target GlobalTarget, text string) error {
+	switch {
+	case k.shell:
+		return k.helper.ShellText(ctx, target.native(), text)
+	case k.virtual:
 		return k.helper.VirtualText(ctx, text)
 	}
 	return k.helper.Text(ctx, text)
@@ -457,7 +571,7 @@ func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int
 			err = cancelled()
 		}
 		if err == nil {
-			err = step(i, keyboard)
+			err = e.granted(ctx, func() error { return step(i, keyboard) })
 		}
 		if err != nil {
 			var native *Error
@@ -474,6 +588,9 @@ func (e *Engine) waylandKeys(ctx context.Context, target GlobalTarget, count int
 // focused window, its PID and title must be the target's; otherwise the
 // accessible window must be active.
 func (e *Engine) requireFocus(ctx context.Context, target GlobalTarget, keyboard waylandKeyboard) error {
+	if keyboard.shell {
+		return nil
+	}
 	if keyboard.virtual {
 		active, err := keyboard.helper.ActiveWindow(ctx)
 		if err != nil {
@@ -521,6 +638,9 @@ func (e *Engine) keyboard(ctx context.Context) (waylandKeyboard, error) {
 	if err != nil {
 		return waylandKeyboard{}, err
 	}
+	if helper.Probe().ShellAvailable() {
+		return waylandKeyboard{helper: helper, shell: true}, nil
+	}
 	if helper.Probe().VirtualKeyboardAvailable() {
 		return waylandKeyboard{helper: helper, virtual: true}, nil
 	}
@@ -549,7 +669,7 @@ func (e *Engine) KeyboardNeedsGrant(ctx context.Context) bool {
 		return false
 	}
 	helper, err := e.waylandHelper(ctx)
-	return err != nil || !helper.Probe().VirtualKeyboardAvailable()
+	return err != nil || !(helper.Probe().VirtualKeyboardAvailable() || helper.Probe().ShellAvailable())
 }
 
 // KeyboardAvailability reports whether Wayland keyboard input can be offered at
@@ -569,7 +689,7 @@ func (e *Engine) KeyboardAvailability(ctx context.Context) display.Availability 
 // keyboardRouteAvailable checks what the grant route needs: the portal, or in an
 // isolated test session Mutter's API, which the helper checks when granting.
 func (e *Engine) keyboardRouteAvailable(helper *wayland.Helper) display.Availability {
-	if helper.Probe().VirtualKeyboardAvailable() || e.grantRoute() == wayland.GrantMutterTest {
+	if helper.Probe().ShellAvailable() || helper.Probe().VirtualKeyboardAvailable() || e.grantRoute() == wayland.GrantMutterTest {
 		return display.Available()
 	}
 	return helper.Probe().KeyboardAvailable()

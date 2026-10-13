@@ -44,32 +44,68 @@ func (d *linuxDesktop) keyboardInput(ctx context.Context) sdkruntime.Availabilit
 
 const remoteDesktopPermission = "remoteDesktop"
 
-// Permissions reports the Wayland remoteDesktop grant. X11 sessions and compositors
-// with the wlroots virtual keyboard need none.
+// Permissions reports the Wayland grants this session has. GNOME has the Shell
+// extension's desktop control ("unavailable" until the extension runs); keys
+// through the portal need remoteDesktop. X11 sessions and wlroots compositors need none.
 func (d *linuxDesktop) Permissions(ctx context.Context) ([]sdkruntime.Permission, error) {
-	if !d.engine.KeyboardNeedsGrant(ctx) {
-		return []sdkruntime.Permission{}, nil
+	permissions := []sdkruntime.Permission{}
+	if status, applies := d.engine.ShellPermission(ctx); applies {
+		permissions = append(permissions, shellPermission(status))
 	}
-	status, _ := d.engine.KeyboardPermission(ctx)
-	return []sdkruntime.Permission{{ID: remoteDesktopPermission, Label: "Remote keyboard input", Status: status, Interaction: "systemPrompt"}}, nil
+	if d.engine.KeyboardNeedsGrant(ctx) {
+		status, _ := d.engine.KeyboardPermission(ctx)
+		permissions = append(permissions, sdkruntime.Permission{ID: remoteDesktopPermission, Label: "Remote keyboard input", Status: status, Interaction: "systemPrompt"})
+	}
+	return permissions, nil
 }
 
-// RequestPermissions shows the RemoteDesktop portal dialog and reports the result;
-// declining is a "denied" status, not an error.
+// shellPermission describes GNOME desktop control: the Shell asks once the
+// extension runs; before that the user must install it and log in again.
+func shellPermission(status string) sdkruntime.Permission {
+	interaction := "systemPrompt"
+	if status == "unavailable" {
+		interaction = "systemSettings"
+	}
+	return sdkruntime.Permission{ID: desktop.ShellPermissionID, Label: "GNOME desktop control", Status: status, Interaction: interaction}
+}
+
+// RequestPermissions shows the Shell's or the RemoteDesktop portal's dialog and
+// reports the result; declining is a "denied" status, not an error.
 func (d *linuxDesktop) RequestPermissions(ctx context.Context, ids []string) ([]sdkruntime.Permission, error) {
+	_, shellApplies := d.engine.ShellPermission(ctx)
 	for _, id := range ids {
-		if id != remoteDesktopPermission || !d.engine.KeyboardNeedsGrant(ctx) {
+		known := (id == desktop.ShellPermissionID && shellApplies) || (id == remoteDesktopPermission && d.engine.KeyboardNeedsGrant(ctx))
+		if !known {
 			return nil, sdkruntime.Error("INVALID_ARGUMENT", "Unknown permission for this Linux session: "+id)
 		}
 	}
-	if err := d.engine.RequestKeyboard(ctx); err != nil {
-		var native *desktop.Error
-		if !errors.As(err, &native) || native.Code != "PERMISSION_REQUIRED" {
-			return nil, sdkError(err)
+	for _, id := range ids {
+		if id == desktop.ShellPermissionID {
+			// Without the extension there is nothing to ask; the status says so.
+			if _, err := d.engine.RequestShell(ctx); err != nil && !isCode(err, "DEPENDENCY_MISSING") {
+				return nil, sdkError(err)
+			}
+			continue
 		}
-		return []sdkruntime.Permission{{ID: remoteDesktopPermission, Label: "Remote keyboard input", Status: "denied", Interaction: "systemPrompt"}}, nil
+		if err := d.engine.RequestKeyboard(ctx); err != nil {
+			if !isCode(err, "PERMISSION_REQUIRED") {
+				return nil, sdkError(err)
+			}
+			permissions, _ := d.Permissions(ctx)
+			for i := range permissions {
+				if permissions[i].ID == remoteDesktopPermission {
+					permissions[i].Status = "denied"
+				}
+			}
+			return permissions, nil
+		}
 	}
 	return d.Permissions(ctx)
+}
+
+func isCode(err error, code string) bool {
+	var native *desktop.Error
+	return errors.As(err, &native) && native.Code == code
 }
 
 func sdkError(err error) error {

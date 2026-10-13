@@ -37,6 +37,13 @@ type Probe struct {
 		RemoteDesktop *PortalInterface `json:"remote_desktop"`
 		Screencast    *PortalInterface `json:"screencast"`
 	} `json:"portal"`
+	Session struct {
+		Desktop string `json:"desktop"`
+	} `json:"session"`
+	// GnomeShell is the computer-use@cherryai extension, when it is running.
+	GnomeShell *struct {
+		Protocol uint32 `json:"protocol"`
+	} `json:"gnome_shell"`
 	// Compositor names the compositor IPC the helper can use.
 	Compositor struct {
 		Sway     bool `json:"sway"`
