@@ -65,7 +65,39 @@ accept the same background messages.
 Follow the [Python-free Docker instructions](../../experiments/LinuxNativeProbe/README.md).
 That runner builds a GTK fixture and executes both native lifecycle and desktop
 tests before the standalone probe. SDK capture discovers the window by PID/title;
-it does not receive the probe's fixture window ID. Wayland capture is unsupported.
+it does not receive the probe's fixture window ID. Wayland capture works on Sway and
+Hyprland only; `testdata/wlroots-session.sh` runs the capture and pointer tests in an
+isolated headless Sway, and in a nested Hyprland
+(`OCU_HYPRLAND_PARENT=wayland-0` nests it as a window in the current desktop; test
+input stays on the nested seat, so leave that window alone while the tests run).
+
+### Linux semantic actions (signed-in desktop)
+
+`apps/OpenComputerUseLinux/testdata/gtk_fixture.py` needs python3 with GTK 3; the
+runtime under test is Python-free. Global input tests must run inside
+`apps/OpenComputerUseLinux/testdata/x11-session.sh`, an isolated Xephyr or Xvfb
+session, so that keys and pointer motion never reach a desktop in use; CI runs them
+under Xvfb. On a real Wayland desktop, `linux-desktop.test.mjs` checks the refusals
+before any grant and never opens the portal dialog. Inside
+`apps/OpenComputerUseLinux/testdata/gnome-session.sh` (a headless GNOME Shell with
+private runtime and config directories; set `OPEN_COMPUTER_USE_WAYLAND_HELPER` to a
+built helper) the same test also grants `remoteDesktop` through Mutter's API and sends
+keys. The Go test `TestGNOMEWaylandKeyboard` runs there too. CI runs both in a separate
+`ubuntu-26.04` job (GNOME 50): on `ubuntu-24.04` (GNOME 46) the shell focuses the headless
+fixture but GTK never reports it active, so keys are correctly refused there. Session services may mount FUSE filesystems in the
+private runtime directory; the scripts unmount them on exit and never let cleanup change
+the command's exit status.
+
+`apps/OpenComputerUseLinux/testdata/wlroots-session.sh sway|hyprland <command>` provides
+the same isolation for headless Sway, or Hyprland nested in a headless labwc (needs a
+GPU render node). It loads only its own compositor configuration and stops every
+process that carries the session's private root, including compositors that re-exec
+away from their parent. Start the fixture, then run
+`node --test protocol/linux-desktop.test.mjs` with
+`COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture` and the runtime path set,
+or `OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 go test ./internal/desktop/` in
+`apps/OpenComputerUseLinux` (which starts the fixture itself). Typing assertions
+need the fixture window to keep focus. The fixture briefly takes focus.
 
 ## macOS (manual permissions)
 

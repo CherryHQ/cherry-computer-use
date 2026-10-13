@@ -13,6 +13,8 @@ const version = sdkManifest().version;
 const run = (script, args = [], env = process.env) => execFileSync('bash', [script, ...args], { cwd: root, stdio: 'inherit', env });
 let source;
 let runtimeName;
+// Files shipped next to the runtime: the Linux Wayland helper.
+const companions = [];
 if (process.platform === 'darwin') {
   if (signed) run('scripts/build-signed-release.sh', ['native']);
   else run('scripts/build-open-computer-use-app.sh', ['release', '--arch', 'native'], { ...process.env, OPEN_COMPUTER_USE_CODESIGN_MODE: 'adhoc' });
@@ -21,15 +23,17 @@ if (process.platform === 'darwin') {
 } else {
   const platform = process.platform === 'win32' ? 'windows' : 'linux';
   const arch = process.arch === 'x64' ? 'amd64' : 'arm64';
-  run(`scripts/build-open-computer-use-${platform}.sh`, ['--arch', arch]);
+  run(`scripts/build-open-computer-use-${platform}.sh`, ['--arch', arch, ...(platform === 'linux' ? ['--portable-helper'] : [])]);
   runtimeName = `open-computer-use${process.platform === 'win32' ? '.exe' : ''}`;
   source = path.join(root, 'dist', platform, arch, runtimeName);
+  if (platform === 'linux') companions.push(path.join(root, 'dist', platform, arch, 'open-computer-use-wayland'));
 }
 
 const directory = path.join(root, 'dist/sdk-packages', target);
 rmSync(directory, { recursive: true, force: true });
 mkdirSync(path.join(directory, 'runtime'), { recursive: true });
 cpSync(source, path.join(directory, 'runtime', runtimeName), { recursive: true, verbatimSymlinks: true });
+for (const companion of companions) cpSync(companion, path.join(directory, 'runtime', path.basename(companion)));
 for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) cpSync(path.join(root, file), path.join(directory, file));
 const manifest = {
   name: packageName(target), version, description: `Cherry Computer Use native runtime for ${target}`,

@@ -16,11 +16,6 @@ while IFS= read -r file; do
   node --check "$file"
 done < <(find "${repo_root}/scripts" -type f -name '*.mjs' | sort)
 
-(
-  cd "${repo_root}/apps/OpenComputerUseLinux"
-  python3 -m unittest -v runtime_test.py
-)
-
 if command -v go >/dev/null 2>&1; then
   (
     cd "${repo_root}/apps/OpenComputerUseWindows"
@@ -28,7 +23,19 @@ if command -v go >/dev/null 2>&1; then
   )
   (
     cd "${repo_root}/apps/OpenComputerUseLinux"
+    test -z "$(gofmt -l .)"
+    go vet ./...
     go test ./...
+  )
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  (
+    cd "${repo_root}/apps/OpenComputerUseLinux/wayland-helper"
+    cargo fmt --check
+    cargo clippy --locked --all-targets -- -D warnings
+    cargo test --locked
+    node "${repo_root}/scripts/wayland-helper-notices.mjs" --check
   )
 fi
 

@@ -54,6 +54,16 @@ try {
   });
   const installed = path.join(consumer, 'node_modules', name);
   assertPlatformManifest(JSON.parse(await readFile(path.join(installed, 'package.json'))), target, sdk.version, sourceCommit());
+  if (process.platform === 'linux') {
+    // The runtime starts the Wayland helper from its own directory. A hello proves
+    // the helper loads on this runner (its glibc floor) and speaks the protocol.
+    const helper = path.join(installed, 'runtime/open-computer-use-wayland');
+    const request = JSON.stringify({ id: 1, method: 'hello', params: { protocol: 1 } });
+    const reply = spawnSync(helper, [], { input: `Content-Length: ${Buffer.byteLength(request)}\r\n\r\n${request}`, encoding: 'utf8', timeout: 15000 });
+    assert.equal(reply.status, 0, `Wayland helper did not run: ${reply.error ?? reply.stderr}`);
+    const body = JSON.parse(reply.stdout.slice(reply.stdout.indexOf('\r\n\r\n') + 4));
+    assert.equal(body.result?.protocol, 1, reply.stdout);
+  }
   if (process.platform === 'darwin') {
     const app = path.join(installed, 'runtime/Cherry Computer Use.app');
     execFileSync('codesign', ['--verify', '--deep', '--strict', app]);

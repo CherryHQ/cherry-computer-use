@@ -134,6 +134,14 @@ func (o ObserveOptions) LimitText(value string, tree *Tree) string {
 	return string(characters[:limit])
 }
 
+// PermissionDriver lets a desktop backend report and request OS permissions.
+// RequestPermissions receives validated, unique IDs and returns the observed
+// state; a declined request is a status, not an error.
+type PermissionDriver interface {
+	Permissions(context.Context) ([]Permission, error)
+	RequestPermissions(context.Context, []string) ([]Permission, error)
+}
+
 // Drivers retain platform references inside Native fields, never in the wire identity.
 type DesktopDriver interface {
 	Capabilities(context.Context) map[string]Availability
@@ -168,6 +176,14 @@ func NewID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(id[:])
+}
+
+// Permissions reports the driver's permissions; drivers without any report none.
+func (d *Desktop) Permissions(ctx context.Context) ([]Permission, error) {
+	if driver, ok := d.driver.(PermissionDriver); ok {
+		return driver.Permissions(ctx)
+	}
+	return []Permission{}, nil
 }
 
 func (d *Desktop) Capabilities(ctx context.Context) map[string]Availability {
@@ -226,6 +242,27 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			}
 		}
 		return apps, nil
+	case "requestPermissions":
+		driver, ok := d.driver.(PermissionDriver)
+		if !ok {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "This backend has no permission requests")
+		}
+		var input struct {
+			IDs []string `json:"ids"`
+		}
+		if decodeObject(params, &input) != nil || len(input.IDs) == 0 {
+			return nil, Error("INVALID_ARGUMENT", "Expected permission IDs")
+		}
+		for i, id := range input.IDs {
+			if id == "" || slices.Contains(input.IDs[:i], id) {
+				return nil, Error("INVALID_ARGUMENT", "Permission IDs must be unique and non-empty")
+			}
+		}
+		permissions, err := driver.RequestPermissions(ctx, input.IDs)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"permissions": permissions}, nil
 	case "openAppSession":
 		var input struct {
 			AppID string `json:"appId"`

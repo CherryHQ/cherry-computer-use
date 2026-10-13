@@ -38,9 +38,15 @@ test('CLI staging refuses incomplete native artifacts and never creates upstream
     'linux/arm64/open-computer-use', 'linux/amd64/open-computer-use',
     'windows/arm64/open-computer-use.exe', 'windows/amd64/open-computer-use.exe',
   ]) write(dir, `dist/${name}`, 'native fixture');
+  // Each Linux runtime needs its Wayland helper beside it.
+  const withoutHelper = run(dir, ...args);
+  assert.notEqual(withoutHelper.status, 0);
+  assert.match(withoutHelper.stderr, /open-computer-use-wayland/);
+  for (const arch of ['arm64', 'amd64']) write(dir, `dist/linux/${arch}/open-computer-use-wayland`, 'helper fixture');
   const built = run(dir, ...args);
   assert.equal(built.status, 0, built.stderr);
   const packageRoot = path.join(dir, 'dist/npm/computer-use-cli');
+  for (const arch of ['arm64', 'amd64']) assert.ok(existsSync(path.join(packageRoot, `dist/linux/${arch}/open-computer-use-wayland`)));
   const manifest = JSON.parse(readFileSync(path.join(packageRoot, 'package.json')));
   assert.equal(manifest.name, '@cherrystudio/computer-use-cli');
   assert.equal(manifest.private, true, 'local CLI tarballs must not become registry-publishable');

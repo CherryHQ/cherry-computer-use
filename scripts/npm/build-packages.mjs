@@ -178,6 +178,7 @@ function ensureBuilt(configuration, arch) {
       configuration,
       "--arch",
       buildArch,
+      "--portable-helper",
     ]);
     run(path.join(repoRoot, "scripts", "build-open-computer-use-windows.sh"), [
       "--configuration",
@@ -493,6 +494,12 @@ function copyBundledRuntimes(packageRoot, packageName) {
     assertFileExists(executablePath, packageName);
     if (runtimeTarget.kind !== "macos-app") {
       chmodSync(executablePath, 0o755);
+    }
+    if (runtimeTarget.os === "linux") {
+      // The runtime starts the Wayland helper from its own directory.
+      const helperPath = path.join(path.dirname(executablePath), "open-computer-use-wayland");
+      assertFileExists(helperPath, packageName);
+      chmodSync(helperPath, 0o755);
     }
   }
 }

@@ -1,34 +1,30 @@
-package main
+package x11
 
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 	"image"
 	"image/color"
 	"image/png"
-	"os"
-	"strings"
 	"time"
 
-	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 )
 
-func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Capture {
-	failed := func(message string) sdk.Capture {
-		return sdk.Capture{Status: "unavailable", Reason: &sdk.Reason{Code: "CAPTURE_FAILED", Message: message}}
+// Capture reads the X11 window that uniquely matches the target's PID and the
+// accessible window title. X11 authentication still follows the process XAUTHORITY.
+func (e *Backend) Capture(ctx context.Context, target display.Target) (display.Image, error) {
+	failed := func(message string) (display.Image, error) {
+		return display.Image{}, display.Fail("CAPTURE_FAILED", "%s", message)
 	}
-	if os.Getenv("WAYLAND_DISPLAY") != "" || strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland") {
-		return sdk.Capture{Status: "unavailable", Reason: &sdk.Reason{Code: "UNSUPPORTED_CAPABILITY", Message: "Wayland capture is not connected"}}
-	}
-	if os.Getenv("DISPLAY") == "" {
+	if e.display == "" {
 		return failed("No X11 display is configured")
 	}
-	connection, err := xgb.NewConn()
+	connection, err := xgb.NewConnDisplay(e.display)
 	if err != nil {
 		return failed("Cannot connect to the X11 display")
 	}
@@ -37,7 +33,7 @@ func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Captu
 	defer cancel()
 	stop := context.AfterFunc(captureCtx, connection.Close)
 	defer stop()
-	window, err := findX11Window(connection, pid, title)
+	window, err := FindWindow(connection, target.PID, target.Title)
 	if err != nil {
 		return failed(err.Error())
 	}
@@ -80,7 +76,7 @@ func captureLinuxWindow(ctx context.Context, pid uint32, title string) sdk.Captu
 	if png.Encode(&output, bitmap) != nil {
 		return failed("PNG encoding failed")
 	}
-	return sdk.Capture{Status: "available", Image: &sdk.Image{MimeType: "image/png", Width: bitmap.Bounds().Dx(), Height: bitmap.Bounds().Dy(), DataBase64: base64.StdEncoding.EncodeToString(output.Bytes())}}
+	return display.Image{PNG: output.Bytes(), Width: bitmap.Bounds().Dx(), Height: bitmap.Bounds().Dy()}, nil
 }
 
 // Depth 24 carries plain windows and depth 32 carries the ARGB windows that
@@ -93,7 +89,9 @@ func decodablePixelFormat(order, depth byte, width, height uint16, data []byte) 
 	return len(data) == int(width)*int(height)*4
 }
 
-func findX11Window(connection *xgb.Conn, pid uint32, title string) (xproto.Window, error) {
+// FindWindow returns the one mapped X window of pid titled title, or an error
+// when there is none or more than one.
+func FindWindow(connection *xgb.Conn, pid uint32, title string) (xproto.Window, error) {
 	atom := func(name string) xproto.Atom {
 		result, err := xproto.InternAtom(connection, true, uint16(len(name)), name).Reply()
 		if err != nil || result == nil {
