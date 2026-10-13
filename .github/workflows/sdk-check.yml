@@ -200,9 +200,14 @@ jobs:
   # GNOME 46 on ubuntu-24.04 focuses a headless fixture without GTK ever reporting
   # it active, so the GNOME portal keyboard runs on a GNOME 50 image instead.
   linux-gnome:
-    name: Linux Wayland keyboard (headless GNOME, ubuntu-26.04)
-    runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    name: Linux GNOME Wayland (headless GNOME, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # GNOME 50 and 46, the newest and oldest Shell versions the extension supports.
+        os: [ubuntu-26.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
@@ -221,17 +226,28 @@ jobs:
           (cd apps/OpenComputerUseLinux && go build -o ../../dist/native/open-computer-use .)
           (cd apps/OpenComputerUseLinux/wayland-helper && cargo --version && cargo build --locked --release)
           cp apps/OpenComputerUseLinux/wayland-helper/target/release/open-computer-use-wayland dist/native/
-      - name: Wayland keyboard in an isolated headless GNOME
+      - name: Install headless GNOME
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gnome-shell libglib2.0-bin at-spi2-core dbus python3-gi gir1.2-gtk-3.0 wayland-utils
           gnome-shell --version
+      - name: Portal keyboard without the Shell extension
+        run: |
           export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland"
           session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOME -v ./internal/desktop/)
-          "$session" sh -c '
-            python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
-            for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
-            export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
-            node --test protocol/linux-desktop.test.mjs; code=$?
-            kill $fixture; exit $code'
+          "$session" sh -c "$SDK_TEST"
+      - name: Capture and input through the Shell extension
+        run: |
+          # The runtime's own install-gnome-extension installs it before the shell starts.
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_GNOME_SHELL_EXTENSION="$PWD/dist/native/open-computer-use"
+          session="$PWD/apps/OpenComputerUseLinux/testdata/gnome-session.sh"
+          (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run GNOMEShell -v ./internal/desktop/)
+          "$session" sh -c "$SDK_TEST"
+    env:
+      SDK_TEST: |
+        python3 apps/OpenComputerUseLinux/testdata/gtk_fixture.py "CI Wayland" & fixture=$!
+        for _ in $(seq 100); do dist/native/open-computer-use list-apps 2>/dev/null | grep -q cherry-linux-fixture && break; sleep 0.2; done
+        export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
+        node --test protocol/linux-desktop.test.mjs; code=$?
+        kill $fixture; exit $code

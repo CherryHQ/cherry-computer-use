@@ -957,6 +957,10 @@ func runCLI(args []string, stdout io.Writer) error {
 		return sdkruntime.Serve(os.Stdin, os.Stdout, sdkruntime.Config{
 			SessionID: sessionID, Version: version, Platform: "linux", Backend: sdkruntime.NewDesktop(newLinuxDesktop()),
 		})
+	case "install-gnome-extension":
+		return installGNOMEExtension(stdout, systemExtensionHost())
+	case "uninstall-gnome-extension":
+		return uninstallGNOMEExtension(stdout, systemExtensionHost())
 	case "doctor":
 		fmt.Fprintln(stdout, "Linux runtime: a native AT-SPI2 (D-Bus) engine with X11 and Wayland display backends runs against the signed-in desktop user's accessibility session; it is shared with the SDK runtime. When Codex starts without XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, or display variables, open-computer-use tries to discover the same user's session from /run/user/<uid> and desktop processes. Global pointer and keyboard input (coordinate clicks, drag, press_key, scroll, and type_text without a focused editable field) is refused unless the target window has keyboard focus or lies under the pointer. X11 and XWayland windows use XTEST. On Sway and Hyprland, the Wayland helper captures windows and uses a virtual keyboard and pointer bound to the compositor's focused window. On other Wayland desktops (GNOME, KDE), keys go through the RemoteDesktop portal after a one-time system dialog, and window capture and pointer input are unavailable. The session report below shows what this session offers.")
 		svc := newService()
@@ -1334,6 +1338,11 @@ Commands:
   list-apps            Print running apps with top-level windows.
   snapshot <app>       Print the current AT-SPI snapshot for an app.
   call <tool>           Call one tool, or run a JSON array of tool calls.
+  install-gnome-extension
+                       Install the GNOME Shell extension that captures windows
+                       and sends input on GNOME Wayland (log in again after).
+  uninstall-gnome-extension
+                       Disable and remove that extension.
   help [command]       Show general or command-specific help.
   version              Print the CLI version.
 
@@ -1341,8 +1350,9 @@ Notes:
   The Linux runtime uses AT-SPI2 semantic actions first, then best-effort
   coordinate/key synthesis. Run it in the signed-in desktop session.
   Global input uses XTEST for X11/XWayland windows; on Wayland, a virtual
-  keyboard and pointer on Sway and Hyprland, and the RemoteDesktop portal for
-  keys elsewhere. Run 'open-computer-use doctor' for this session.
+  keyboard and pointer on Sway and Hyprland, the GNOME Shell extension on GNOME,
+  and the RemoteDesktop portal for keys elsewhere. Run 'open-computer-use doctor'
+  for this session.
 `
 	}
 }

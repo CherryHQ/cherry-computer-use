@@ -107,7 +107,7 @@ Go 端接口不因语言分工改变。现有代码按此拆分：`capture.go` �
 | X11 | ✅ XID、`GetInputFocus` | ✅ `GetImage` | ✅ XTEST + guard | ✅ XTEST，校验落点 | 无 |
 | Wayland 会话中的 XWayland 窗口 | 🧪 XID（XWayland 映射焦点） | 🧪 `GetImage` | 🧪 XTEST | 🧪 XTEST | 无 |
 | wlroots（Sway、labwc、Hyprland 等） | ✅ Sway/Hyprland IPC 给出窗口的 PID、标题、几何与焦点；其他合成器回退到 AT-SPI ACTIVE | ✅ Sway 截取输出中的窗口区域（有浮动窗口重叠时拒绝）；✅ Hyprland `hyprland_toplevel_export` 按窗口 | ✅ `virtual-keyboard`，可输入任意 Unicode | ✅ `wlr-virtual-pointer`，移动后要求 IPC 焦点为目标 | 无 |
-| GNOME（Mutter） | 🧪 Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4，已验证可行） | 🧪 Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 门户 RemoteDesktop + libei（无扩展时）；🧪 扩展内虚拟键盘 + 输入法提交任意 Unicode（W4） | 🧪 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 门户弹窗；扩展由用户安装并在 Shell 内授权 |
+| GNOME（Mutter） | ✅ Shell 扩展：窗口的 PID、标题、几何、层叠与焦点（W4） | ✅ Shell 扩展按窗口绘制，被遮挡也可截取（W4） | ✅ 扩展内虚拟键盘，文本经输入法提交任意 Unicode（W4）；无扩展时门户 RemoteDesktop + libei | ✅ 扩展内虚拟指针，同一调用内确认落点窗口（W4） | 扩展由用户安装、重新登录，并在 Shell 内授权；无扩展时门户弹窗 |
 | KDE（KWin） | 🧪 KWin 脚本/effect 提供几何与焦点 | 门户 ScreenCast + PipeWire | 门户 + libei | 🧪 同 GNOME | 门户弹窗，可持久 |
 | 其他（COSMIC 等） | 按探测到的协议拼装；都没有时 ⛔ | 同左 | 同左 | 同左 | — |
 
@@ -182,7 +182,7 @@ SDK 坐标保持现状：相对观察到的窗口，越界在发送前拒绝。�
 | W1 ✅ | Go 端：`internal/display`（共享类型与 provider 接口）、`internal/display/x11`（搬入的截图、XTEST、guard）、`internal/display/wayland`（辅助进程客户端），引擎按会话组合并保持对外 API；Rust `wayland-helper/`：分帧、`hello` 握手与只读探测、EOF 退出；`doctor` 输出会话报告 | 现有行为不变、测试全部通过；辅助进程生命周期测试（Go 端假辅助进程 6 项、Rust 6 项）通过；打包见「构建与分发」 |
 | W2 ✅ | wlroots 后端：虚拟键盘、窗口定位、按窗口截图、虚拟指针（Sway、Hyprland） | 无头 Sway 与嵌套 Hyprland 中引擎与 SDK 测试通过；Sway 接入 CI，Hyprland 需要 GPU 与带显示器的父合成器，只在本地运行 |
 | W3 ✅（GNOME） | 门户 + libei 键盘/文本，授权映射到 `requestPermissions`；KDE 未验证 | 隔离 GNOME 会话中引擎与 SDK 测试通过：授权前拒绝、Ctrl+A 与按键、布局缺失字符发送前拒绝、目标窗口非活动时拒绝、辅助进程被杀后按键已释放 |
-| W4 🟡 | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权（见「GNOME Shell 扩展」） | 方案已确认，可行性在隔离 GNOME 50 中验证通过；实现另开 PR |
+| W4 ✅ | GNOME Shell 扩展后端：窗口定位、按窗口截图、虚拟指针与键盘、输入法提交文本，Shell 内授权，`install-gnome-extension`（见「GNOME Shell 扩展」） | 隔离的无头 GNOME 中由运行时自己安装扩展后，引擎与 SDK 测试通过；CI 覆盖 GNOME 50 与 46 |
 | W5 | KDE：KWin 脚本或门户，按同样的落点与焦点校验标准 | 待定 |
 
 每个阶段独立成 PR；未完成的能力保持 unsupported/unavailable，并说明原因。
@@ -256,12 +256,21 @@ GNOME 不向普通客户端提供 wlroots 协议、`ext-image-copy-capture` 或�
 
 ### 设计
 
-- **扩展** `computer-use@cherryai`（GNOME 46–50，ESM），在会话总线上导出一个接口：窗口列表；按窗口截图（PNG 经 fd 传回，不用 base64）；激活并返回焦点是否到达；落点窗口查询；点击、拖拽、滚动（每次在同一调用中确认落点窗口是目标）；按键与文本（确认焦点窗口是目标；文本优先经输入法提交，客户端不支持 text-input 时退回布局内键符，布局外拒绝）。每个请求携带目标的 PID 与标题，扩展按 `get_stable_sequence` 找到窗口后再核对两者。锁屏与登录界面时拒绝一切请求。
-- **授权**：只接受本产品辅助进程的调用（由总线取得调用方 PID，核对其可执行文件路径）；首次调用时 Shell 弹出模态对话框请求允许，授权在会话内有效，顶栏显示控制中的提示并可随时撤销。SDK 增加对应权限，状态为未安装、需要重新登录、待授权、已授权。扩展默认不做任何事，安装本身不等于授权。
+- **扩展** `computer-use@cherryai`（GNOME 46–50，ESM），在会话总线上导出 `com.cherryai.ComputerUse.Shell1`：窗口列表；按窗口截图（PNG 以 D-Bus 字节数组 `ay` 返回，不用 base64）；激活并返回焦点是否到达；落点窗口查询；点击、拖拽、滚动（每次在同一调用中确认落点窗口是目标）；按键与文本（确认焦点窗口是目标；文本优先经输入法提交，客户端不支持 text-input 时退回布局内键符，布局外拒绝）。每个请求携带目标的 PID 与标题，扩展按 `get_stable_sequence` 找到窗口后再核对两者。锁屏与登录界面时拒绝一切请求。
+- **授权**：授权绑定到调用方的可执行文件（由总线取得调用方 PID，读取内核给出的 `/proc/<pid>/exe`，即辅助进程本身）。SDK 的 `requestPermissions({ ids: ['gnomeShell'] })` 或 CLI 第一次需要时调用 `Authorize`，Shell 弹出模态对话框（默认按钮为拒绝），并显示请求方的路径；授权持续到锁屏（GNOME 在锁屏时禁用扩展）或注销，顶栏显示控制中的提示并可随时撤销。SDK 的 `gnomeShell` 权限在扩展运行前为 `unavailable`（`systemSettings`：需要安装并重新登录），之后为 `notDetermined`、`granted` 或 `denied`。扩展默认不做任何事，安装本身不等于授权。
 - **辅助进程与引擎**：辅助进程在会话总线上发现扩展后，GNOME 的定位、截图、指针与键盘都走扩展；门户 + libei 键盘保留给未启用扩展的 GNOME 与 KDE。
-- **安装**：`open-computer-use` 提供安装命令，把扩展写入用户扩展目录并启用（修改持久配置，需用户确认），然后提示重新登录；Wayland 下新装的扩展只在重新登录后加载。企业环境禁用用户扩展时如实报告不可用。
+- **安装**：扩展文件嵌入运行时二进制。`open-computer-use install-gnome-extension` 把它写入 `$XDG_DATA_HOME/gnome-shell/extensions/` 并启用：Shell 已认识该扩展时用 `gnome-extensions enable`，否则把它加入 `enabled-extensions` 设置，然后提示重新登录（Wayland 下新装的扩展只在重新登录后加载）。用户扩展被关闭（`disable-user-extensions`）时只报告，不替用户或管理员修改。`uninstall-gnome-extension` 撤销上述改动。SDK 从不自动安装。
 - **稳定性**：扩展只做上述操作，每个入口捕获异常并以 D-Bus 错误返回，避免拖垮 gnome-shell；虚拟设备与透明克隆在禁用或空闲后释放。
 - **测试**：无头 GNOME 会话可在启动前把扩展放进私有数据目录并启用，CI 中加载真实扩展（`ubuntu-26.04` 为 GNOME 50，`ubuntu-24.04` 为 GNOME 46）。
+
+### W4 实现结果（2026-10-13）
+
+- 辅助进程（`shell.rs`）通过会话总线调用扩展：`window.find`/`window.capture` 在 GNOME 上改由扩展列出与截取窗口，`shell.*` 方法负责授权、点击、拖拽、组合键与文本。扩展的 D-Bus 错误名映射为运行时错误码；`Possible` 表示输入已发送、效果未知。zbus 的超时按连接设置，等待用户回答对话框的调用使用单独的长超时连接，两者都来自辅助进程本身。
+- 引擎：扩展存在时，GNOME 的截图（按窗口逻辑尺寸缩放）、窗口定位、点击、拖拽、按键与文本都走扩展；键盘选择顺序为扩展、wlroots 虚拟键盘、门户。元素坐标以 client 表面（含客户端阴影，即 `get_buffer_rect`）为原点，并要求 AT-SPI 窗口尺寸与其一致。缺少授权时 SDK 返回 `PERMISSION_REQUIRED`，CLI 弹出 Shell 对话框一次后重试。
+- 测试：`gnome-session.sh` 可在 Shell 启动前运行运行时自己的 `install-gnome-extension`，与用户首次安装的路径相同；对话框通过只在 unsafe mode 下可用的 `Shell.Eval` 回答。`TestGNOMEShellExtension` 覆盖授权前拒绝、拒绝与允许、被遮挡窗口截图、遮挡时拒绝点击、单击、双击、拖拽、Ctrl+A、Unicode 文本、焦点在别处时拒绝、撤销后拒绝；SDK 桌面测试覆盖 `gnomeShell` 的授权流程，以及无扩展时的 `unavailable`。
+- 指针到位确认：GNOME 50 CI 上扩展放行了双击，计数却不变；Shell 状态显示光标停在 (512, 0)，新虚拟指针的移动被丢弃，按下落在了光标原来的位置。扩展因此在移动后读取光标位置，最长 1 秒内重发移动，新设备先原地移动一次；光标未到位则拒绝并说明它停在哪里。命中检查只看坐标处的窗口，不能代替这一步。
+- 真实桌面（GNOME 50.1，Parallels 虚拟机，2026-10-13）：`install-gnome-extension` 后用户需打开用户扩展总开关（本机原为关闭，安装命令只提示）并重新登录；扩展 `ACTIVE`，`doctor` 报告截图与全局输入可用；对话框授权后截图、双击、坐标点击、Ctrl+A 与退格均生效；从顶栏停止后重新授权，新建的虚拟指针在鼠标静止时首次点击即成功。点击“允许”后立即移动鼠标时，宿主同步的绝对位置会覆盖虚拟指针，点击按设计被拒绝并提示鼠标可能正在使用。
+- 未覆盖：GNOME 45 及更早版本；Electron、Qt 等客户端是否支持 text-input（不支持时只发送 ASCII，其余字符在发送前拒绝）。
 
 ## W2 前置探测（2026-10-12，Sway 1.11 / Hyprland 0.53.3，均在隔离会话中只读探测）
 

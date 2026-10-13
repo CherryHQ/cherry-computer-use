@@ -5,6 +5,11 @@
 # RemoteDesktop API in place of the portal dialog, which no one can click here.
 #
 #   testdata/gnome-session.sh go test ./internal/desktop/ -run GNOME
+#
+# OCU_GNOME_SHELL_EXTENSION=<dir> installs that extension directory into the
+# session's private data directory and enables it before the shell starts; given
+# the open-computer-use executable instead, it runs its install-gnome-extension,
+# as a user would before logging in again.
 set -eu
 if [ "${OCU_GNOME_SESSION_INNER:-}" != 1 ]; then
   # Everything the shell and its services write goes under a private root: the
@@ -28,6 +33,18 @@ case "${OCU_GNOME_SESSION_ROOT:-}" in
 esac
 display="wayland-ocu-test"
 log="$OCU_GNOME_SESSION_ROOT/shell.log"
+if [ -f "${OCU_GNOME_SHELL_EXTENSION:-}" ] && [ -x "$OCU_GNOME_SHELL_EXTENSION" ]; then
+  XDG_CURRENT_DESKTOP=GNOME "$OCU_GNOME_SHELL_EXTENSION" install-gnome-extension
+elif [ -n "${OCU_GNOME_SHELL_EXTENSION:-}" ]; then
+  uuid=$(basename "$OCU_GNOME_SHELL_EXTENSION")
+  mkdir -p "$XDG_DATA_HOME/gnome-shell/extensions"
+  cp -r "$OCU_GNOME_SHELL_EXTENSION" "$XDG_DATA_HOME/gnome-shell/extensions/$uuid"
+  # The private bus activates its own dconf service, writing under XDG_CONFIG_HOME.
+  gsettings set org.gnome.shell disable-user-extensions false
+  gsettings set org.gnome.shell enabled-extensions "['$uuid']"
+fi
+# Notification banners can cover test windows; actions there are rightly refused.
+gsettings set org.gnome.desktop.notifications show-banners false
 # Unsafe mode allows org.gnome.Shell.Eval, used below only inside this session.
 gnome-shell --headless --unsafe-mode --wayland --no-x11 --wayland-display="$display" --virtual-monitor 1024x768 >"$log" 2>&1 &
 shell=$!
@@ -57,13 +74,13 @@ for _ in $(seq 100); do
 done
 # Give each new window focus once it is shown, as a desktop does when the user
 # starts an app. Without an activation token, some GNOME versions (46) leave a
-# test fixture unfocused, and keys are then correctly refused. The shell may
-# start in the overview, which keeps keyboard focus on its own search entry even
-# while a window is the focus window; leave it first, as activating from the
-# overview does.
+# test fixture unfocused, and keys are then correctly refused. The shell opens
+# the overview at startup, which can come after the first test window on a slow
+# machine; it keeps keyboard focus on its search entry and covers every window,
+# so this session leaves the overview whenever it opens.
 for _ in $(seq 50); do
   result=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval \
-    "global.display.connect('window-created', (display, window) => window.connect('shown', w => { Main.overview.hide(); w.activate(global.get_current_time()); })); 'ok'" 2>/dev/null) && break
+    "Main.overview.connect('shown', () => Main.overview.hide()); Main.overview.hide(); global.display.connect('window-created', (display, window) => window.connect('shown', w => { Main.overview.hide(); w.activate(global.get_current_time()); })); 'ok'" 2>/dev/null) && break
   sleep 0.2
 done
 case "${result:-}" in
@@ -100,4 +117,4 @@ open(sys.argv[1]).read()
   fi
 fi
 env WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland \
-  OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"
+  XDG_CURRENT_DESKTOP=GNOME OPEN_COMPUTER_USE_WAYLAND_TEST=1 OPEN_COMPUTER_USE_LINUX_GNOME_TEST=1 "$@"

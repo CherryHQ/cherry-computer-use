@@ -1,9 +1,31 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ComputerUse } from '../packages/sdk/dist/index.js'
 
 // Start apps/OpenComputerUseLinux/testdata/gtk_fixture.py in the desktop session first.
+
+function shellDump() {
+  const js = `JSON.stringify((() => { const [x, y] = global.get_pointer(); return { pointer: [x, y], overview: Main.overview.visible,
+    at: Main.extensionManager.lookup('computer-use@cherryai').stateObj._describeAt(x, y),
+    windows: global.get_window_actors().map(a => a.meta_window).filter(Boolean).map(w => { const f = w.get_frame_rect(), b = w.get_buffer_rect();
+      return [w.get_title(), [f.x, f.y, f.width, f.height], [b.x, b.y, b.width, b.height], w.has_focus()] }) } })())`
+  return spawnSync('gdbus', ['call', '--session', '--dest', 'org.gnome.Shell', '--object-path', '/org/gnome/Shell',
+    '--method', 'org.gnome.Shell.Eval', js], { encoding: 'utf8' }).stdout
+}
+
+// Allows desktop control in the GNOME Shell extension's dialog once it opens.
+// Shell.Eval exists only in the isolated test session's unsafe mode.
+async function answerShellDialog() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    await delay(100)
+    const answer = spawnSync('gdbus', ['call', '--session', '--dest', 'org.gnome.Shell', '--object-path', '/org/gnome/Shell',
+      '--method', 'org.gnome.Shell.Eval', "Main.extensionManager.lookup('computer-use@cherryai').stateObj._answerForTest(true)"], { encoding: 'utf8' })
+    if (answer.stdout.includes("'true'")) return
+  }
+  throw new Error('The GNOME Shell extension never asked for desktop control')
+}
 const fixtureName = process.env.COMPUTER_USE_LINUX_ACTION_FIXTURE
 
 test('Linux SDK engine runs semantic actions and refuses global input', {
@@ -63,8 +85,16 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   // X11 and wlroots compositors (virtual pointer, compositor IPC) offer the pointer.
   const pointer = capabilities.find(item => item.name === 'drag').availability
   const screenshot = capabilities.find(item => item.name === 'screenshot').availability
-  assert.equal(snapshot.screenshot.status, screenshot.status === 'available' ? 'available' : 'unavailable', JSON.stringify(snapshot.screenshot))
-  if (screenshot.status === 'available') assert.equal(snapshot.screenshot.image.mimeType, 'image/png')
+  // On GNOME the Shell extension serves screenshots and input once the user allows it.
+  const shellGrant = () => client.getPermissionStatus().then(status => status.permissions.find(permission => permission.id === 'gnomeShell'))
+  const shellPending = (await shellGrant())?.status === 'notDetermined'
+  if (shellPending) {
+    assert.equal(snapshot.screenshot.status, 'unavailable')
+    assert.equal(snapshot.screenshot.reason.code, 'PERMISSION_REQUIRED')
+  } else {
+    assert.equal(snapshot.screenshot.status, screenshot.status === 'available' ? 'available' : 'unavailable', JSON.stringify(snapshot.screenshot))
+    if (screenshot.status === 'available') assert.equal(snapshot.screenshot.image.mimeType, 'image/png')
+  }
   const pointerActions = [
     { type: 'drag', from: { x: 20, y: 20 }, to: { x: 60, y: 20 } },
     { type: 'click', x: 20, y: 20 },
@@ -88,18 +118,34 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
     }
   }
   if (wayland) {
-    // Portal sessions (GNOME, KDE) list remoteDesktop; the wlroots virtual keyboard needs no grant.
+    // GNOME with the Shell extension lists gnomeShell; portal sessions (GNOME without
+    // it, KDE) list remoteDesktop; the wlroots virtual keyboard needs no grant.
     const permissions = (await client.getPermissionStatus()).permissions
     const portal = permissions.some(permission => permission.id === 'remoteDesktop')
     if (keyboard.status !== 'available') return
-    if (portal) {
+    if (shellPending) {
+      // Keys, clicks and screenshots wait for desktop control. The Shell's dialog is
+      // answered through Shell.Eval, which only isolated test sessions serve.
+      await state(() => true)
+      await assert.rejects(global({ type: 'pressKey', key: 'Return' }), refused('PERMISSION_REQUIRED'))
+      if (process.env.OPEN_COMPUTER_USE_WAYLAND_TEST !== '1') return
+      const answering = answerShellDialog()
+      const granted = await client.requestPermissions({ ids: ['gnomeShell'] })
+      await answering
+      assert.equal(granted.permissions.find(permission => permission.id === 'gnomeShell').status, 'granted')
+      await state(() => true)
+      assert.equal(snapshot.screenshot.status, 'available', JSON.stringify(snapshot.screenshot))
+    } else if (portal) {
       // Keys wait for the remoteDesktop permission. The grant needs the portal dialog,
       // so it only runs where the session can answer it (testdata/gnome-session.sh).
       await state(() => true)
       await assert.rejects(global({ type: 'pressKey', key: 'Return' }), refused('PERMISSION_REQUIRED'))
       if (process.env.OPEN_COMPUTER_USE_WAYLAND_TEST !== '1') return
       const granted = await client.requestPermissions({ ids: ['remoteDesktop'] })
-      assert.equal(granted.permissions[0].status, 'granted')
+      assert.equal(granted.permissions.find(permission => permission.id === 'remoteDesktop').status, 'granted')
+      // GNOME without the Shell extension says how to get it.
+      const shell = granted.permissions.find(permission => permission.id === 'gnomeShell')
+      if (shell) assert.deepEqual([shell.status, shell.interaction], ['unavailable', 'systemSettings'])
     } else {
       assert.deepEqual(permissions, [])
     }
@@ -116,6 +162,12 @@ test('Linux SDK engine runs semantic actions and refuses global input', {
   // Pointer: a double click presses the counter twice; points outside the window are refused.
   await state(() => true)
   await global({ type: 'click', elementId: named(`Count: ${count + 1}`).id, count: 2 })
-  await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))
+  try {
+    await state(elements => elements.some(element => element.name === `Count: ${count + 3}`))
+  } catch (error) {
+    // Where the pointer and windows were, as the Shell sees them (test sessions only).
+    if (shellPending) console.error('Shell state after the double click:', shellDump())
+    throw error
+  }
   await assert.rejects(global({ type: 'click', x: 5000, y: 5000 }), refused('INVALID_ARGUMENT'))
 })

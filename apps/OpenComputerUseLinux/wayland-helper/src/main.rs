@@ -13,6 +13,7 @@ mod keyboard;
 mod keymap;
 mod pointer;
 mod probe;
+mod shell;
 mod window;
 mod wlr;
 
@@ -97,6 +98,16 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
             .and_then(|v| u32::try_from(v).ok())
             .ok_or_else(|| refuse("INVALID_ARGUMENT", "keysyms are unsigned 32-bit numbers"))
     };
+    // The window of the request's pid with its observed title.
+    let target_window = || {
+        let pid = request
+            .params
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|p| u32::try_from(p).ok())
+            .ok_or_else(|| refuse("INVALID_ARGUMENT", "pid is required"))?;
+        window::find(pid, text("title")?)
+    };
     match request.method.as_str() {
         "hello" => {
             let requested = request.params.get("protocol").and_then(Value::as_u64);
@@ -120,23 +131,49 @@ fn handle(helper: &mut Helper, request: &Request) -> Result<Value, Failure> {
             }
             Ok(json!({ "granted": true }))
         }
-        "window.find" => {
-            let pid = request
-                .params
-                .get("pid")
-                .and_then(Value::as_u64)
-                .and_then(|p| u32::try_from(p).ok())
-                .ok_or_else(|| refuse("INVALID_ARGUMENT", "pid is required"))?;
-            Ok(window::describe(&window::find(pid, text("title")?)?))
-        }
-        "window.capture" => {
-            let pid = request
-                .params
-                .get("pid")
-                .and_then(Value::as_u64)
-                .and_then(|p| u32::try_from(p).ok())
-                .ok_or_else(|| refuse("INVALID_ARGUMENT", "pid is required"))?;
-            Ok(window::capture(&window::find(pid, text("title")?)?)?.to_json())
+        "window.find" => Ok(window::describe(&target_window()?)),
+        "window.capture" => Ok(window::capture(&target_window()?)?.to_json()),
+        "shell.authorization" => Ok(json!({ "status": shell::authorization()? })),
+        "shell.authorize" => Ok(json!({ "status": shell::authorize()? })),
+        method if method.starts_with("shell.") => {
+            let window = target_window()?;
+            let id = window.shell_id.ok_or_else(|| {
+                refuse("UNSUPPORTED_CAPABILITY", "The GNOME Shell extension does not list this window")
+            })?;
+            let target = shell::Target { id, pid: window.pid, title: &window.title };
+            let number = |name: &str| {
+                request
+                    .params
+                    .get(name)
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| refuse("INVALID_ARGUMENT", format!("{name} is required")))
+            };
+            let count = |name: &str| {
+                request
+                    .params
+                    .get(name)
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| refuse("INVALID_ARGUMENT", format!("{name} is required")))
+            };
+            match method {
+                "shell.activate" => Ok(json!({ "focused": shell::activate(&target)? })),
+                "shell.click" => shell::click(&target, number("x")?, number("y")?, count("button")?, count("count")?)
+                    .map(|()| json!({})),
+                "shell.drag" => {
+                    shell::drag(&target, (number("from_x")?, number("from_y")?), (number("to_x")?, number("to_y")?))
+                        .map(|()| json!({}))
+                }
+                "shell.chord" => {
+                    let modifiers =
+                        request.params.get("modifiers").and_then(Value::as_array).cloned().unwrap_or_default();
+                    let modifiers = modifiers.iter().map(keysym).collect::<Result<Vec<_>, _>>()?;
+                    let key = keysym(request.params.get("key").unwrap_or(&Value::Null))?;
+                    shell::key_chord(&target, &modifiers, key).map(|()| json!({}))
+                }
+                "shell.text" => shell::text(&target, text("text")?).map(|()| json!({})),
+                other => Err(refuse("UNSUPPORTED_CAPABILITY", format!("unknown helper method {other:?}"))),
+            }
         }
         "window.active" => match wlr::active_window()? {
             None => Ok(json!({ "available": false })),

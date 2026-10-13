@@ -16,6 +16,8 @@ pub struct Probe {
     pub wayland: Wayland,
     pub portal: Portal,
     pub compositor: Compositor,
+    /// The GNOME Shell extension's protocol version when it is running.
+    pub gnome_shell: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -77,6 +79,7 @@ pub fn run() -> Probe {
             sway: var("SWAYSOCK").is_some(),
             hyprland: var("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
         },
+        gnome_shell: crate::shell::probe(),
     }
 }
 
