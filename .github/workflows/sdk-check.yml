@@ -282,7 +282,7 @@ jobs:
       - name: Capture and input through KWin
         run: |
           # The runtime's own install-kde-integration authorizes the helper once KWin is up.
-          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_KDE_INTEGRATION="$PWD/dist/native/open-computer-use"
+          export OPEN_COMPUTER_USE_WAYLAND_HELPER="$PWD/dist/native/open-computer-use-wayland" OCU_KDE_INTEGRATION="$PWD/dist/native/open-computer-use" OCU_KWIN_DEBUG=1
           session="$PWD/apps/OpenComputerUseLinux/testdata/kwin-session.sh"
           (cd apps/OpenComputerUseLinux && "$session" go test -count=1 -run KDE -v ./internal/desktop/)
           "$session" sh -c '

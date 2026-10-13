@@ -14,6 +14,8 @@
 # OCU_KWIN_SCALE and OCU_KWIN_OUTPUTS set the virtual outputs' scale and count.
 # OCU_KDE_INTEGRATION=<open-computer-use executable> runs its
 # install-kde-integration once KWin is up, as a user would.
+# OCU_KWIN_DEBUG=1 logs KWin's core decisions, such as which clients may use
+# restricted Wayland interfaces.
 set -eu
 [ $# -gt 0 ] || { echo "usage: $0 <command...>" >&2; exit 2; }
 
@@ -80,6 +82,7 @@ display="wayland-ocu-kwin"
 # covering this session with KWin's lock screen.
 mkdir -p "$XDG_CONFIG_HOME"
 printf '[Plugins]\nscreenedgeEnabled=false\n' > "$XDG_CONFIG_HOME/kwinrc"
+[ "${OCU_KWIN_DEBUG:-}" = 1 ] && export QT_LOGGING_RULES="kwin_core.debug=true"
 XDG_CURRENT_DESKTOP=KDE QT_QPA_PLATFORM=offscreen \
   kwin_wayland --virtual --no-lockscreen --width 1024 --height 768 --scale "${OCU_KWIN_SCALE:-1}" --output-count "${OCU_KWIN_OUTPUTS:-1}" \
   --socket "$display" > "$root/kwin.log" 2>&1 &
@@ -109,7 +112,8 @@ fi
 if [ -n "${OCU_KDE_INTEGRATION:-}" ]; then
   WAYLAND_DISPLAY="$display" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE "$OCU_KDE_INTEGRATION" install-kde-integration || {
     echo "kwin-session.sh: install-kde-integration failed; KWin log:" >&2
-    tail -40 "$root/kwin.log" >&2
+    grep -E "X-KDE-Wayland-Interfaces|authorized|Could not identify|fake" "$root/kwin.log" | tail -20 >&2
+    tail -20 "$root/kwin.log" >&2
     exit 1
   }
 fi
