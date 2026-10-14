@@ -72,7 +72,8 @@ function Observe-SDK($target, $options) {
         $elements += $wire
         $references[$id] = $record
     }
-    return @{ window = @{ id = 'native'; title = $process.MainWindowTitle }; tree = @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }; screenshot = (Get-SDKCapture $process); target = (Get-SDKTarget $process); bounds = $bounds; references = $references }
+    $capture = if ($options.includeScreenshot -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'CAPTURE_NOT_REQUESTED'; message = 'Screenshot was not requested' } } } else { Get-SDKCapture $process }
+    return @{ window = @{ id = 'native'; title = $process.MainWindowTitle }; tree = @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }; screenshot = $capture; target = (Get-SDKTarget $process); bounds = $bounds; references = $references }
 }
 function Invoke-SDKAction($operation) {
     $process = Resolve-SDKTarget $operation.target

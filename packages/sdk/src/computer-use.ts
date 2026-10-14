@@ -93,6 +93,10 @@ export async function connectClient(
     },
     listApps: (options) =>
       connection.request('listApps', {}, validators.validateAppList, options),
+    resolveApp: async (params, options) => {
+      input(params, validators.validateResolveAppInput)
+      return connection.request('resolveApp', params, validators.validateAppInfo, options, params.launch === false ? 'none' : 'possible')
+    },
     openAppSession: async (params, options) => {
       input(params, validators.validateOpenAppSessionInput)
       return connection.request(
@@ -135,6 +139,17 @@ export async function connectClient(
           options,
           params.activation === 'allow' ? 'possible' : 'none'
         )
+      )
+    },
+    perform: async (params, options) => {
+      input(params, validators.validateAction)
+      return connection.request(
+        'perform',
+        { allowGlobalInput: false, ...params },
+        (value): value is Wire.PerformResult =>
+          validators.validatePerformResult(value) && value.appSessionId === params.appSessionId,
+        options,
+        'possible'
       )
     },
     act: async (params, options) => {

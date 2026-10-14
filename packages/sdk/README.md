@@ -142,3 +142,18 @@ Code Mode is optional and deferred. Ordinary tools and a future script facade ca
 ## Cherry 发布身份
 
 SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Computer Use.app`（`com.cherryai.cherrystudio.computer-use`），开发版为 `Cherry Computer Use (Dev).app`（`.dev`）。嵌入或显式 `runtimePath` 要更新路径，并重新授予新 Bundle ID 系统权限。CLI/native workspace `@cherrystudio/computer-use-cli` 暂不发布，可在本地构建制品；SDK 平台包随 SDK 同版本交付，自动发现后端；0.1.0 仍需显式指定 runtime。版本与签名、公证流程见 [发布指南](../../docs/releases/RELEASE_GUIDE.md)。
+
+## Persistent automation additions (unreleased)
+
+- `resolveApp({ query })` resolves an unambiguous application name or runtime ID. macOS also supports bundle IDs/paths and launches installed apps without activating them. Windows/Linux require a listed running target; unsupported launch is explicit. Resolve first, then open an owned app session. Native launch completion does not guarantee a usable window: obtain an observation before input.
+- `perform(action)` validates and executes the same `Action` input as `act`, returning `{ status: 'completed', appSessionId }` without capturing another observation. This receipt confirms input dispatch, not the user's task outcome.
+- Every action consumes element/coordinate refs. Only `typeText`/`pressKey` through `perform` can reuse the last target snapshot ID, with native target validation. An explicit observation replaces that keyboard target; errors require fresh observation. A different app/window cannot inherit the target.
+- `act` retains its existing action-plus-observation behavior. New methods require matching rebuilt SDK/native artifacts. There is no automatic fallback or retry after an uncertain action.
+
+The host owns app selection authorization, persistent proxies, output delivery and permission revocation. These additions do not expose MCP or a JavaScript runtime in the SDK.
+
+`resolveApp({ query, launch: false })` only resolves running targets. Hosts use this when reacquiring a persistent handle so a read cannot silently relaunch an application closed by the user. Explicit binding defaults to allowing launch on supported platforms.
+
+`getAppState({ appSessionId, includeScreenshot: false })` collects AX state without calling the native screenshot backend on macOS, Windows or Linux. Omitted/true preserves capture. A skipped screenshot reports `CAPTURE_NOT_REQUESTED`, not a permission failure. Coordinate input requires a screenshot-enabled observation; semantic input and keyboard targeting remain available. This option requires the matching unreleased SDK/native build.
+
+On macOS, SDK `typeText` sends keyboard text to the validated application PID, including keyboard-driven controls without an editable AX field. It does not replace an AX value or activate the application. Each complete grapheme is sent separately; newline sends Return. `setValue` remains the explicit editable-control value operation. The legacy MCP text-field path and other platforms retain their own input restrictions.

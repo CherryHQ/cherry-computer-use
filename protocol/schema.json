@@ -17,6 +17,7 @@
         "UNSUPPORTED_CAPABILITY",
         "DEPENDENCY_MISSING",
         "CAPTURE_FAILED",
+        "CAPTURE_NOT_REQUESTED",
         "CANCELLED",
         "TIMEOUT",
         "RUNTIME_EXITED",
@@ -300,6 +301,22 @@
       },
       "title": "AppList"
     },
+    "ResolveAppInput": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "launch": { "type": "boolean" }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "title": "ResolveAppInput"
+    },
     "OpenAppSessionInput": {
       "type": "object",
       "properties": { "appId": { "type": "string", "minLength": 1 } },
@@ -568,6 +585,7 @@
     "ObserveInput": {
       "type": "object",
       "properties": {
+        "includeScreenshot": { "type": "boolean" },
         "appSessionId": {
           "type": "string",
           "minLength": 1
@@ -837,6 +855,24 @@
         }
       ],
       "title": "Action"
+    },
+    "PerformResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "completed"
+        },
+        "appSessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "status",
+        "appSessionId"
+      ],
+      "additionalProperties": false,
+      "title": "PerformResult"
     },
     "ActionResult": {
       "type": "object",

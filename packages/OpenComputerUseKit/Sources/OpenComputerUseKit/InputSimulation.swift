@@ -166,7 +166,11 @@ enum InputSimulation {
     }
 
     static func typeText(_ text: String, pid: pid_t) throws {
-        for chunk in keyboardUnicodeChunks(for: text) {
+        for chunk in keyboardUnicodeChunks(for: text, maxUTF16Units: 1) {
+            if chunk == [10] || chunk == [13] || chunk == [13, 10] {
+                try pressKey("Return", pid: pid)
+                continue
+            }
             var mutableChunk = chunk
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {

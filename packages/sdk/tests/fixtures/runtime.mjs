@@ -145,7 +145,18 @@ rpc.onRequest('getAppState', (input) => {
       setInterval(() => {}, 1_000)
     })
   }
-  return snapshot()
+  const state = snapshot()
+  if (input.includeScreenshot === false) state.screenshot = { status: 'unavailable', reason: { code: 'CAPTURE_NOT_REQUESTED', message: 'Screenshot was not requested' } }
+  return state
+})
+rpc.onRequest('resolveApp', (input) => input.query === 'Counter' ? { id: 'app', name: 'Counter' } : error('TARGET_UNAVAILABLE'))
+rpc.onRequest('perform', (action) => {
+  if (controlStatus !== 'active') return error('APP_SESSION_STOPPED')
+  if (action.snapshotId !== id()) return error('STALE_SNAPSHOT')
+  if (action.allowGlobalInput !== false) return error('INVALID_ARGUMENT')
+  clicks++
+  generation++
+  return { status: 'completed', appSessionId: mode === 'foreign-perform' ? 'other-control' : action.appSessionId }
 })
 rpc.onRequest('act', async (action, token) => {
   if (controlStatus !== 'active') return error('APP_SESSION_STOPPED')

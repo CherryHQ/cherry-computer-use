@@ -40,6 +40,7 @@ export interface ComputerUseClient {
     options?: CallOptions
   ): Promise<Wire.PermissionStatus>
   listApps(options?: CallOptions): Promise<Wire.AppInfo[]>
+  resolveApp(input: Wire.ResolveAppInput, options?: CallOptions): Promise<Wire.AppInfo>
   openAppSession(
     input: Wire.OpenAppSessionInput,
     options?: CallOptions
@@ -55,6 +56,8 @@ export interface ComputerUseClient {
     options?: CallOptions
   ): Promise<Snapshot>
   act(input: Wire.Action, options?: CallOptions): Promise<ActionResult>
+  /** Execute without capturing a new observation. Only keyboard actions can reuse the last target snapshot. */
+  perform(input: Wire.Action, options?: CallOptions): Promise<Wire.PerformResult>
   /** Subscribing after closure immediately receives the final event. */
   onClosed(listener: (event: ClosedEvent) => void): () => void
   close(): Promise<void>

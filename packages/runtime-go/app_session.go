@@ -16,10 +16,11 @@ type AppSession struct {
 
 type appSession struct {
 	AppSession
-	target    Target
-	snapshots map[string]desktopSnapshot
-	cancel    context.CancelFunc
-	done      chan struct{}
+	target         Target
+	snapshots      map[string]desktopSnapshot
+	keyboardTarget *desktopSnapshot
+	cancel         context.CancelFunc
+	done           chan struct{}
 }
 
 func (d *Desktop) openAppSession(appID string) (AppSession, error) {
@@ -108,6 +109,7 @@ func (d *Desktop) prepareAppStop(params json.RawMessage) (func() (any, error), e
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		clear(session.snapshots)
+		session.keyboardTarget = nil
 		session.Status = "stopped"
 		return map[string]string{"appSessionId": session.ID, "status": "stopped", "cleanup": "complete"}, nil
 	}, nil
