@@ -349,7 +349,7 @@ private func integer(_ value: Any?, fallback: Int) throws -> Int {
     return number.intValue
 }
 
-private extension SDKDomainError {
+extension SDKDomainError {
     /// Engine failures surface after input may have been dispatched, so their effect is unknown.
     init(_ error: Error) {
         switch error as? ComputerUseError {

@@ -39,3 +39,7 @@ Cherry’s follow-up unifies bundled Browser/Computer skills and runtime API ref
 The model-driven cold-start check exposed `cgWindowNotFound` immediately after background launch. `SDKAppResolver.swift` now preserves LaunchServices errors and waits, within the existing launch deadline, for a read-only window observation without screenshot capture or activation. Cancellation and window-unavailable failures preserve possible launch effects. A signed native build and a new real-model Calculator cold-start run passed: three cells, results `5192 → 649`, final screenshot. No local automated test suite was run.
 
 The same Cherry model also completed Wikipedia search-box submission and final page screenshot in four cells without tool errors. A subsequent Calculator turn attempted input without observing first; the host rejected it with no effect, and the model recovered by rebinding before reaching 650. This verifies stale-input blocking and recovery, not universal model compliance or all Agent-runtime skill paths.
+
+## Patch release CI follow-up
+
+The first PR macOS CI build exposed a file-private error-conversion initializer called from the new application resolver. The converter is now module-internal, allowing both paths to preserve the same error mapping. Earlier local build evidence did not cover this final cross-file call; release readiness is determined by the corrected CI revision. No local test suite was run.
