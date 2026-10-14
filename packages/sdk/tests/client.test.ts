@@ -52,6 +52,15 @@ const hasCode = (code: ErrorCode, effect?: string) => (error: unknown) => {
   return true
 }
 
+test('AX-only observations preserve elements without treating skipped capture as permission failure', async (t) => {
+  const { client } = await start(t)
+  const state = await client.getAppState({ appSessionId: 'control', includeScreenshot: false })
+  assert.equal(state.tree.status, 'available')
+  assert.deepEqual(state.screenshot, { status: 'unavailable', reason: { code: 'CAPTURE_NOT_REQUESTED', message: 'Screenshot was not requested' } })
+  const complete = await client.getAppState({ appSessionId: 'control' })
+  assert.equal(complete.screenshot.status, 'available')
+})
+
 test('app sessions expose native stop state and stopped calls cannot execute', async (t) => {
   const { client } = await start(t)
   const session = await client.openAppSession({ appId: 'app' })
@@ -64,6 +73,24 @@ test('app sessions expose native stop state and stopped calls cannot execute', a
   assert.equal((await client.listAppSessions())[0]?.status, 'stopped')
   await assert.rejects(client.act({ type: 'click', appSessionId: session.id, snapshotId: snapshot.id, elementId: 'button' }), hasCode('APP_SESSION_STOPPED', 'none'))
   assert.equal((await client.listApps())[0]?.name, 'clicks:0')
+})
+
+test('perform confirms the owned action without requiring a post-action observation', async (t) => {
+  const { client } = await start(t, 'capture-failure')
+  assert.deepEqual(await client.resolveApp({ query: 'Counter' }), { id: 'app', name: 'Counter' })
+  const snapshot = await client.getAppState({ appSessionId: 'control' })
+  const action: Action = { type: 'click', appSessionId: 'control', snapshotId: snapshot.id, elementId: 'button' }
+  assert.deepEqual(await client.perform(action), { status: 'completed', appSessionId: 'control' })
+  assert.equal((await client.listApps())[0]?.name, 'clicks:1')
+  await assert.rejects(client.perform(action), hasCode('STALE_SNAPSHOT'))
+  assert.equal((await client.listApps())[0]?.name, 'clicks:1')
+})
+
+test('perform rejects a completed receipt for another app session', async (t) => {
+  const { client } = await start(t, 'foreign-perform')
+  const state = await client.getAppState({ appSessionId: 'control' })
+  await assert.rejects(client.perform({ type: 'click', appSessionId: 'control', snapshotId: state.id, elementId: 'button' }), hasCode('PROTOCOL_ERROR'))
+  await assert.rejects(client.listApps(), hasCode('CLOSED'))
 })
 
 test('an app stop acknowledgement for another app fails the connection', async (t) => {

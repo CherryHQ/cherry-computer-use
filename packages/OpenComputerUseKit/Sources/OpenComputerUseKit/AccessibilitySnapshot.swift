@@ -162,7 +162,8 @@ enum SnapshotBuilder {
         for app: RunningAppDescriptor,
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
-        recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation
+        recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
+        includeScreenshot: Bool = true
     ) throws -> AppSnapshot {
         if app.name == FixtureBridge.appName, let fixtureState = try FixtureBridge.readState() {
             return buildFixtureSnapshot(app: app, state: fixtureState)
@@ -192,7 +193,7 @@ enum SnapshotBuilder {
         rootWindow = resolvedFocusedWindow
 
         var windowTitle = stringValue(of: rootWindow, attribute: kAXTitleAttribute)
-        var windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+        var windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle, includeScreenshot: includeScreenshot)
         if windowCapture == nil,
            recoveryPolicy == .allowActivation,
            recoverVisibleWindow(for: app, appElement: appElement, preferredWindow: rootWindow) {
@@ -200,7 +201,7 @@ enum SnapshotBuilder {
             if let recoveredWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide) {
                 rootWindow = recoveredWindow
                 windowTitle = stringValue(of: recoveredWindow, attribute: kAXTitleAttribute)
-                windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle)
+                windowCapture = WindowCapture.resolve(for: app.pid, titleHint: windowTitle, includeScreenshot: includeScreenshot)
             }
         }
 
@@ -442,7 +443,7 @@ private struct WindowCapture {
     let bounds: CGRect
     let image: CGImage?
 
-    static func resolve(for pid: pid_t, titleHint: String?) -> WindowCapture? {
+    static func resolve(for pid: pid_t, titleHint: String?, includeScreenshot: Bool) -> WindowCapture? {
         guard let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
             return nil
         }
@@ -475,7 +476,7 @@ private struct WindowCapture {
             return nil
         }
 
-        let image = captureImage(windowID: best.windowID, bounds: best.bounds)
+        let image = includeScreenshot ? captureImage(windowID: best.windowID, bounds: best.bounds) : nil
 
         return WindowCapture(windowID: best.windowID, layer: best.layer, bounds: best.bounds, image: image)
     }

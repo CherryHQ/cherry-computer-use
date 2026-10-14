@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -109,11 +110,12 @@ type Snapshot struct {
 }
 
 type ObserveOptions struct {
-	AppSessionID string `json:"appSessionId"`
-	Activation   string `json:"activation"`
-	MaxTreeNodes int    `json:"maxTreeNodes"`
-	MaxTreeDepth int    `json:"maxTreeDepth"`
-	TextLimit    any    `json:"textLimit"`
+	IncludeScreenshot *bool  `json:"includeScreenshot,omitempty"`
+	AppSessionID      string `json:"appSessionId"`
+	Activation        string `json:"activation"`
+	MaxTreeNodes      int    `json:"maxTreeNodes"`
+	MaxTreeDepth      int    `json:"maxTreeDepth"`
+	TextLimit         any    `json:"textLimit"`
 }
 
 func (o ObserveOptions) LimitText(value string, tree *Tree) string {
@@ -235,6 +237,7 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 				for _, session := range d.sessions {
 					if session.App.ID == id {
 						clear(session.snapshots)
+						session.keyboardTarget = nil
 						session.Status = "stopped"
 					}
 				}
@@ -263,6 +266,34 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			return nil, err
 		}
 		return map[string]any{"permissions": permissions}, nil
+	case "resolveApp":
+		var input struct {
+			Query  string `json:"query"`
+			Launch *bool  `json:"launch"`
+		}
+		if decodeObject(params, &input) != nil || input.Query == "" || len(input.Query) > 512 {
+			return nil, Error("INVALID_ARGUMENT", "Expected an application name or ID")
+		}
+		value, err := d.Call(ctx, "listApps", json.RawMessage(`{}`))
+		if err != nil {
+			return nil, err
+		}
+		matches := []App{}
+		for _, app := range value.([]App) {
+			if app.ID == input.Query || strings.EqualFold(app.Name, input.Query) {
+				matches = append(matches, app)
+			}
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+		if len(matches) > 1 {
+			return nil, Error("TARGET_UNAVAILABLE", "Application name is ambiguous; use an ID from listApps")
+		}
+		if input.Launch != nil && !*input.Launch {
+			return nil, Error("TARGET_UNAVAILABLE", "Application is no longer running; bind it explicitly to launch again")
+		}
+		return nil, Error("UNSUPPORTED_CAPABILITY", "Application is not running; launching applications is unavailable on this platform")
 	case "openAppSession":
 		var input struct {
 			AppID string `json:"appId"`
@@ -286,7 +317,7 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		}
 		defer finish()
 		return d.observe(ctx, session, options)
-	case "act":
+	case "act", "perform":
 		action, err := decodeAction(params)
 		if err != nil {
 			return nil, err
@@ -301,8 +332,14 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		}
 		defer finish()
 		snapshot, exists := session.snapshots[action.SnapshotID]
+		if !exists && method == "perform" && (action.Type == "typeText" || action.Type == "pressKey") && session.keyboardTarget != nil && session.keyboardTarget.ID == action.SnapshotID {
+			snapshot, exists = *session.keyboardTarget, true
+		}
 		if !exists {
 			return nil, Error("STALE_SNAPSHOT", "Snapshot is expired or belongs to another session")
+		}
+		if snapshot.options.IncludeScreenshot != nil && !*snapshot.options.IncludeScreenshot && (action.X != nil || action.Type == "drag") {
+			return nil, Error("STALE_SNAPSHOT", "Observe with a screenshot before coordinate input")
 		}
 		var element *Element
 		for i := range snapshot.Tree.Elements {
@@ -321,6 +358,7 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			return nil, Error("UNSUPPORTED_CAPABILITY", "Element does not expose this secondary action")
 		}
 		clear(session.snapshots)
+		session.keyboardTarget = nil
 		if fullActions {
 			err = engine.Act(ctx, session.target, snapshot.Observation, element, action)
 		} else {
@@ -336,6 +374,10 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 				d.uncertain.Store(true)
 			}
 			return nil, err
+		}
+		if method == "perform" {
+			session.keyboardTarget = &snapshot
+			return map[string]string{"status": "completed", "appSessionId": session.ID}, nil
 		}
 		observation := map[string]any{}
 		updated, err := d.observe(ctx, session, snapshot.options)
@@ -374,6 +416,7 @@ func errorReason(err error) Reason {
 
 func (d *Desktop) observe(ctx context.Context, session *appSession, options ObserveOptions) (Snapshot, error) {
 	clear(session.snapshots)
+	session.keyboardTarget = nil
 	if ctx.Err() != nil {
 		return Snapshot{}, Error("CANCELLED", "Observation cancelled")
 	}

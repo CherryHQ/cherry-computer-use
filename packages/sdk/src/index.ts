@@ -12,7 +12,9 @@ export type {
 export type {
   Action,
   ActionKind,
+  PerformResult,
   AppInfo,
+  ResolveAppInput,
   AppSession,
   AppSessionInput,
   OpenAppSessionInput,

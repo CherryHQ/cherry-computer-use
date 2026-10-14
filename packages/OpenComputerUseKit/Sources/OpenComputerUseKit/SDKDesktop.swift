@@ -31,6 +31,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         let state: AppSnapshot
         let options: [String: Any]
         let titles: [Int: String]
+        let focusedWindow: AXUIElement?
     }
     private let engine = ComputerUseService()
     private var apps: [String: RunningAppDescriptor] = [:]
@@ -40,6 +41,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         let app: RunningAppDescriptor
         var status = "active"
         fileprivate var snapshots: [String: Snapshot] = [:]
+        fileprivate var keyboardTarget: (id: String, snapshot: Snapshot)?
         var cancellation: SDKCancellation?
         let running = DispatchGroup()
         init(appID: String, app: RunningAppDescriptor) { self.appID = appID; self.app = app }
@@ -117,6 +119,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             }
             return self.controlLock.withLock {
                 control.snapshots.removeAll()
+                control.keyboardTarget = nil
                 control.status = "stopped"
                 return SDKMessage(["appSessionId": id, "status": "stopped", "cleanup": "complete"])
             }
@@ -133,6 +136,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             controlLock.withLock {
                 for control in controls.values where apps[control.appID] == nil {
                     control.snapshots.removeAll()
+                    control.keyboardTarget = nil
                     control.status = "stopped"
                 }
             }
@@ -143,6 +147,16 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
                 apps[id] = app
                 return ["id": id, "name": app.name]
             }
+        case "resolveApp":
+            guard Set(params.keys).isSubset(of: ["query", "launch"]), let query = params["query"] as? String, !query.isEmpty, query.count <= 512 else {
+                throw SDKDomainError("INVALID_ARGUMENT", "Expected an application name, bundle ID or path")
+            }
+            if let launch = params["launch"], CFGetTypeID(launch as CFTypeRef) != CFBooleanGetTypeID() { throw SDKDomainError("INVALID_ARGUMENT", "launch must be a boolean") }
+            if let app = apps[query], !app.runningApplication.isTerminated { return ["id": query, "name": app.name] }
+            let app = try resolveSDKApp(query, launch: params["launch"] as? Bool ?? true, cancellation: cancellation)
+            let id = apps.first(where: { $0.value.runningApplication == app.runningApplication })?.key ?? UUID().uuidString
+            apps[id] = app
+            return ["id": id, "name": app.name]
         case "openAppSession":
             guard Set(params.keys) == ["appId"], let appID = params["appId"] as? String, !appID.isEmpty else {
                 throw SDKDomainError("INVALID_ARGUMENT", "Expected an application ID")
@@ -154,22 +168,31 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             let control = try beginAppRequest(params["appSessionId"] as! String, cancellation: cancellation)
             defer { endAppRequest(control) }
             return try observe(params, control: control, cancellation: cancellation)
-        case "act":
+        case "act", "perform":
             let action = try SDKAction(params)
             let control = try beginAppRequest(action.appSessionID, cancellation: cancellation)
             defer { endAppRequest(control) }
-            guard let snapshot = control.snapshots[action.snapshotID] else {
+            let keyboard = action.isKeyboard && method == "perform" && control.keyboardTarget?.id == action.snapshotID ? control.keyboardTarget?.snapshot : nil
+            guard let snapshot = control.snapshots[action.snapshotID] ?? keyboard else {
                 throw SDKDomainError("STALE_SNAPSHOT", "Snapshot is expired or belongs to another session")
             }
             control.snapshots.removeAll()
+            control.keyboardTarget = nil
             try validateTarget(action, in: snapshot)
             try check(cancellation)
             do {
                 try perform(action, on: snapshot.state)
             } catch let error as SDKDomainError {
+                if error.effect != "none" { controlLock.withLock { uncertain = true } }
                 throw error
             } catch {
-                throw SDKDomainError(error)
+                let failure = SDKDomainError(error)
+                if failure.effect != "none" { controlLock.withLock { uncertain = true } }
+                throw failure
+            }
+            if method == "perform" {
+                control.keyboardTarget = (action.snapshotID, snapshot)
+                return ["status": "completed", "appSessionId": control.id]
             }
             do {
                 let updated = try observe(snapshot.options, control: control, cancellation: cancellation)
@@ -194,12 +217,23 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         case let .drag(from, to):
             try engine.performDrag(on: state, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y)
         case let .typeText(text):
-            try engine.performTypeText(on: state, text: text)
+            if state.mode == .fixture {
+                try engine.performTypeText(on: state, text: text)
+            } else {
+                try InputSimulation.typeText(text, pid: state.app.pid)
+            }
         case let .pressKey(key):
             try engine.performPressKey(on: state, key: key)
         case let .setValue(elementID, value):
             try engine.performSetValue(on: state, elementIndex: elementID, value: value)
         }
+    }
+
+    private func focusedWindow(_ pid: pid_t) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXUIElement.self)
     }
 
     private func validateTarget(_ action: SDKAction, in snapshot: Snapshot) throws {
@@ -211,7 +245,13 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
                 guard text(element, kAXRoleAttribute) == record.role, text(element, kAXTitleAttribute) == title else { throw stale }
             }
         }
+        if action.isKeyboard, let id = snapshot.state.targetWindowID {
+            guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]])?.first,
+                  (info[kCGWindowOwnerPID as String] as? Int32) == snapshot.state.app.pid else { throw stale }
+            guard let previous = snapshot.focusedWindow, let current = focusedWindow(snapshot.state.app.pid), CFEqual(previous, current) else { throw stale }
+        }
         if action.usesCoordinates {
+            guard snapshot.options["includeScreenshot"] as? Bool != false else { throw stale }
             guard let id = snapshot.state.targetWindowID, let bounds = snapshot.state.windowBounds,
                   let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]])?.first,
                   let raw = info[kCGWindowBounds as String] as? NSDictionary, let current = CGRect(dictionaryRepresentation: raw),
@@ -222,6 +262,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
     private func observe(_ options: [String: Any], control: AppControl, cancellation: SDKCancellation) throws -> [String: Any] {
         let appID = control.appID
         control.snapshots.removeAll()
+        control.keyboardTarget = nil
         try check(cancellation)
         guard let app = apps[appID], !app.runningApplication.isTerminated else { throw SDKDomainError("TARGET_UNAVAILABLE", "Application ID is not in this session") }
         guard AXIsProcessTrusted() else { throw SDKDomainError("PERMISSION_REQUIRED", "Accessibility permission is required for this app agent") }
@@ -229,7 +270,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         let limits = AccessibilityTreeLimits(maxNodeCount: try integer(options["maxTreeNodes"], fallback: AccessibilityTreeLimits.defaultMaxNodeCount), maxDepth: try integer(options["maxTreeDepth"], fallback: AccessibilityTreeLimits.defaultMaxDepth))
         let state: AppSnapshot
         do {
-            state = try SnapshotBuilder.build(for: app, textLimit: textLimit, treeLimits: limits, recoveryPolicy: options["activation"] as? String == "allow" ? .allowActivation : .readOnly)
+            state = try SnapshotBuilder.build(for: app, textLimit: textLimit, treeLimits: limits, recoveryPolicy: options["activation"] as? String == "allow" ? .allowActivation : .readOnly, includeScreenshot: options["includeScreenshot"] as? Bool ?? true)
         } catch {
             throw SDKDomainError(error)
         }
@@ -263,7 +304,9 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             return element
         }
         let screenshot: [String: Any]
-        if let image {
+        if options["includeScreenshot"] as? Bool == false {
+            screenshot = ["status": "unavailable", "reason": ["code": "CAPTURE_NOT_REQUESTED", "message": "Screenshot was not requested"]]
+        } else if let image {
             screenshot = ["status": "available", "image": ["mimeType": "image/png", "width": image.1, "height": image.2, "dataBase64": image.0.base64EncodedString()]]
         } else {
             let reason = CGPreflightScreenCaptureAccess()
@@ -271,7 +314,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
                 : ["code": "PERMISSION_REQUIRED", "message": "Screen Recording permission is required for this app agent"]
             screenshot = ["status": "unavailable", "reason": reason]
         }
-        control.snapshots[snapshotID] = Snapshot(state: state, options: options, titles: titles)
+        control.snapshots[snapshotID] = Snapshot(state: state, options: options, titles: titles, focusedWindow: focusedWindow(app.pid))
         return ["id": snapshotID, "appSessionId": control.id, "app": ["id": appID, "name": app.name],
                 "window": ["id": state.targetWindowID.map(String.init) ?? snapshotID, "title": state.windowTitle ?? ""],
                 "tree": ["status": "available", "elements": elements, "text": state.renderedText(style: .fullState), "truncated": state.treeTruncation.sorted()],
@@ -279,9 +322,10 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
     }
 
     private func validateObservation(_ params: [String: Any]) throws {
-        guard Set(params.keys).isSubset(of: ["appSessionId", "activation", "maxTreeNodes", "maxTreeDepth", "textLimit"]),
+        guard Set(params.keys).isSubset(of: ["appSessionId", "activation", "maxTreeNodes", "maxTreeDepth", "textLimit", "includeScreenshot"]),
               let appSessionID = params["appSessionId"] as? String, !appSessionID.isEmpty else { throw SDKDomainError("INVALID_ARGUMENT", "Invalid observation parameters") }
         if let activation = params["activation"], !["never", "allow"].contains(activation as? String ?? "") { throw SDKDomainError("INVALID_ARGUMENT", "Invalid activation mode") }
+        if let capture = params["includeScreenshot"], CFGetTypeID(capture as CFTypeRef) != CFBooleanGetTypeID() { throw SDKDomainError("INVALID_ARGUMENT", "includeScreenshot must be boolean") }
         _ = try integer(params["maxTreeNodes"], fallback: 1200)
         _ = try integer(params["maxTreeDepth"], fallback: 64)
         if params["textLimit"] as? String != "max" { _ = try integer(params["textLimit"], fallback: 500) }
@@ -331,6 +375,9 @@ private struct SDKAction {
     let snapshotID: String
     let kind: Kind
 
+    var isKeyboard: Bool {
+        switch kind { case .typeText, .pressKey: return true; default: return false }
+    }
     var elementID: String? {
         switch kind {
         case let .click(id, _, _, _): return id

@@ -30,6 +30,8 @@ const names = [
   'PermissionStatus',
   'PermissionRequest',
   'AppList',
+  'AppInfo',
+  'ResolveAppInput',
   'OpenAppSessionInput',
   'AppSessionInput',
   'AppSession',
@@ -39,6 +41,7 @@ const names = [
   'Snapshot',
   'Action',
   'ActionResult',
+  'PerformResult',
   'ErrorData',
   'RpcResponse'
 ]

@@ -207,6 +207,10 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 		tree.Elements = append(tree.Elements, element)
 	}
 	observation := sdkruntime.Observation{Window: sdkruntime.Window{Title: native.Window.Title}, Tree: tree, Native: native}
+	if options.IncludeScreenshot != nil && !*options.IncludeScreenshot {
+		observation.Screenshot = sdkruntime.Capture{Status: "unavailable", Reason: &sdkruntime.Reason{Code: "CAPTURE_NOT_REQUESTED", Message: "Screenshot was not requested"}}
+		return observation, nil
+	}
 	capture := d.engine.Capture(ctx, app.PID, native.Window.Title)
 	if capture.Reason != nil {
 		observation.Screenshot = sdkruntime.Capture{Status: "unavailable", Reason: &sdkruntime.Reason{Code: capture.Reason.Code, Message: capture.Reason.Message}}
