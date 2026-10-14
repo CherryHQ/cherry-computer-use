@@ -1,5 +1,13 @@
 # @cherrystudio/computer-use
 
+## 0.1.5
+
+### Patch Changes
+
+- [#20](https://github.com/CherryHQ/cherry-computer-use/pull/20) [`4b491ca`](https://github.com/CherryHQ/cherry-computer-use/commit/4b491ca57b494cea33e9d2aceda5b616a2079a4a) Thanks [@DeJeune](https://github.com/DeJeune)! - Add `perform` for actions without implicit capture, preserving snapshot-scoped element input and revalidated keyboard targets. Add `resolveApp` with unambiguous running-app lookup and background application launch on macOS. Existing `act` behavior remains compatible. Install matching SDK/native packages to use the new methods.
+
+  Add `includeScreenshot: false` for AX-only observations without native capture on all three platforms.
+
 ## 0.1.4
 
 ### Patch Changes
