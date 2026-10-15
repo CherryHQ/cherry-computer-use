@@ -1,5 +1,11 @@
 # @cherrystudio/computer-use
 
+## 0.1.7
+
+### Patch Changes
+
+- [#24](https://github.com/CherryHQ/cherry-computer-use/pull/24) [`144f513`](https://github.com/CherryHQ/cherry-computer-use/commit/144f5138bac1188813191e2aa2bb5e75365ca4c6) Thanks [@DeJeune](https://github.com/DeJeune)! - Derive `listApps()` app IDs from the running process, so an ID stays valid across runtime restarts until the app exits.
+
 ## 0.1.6
 
 ### Patch Changes

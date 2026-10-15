@@ -1,5 +1,9 @@
 # @cherrystudio/computer-use-win32-arm64
 
+## 0.1.7
+
+No changes in this release.
+
 ## 0.1.6
 
 No changes in this release.
