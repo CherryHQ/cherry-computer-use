@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 func resolveSDKAppIdentity(_ query: String) throws -> (id: String, name: String, url: URL) {
@@ -34,6 +35,12 @@ func resolveSDKAppIdentity(_ query: String) throws -> (id: String, name: String,
 }
 
 extension RunningAppDescriptor {
+    /// Derived from the process, not the runtime, so a listApps ID survives a runtime restart.
+    var sdkID: String {
+        let key = "\(pid):\(runningApplication.launchDate?.timeIntervalSince1970 ?? 0):\(bundleIdentifier ?? name)"
+        return SHA256.hash(data: Data(key.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
+
     func sdkInfo(id: String) -> [String: Any] {
         var info: [String: Any] = ["id": id, "name": name]
         if let bundleIdentifier { info["identity"] = bundleIdentifier }
@@ -45,6 +52,7 @@ func resolveSDKApp(_ query: String, launch: Bool, expectedIdentity: String? = ni
     let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
     func matches() -> [RunningAppDescriptor] {
         AppDiscovery.runningApps().filter {
+            $0.sdkID == query ||
             $0.name.caseInsensitiveCompare(query) == .orderedSame ||
             $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame ||
             $0.runningApplication.bundleURL?.path == query

@@ -169,3 +169,18 @@ func TestMalformedObservationAndUnsupportedInputDoNotExecute(t *testing.T) {
 		t.Fatal("unsupported or cancelled input was executed")
 	}
 }
+
+func TestAppIDResolvesInFreshRuntime(t *testing.T) {
+	apps, err := desktopCall(t, NewDesktop(&desktopFixture{}), "listApps", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := apps.([]App)[1]
+	resolved, err := desktopCall(t, NewDesktop(&desktopFixture{}), "resolveApp", map[string]any{"query": first.ID, "launch": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.(App) != first {
+		t.Fatalf("wanted %v, got %v", first, resolved)
+	}
+}

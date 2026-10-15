@@ -101,7 +101,7 @@ try {
 - `ComputerUse.start(options?, callOptions?)`: explicitly resolve, launch and initialize a private runtime. Importing the package does not start a process or request permissions.
 - `getCapabilities()` / `getPermissionStatus()`: query implemented capabilities and OS permission state. They do not replace the host's user authorization.
 - `requestPermissions({ ids })`: explicit OS permission flow for macOS `accessibility` and `screenRecording`, and Linux Wayland `remoteDesktop`; unsupported on Windows and Linux X11.
-- `listApps()` / `openAppSession({ appId })`: discover targets and create per-app control contexts. Opening an active target reuses its context.
+- `listApps()` / `openAppSession({ appId })`: discover targets and create per-app control contexts. Opening an active target reuses its context. App IDs identify the running process and stay valid across runtime restarts until it exits.
 - `listAppSessions()`: query native control status (`active`, `stopping`, `stopped`) independently of queued desktop work.
 - `stopAppSession({ appSessionId })`: block new/queued work for that context, cancel its active request, and wait for native cleanup. It does not quit the app or close other contexts.
 - `getAppState({ appSessionId })`: obtain structured observations for an active app context. Observation defaults to `activation: 'never'`; unsupported constraints must be rejected by native code.

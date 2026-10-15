@@ -376,4 +376,11 @@ extension SDKSessionTests {
             XCTAssertEqual((error as? SDKDomainError)?.effect, "none")
         }
     }
+
+    func testListedAppIDResolvesInFreshRuntime() throws {
+        let listed = try MacOSSDKDesktop().call("listApps", params: [:], cancellation: SDKCancellation()) as! [[String: Any]]
+        let finder = try XCTUnwrap(listed.first { $0["identity"] as? String == "com.apple.finder" })
+        let resolved = try MacOSSDKDesktop().call("resolveApp", params: ["query": finder["id"]!, "launch": false], cancellation: SDKCancellation()) as! [String: Any]
+        XCTAssertEqual(resolved["id"] as? String, finder["id"] as? String)
+    }
 }
