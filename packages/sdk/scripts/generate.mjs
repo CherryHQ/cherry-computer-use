@@ -31,6 +31,8 @@ const names = [
   'PermissionRequest',
   'AppList',
   'AppInfo',
+  'AppIdentity',
+  'AppIdentityInput',
   'ResolveAppInput',
   'OpenAppSessionInput',
   'AppSessionInput',

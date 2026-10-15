@@ -14,6 +14,8 @@ export type {
   ActionKind,
   PerformResult,
   AppInfo,
+  AppIdentity,
+  AppIdentityInput,
   ResolveAppInput,
   AppSession,
   AppSessionInput,

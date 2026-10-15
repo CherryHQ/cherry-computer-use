@@ -40,6 +40,7 @@ export interface ComputerUseClient {
     options?: CallOptions
   ): Promise<Wire.PermissionStatus>
   listApps(options?: CallOptions): Promise<Wire.AppInfo[]>
+  resolveAppIdentity(input: Wire.AppIdentityInput, options?: CallOptions): Promise<Wire.AppIdentity>
   resolveApp(input: Wire.ResolveAppInput, options?: CallOptions): Promise<Wire.AppInfo>
   openAppSession(
     input: Wire.OpenAppSessionInput,

@@ -157,3 +157,17 @@ The host owns app selection authorization, persistent proxies, output delivery a
 `getAppState({ appSessionId, includeScreenshot: false })` collects AX state without calling the native screenshot backend on macOS, Windows or Linux. Omitted/true preserves capture. A skipped screenshot reports `CAPTURE_NOT_REQUESTED`, not a permission failure. Coordinate input requires a screenshot-enabled observation; semantic input and keyboard targeting remain available. This option requires the matching unreleased SDK/native build.
 
 On macOS, SDK `typeText` sends keyboard text to the validated application PID, including keyboard-driven controls without an editable AX field. It does not replace an AX value or activate the application. Each complete grapheme is sent separately; newline sends Return. `setValue` remains the explicit editable-control value operation. The legacy MCP text-field path and other platforms retain their own input restrictions.
+
+### Authorizing application launch
+
+On macOS, `resolveAppIdentity({ query })` resolves an installed application name,
+bundle ID or path without launching or activating it. It returns a stable bundle
+`id`, display `name`, and canonical path `query`. Authorize that identity in the
+host before calling `resolveApp({ query, expectedIdentity: id, launch: true })`.
+The runtime checks `expectedIdentity` before launch; a changed identity fails
+without launching. Running `AppInfo` and app sessions include the same optional
+`identity`; their opaque `id` is still only a runtime control reference.
+
+`launch: false` retains its running-only semantics. Windows/Linux do not launch
+applications and reject installed identity resolution with `UNSUPPORTED_CAPABILITY`.
+Host stop decisions remain host-owned and must be checked before effects.

@@ -21,6 +21,7 @@ The native server must own a private control connection and its helper resources
 | `getPermissionStatus` | empty object | `PermissionStatus` |
 | `requestPermissions` | `PermissionRequest` | `PermissionStatus` |
 | `listApps` | empty object | `AppList` |
+| `resolveAppIdentity` | `AppIdentityInput` | `AppIdentity` |
 | `resolveApp` | `ResolveAppInput` | `AppInfo` |
 | `openAppSession` | `OpenAppSessionInput` | `AppSession` |
 | `listAppSessions` | empty object | `AppSessionList` |

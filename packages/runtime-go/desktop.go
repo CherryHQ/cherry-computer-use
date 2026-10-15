@@ -266,6 +266,8 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			return nil, err
 		}
 		return map[string]any{"permissions": permissions}, nil
+	case "resolveAppIdentity":
+		return nil, Error("UNSUPPORTED_CAPABILITY", "Installed application identity resolution is unavailable on this platform")
 	case "resolveApp":
 		var input struct {
 			Query  string `json:"query"`
