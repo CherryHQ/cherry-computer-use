@@ -143,7 +143,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             return AppDiscovery.runningApps().filter {
                 $0.runningApplication.activationPolicy == .regular && !AppSafetyPolicy.isBlocked(bundleIdentifier: $0.bundleIdentifier)
             }.map { app -> [String: Any] in
-                let id = apps.first(where: { $0.value.runningApplication == app.runningApplication })?.key ?? UUID().uuidString
+                let id = app.sdkID
                 apps[id] = app
                 return app.sdkInfo(id: id)
             }
@@ -167,7 +167,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
                 return app.sdkInfo(id: query)
             }
             let app = try resolveSDKApp(query, launch: params["launch"] as? Bool ?? true, expectedIdentity: expectedIdentity, cancellation: cancellation)
-            let id = apps.first(where: { $0.value.runningApplication == app.runningApplication })?.key ?? UUID().uuidString
+            let id = app.sdkID
             apps[id] = app
             return app.sdkInfo(id: id)
         case "openAppSession":

@@ -3,6 +3,7 @@ package sdkruntime
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -162,14 +163,13 @@ type Desktop struct {
 	LifecycleBackend
 	driver    DesktopDriver
 	apps      map[string]Target
-	ids       map[string]string
 	mu        sync.Mutex
 	sessions  map[string]*appSession
 	uncertain atomic.Bool
 }
 
 func NewDesktop(driver DesktopDriver) *Desktop {
-	return &Desktop{driver: driver, apps: map[string]Target{}, ids: map[string]string{}, sessions: map[string]*appSession{}}
+	return &Desktop{driver: driver, apps: map[string]Target{}, sessions: map[string]*appSession{}}
 }
 
 func NewID() string {
@@ -178,6 +178,12 @@ func NewID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(id[:])
+}
+
+// AppID derives the opaque app ID from the driver's process key, so it survives runtime restarts.
+func AppID(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:16])
 }
 
 // Permissions reports the driver's permissions; drivers without any report none.
@@ -194,7 +200,6 @@ func (d *Desktop) Capabilities(ctx context.Context) map[string]Availability {
 
 func (d *Desktop) Close(ctx context.Context) error {
 	clear(d.apps)
-	clear(d.ids)
 	d.mu.Lock()
 	clear(d.sessions)
 	d.mu.Unlock()
@@ -220,18 +225,13 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		apps := make([]App, 0, len(targets))
 		present := map[string]bool{}
 		for _, target := range targets {
-			id, exists := d.ids[target.Key]
-			if !exists {
-				id = NewID()
-				d.ids[target.Key] = id
-			}
+			id := AppID(target.Key)
 			d.apps[id] = target
 			present[id] = true
 			apps = append(apps, App{id, target.Name})
 		}
-		for id, target := range d.apps {
+		for id := range d.apps {
 			if !present[id] {
-				delete(d.ids, target.Key)
 				delete(d.apps, id)
 				d.mu.Lock()
 				for _, session := range d.sessions {
