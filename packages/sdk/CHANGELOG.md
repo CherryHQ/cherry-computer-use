@@ -1,5 +1,11 @@
 # @cherrystudio/computer-use
 
+## 0.1.6
+
+### Patch Changes
+
+- [#22](https://github.com/CherryHQ/cherry-computer-use/pull/22) [`eccd8bd`](https://github.com/CherryHQ/cherry-computer-use/commit/eccd8bd4579339a6e5f37b53d19998a3231af0ef) Thanks [@DeJeune](https://github.com/DeJeune)! - Resolve installed macOS application identities without launching so hosts can enforce stopped-app policy before effects. Return stable identities on running apps and validate the authorized identity before launch.
+
 ## 0.1.5
 
 ### Patch Changes
