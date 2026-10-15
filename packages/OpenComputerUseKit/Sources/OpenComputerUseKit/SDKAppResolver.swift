@@ -1,25 +1,8 @@
 import AppKit
 import Foundation
 
-func resolveSDKApp(_ query: String, launch: Bool, cancellation: SDKCancellation) throws -> RunningAppDescriptor {
+func resolveSDKAppIdentity(_ query: String) throws -> (id: String, name: String, url: URL) {
     let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    func matches() -> [RunningAppDescriptor] {
-        AppDiscovery.runningApps().filter {
-            $0.name.caseInsensitiveCompare(query) == .orderedSame ||
-            $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame ||
-            $0.runningApplication.bundleURL?.path == query
-        }
-    }
-    func allowed(_ app: RunningAppDescriptor) throws -> RunningAppDescriptor {
-        guard !AppSafetyPolicy.isBlocked(bundleIdentifier: app.bundleIdentifier) else {
-            throw SDKDomainError("PERMISSION_REQUIRED", "Application is excluded from Computer Use")
-        }
-        return app
-    }
-    let running = matches()
-    guard running.count <= 1 else { throw SDKDomainError("TARGET_UNAVAILABLE", "Application name is ambiguous: " + running.map { $0.bundleIdentifier ?? $0.name }.joined(separator: ", ") + ". Use a bundle ID or path") }
-    if let app = running.first { return try allowed(app) }
-    guard launch else { throw SDKDomainError("TARGET_UNAVAILABLE", "Application is no longer running; bind it explicitly to launch again") }
     var candidates = Set<URL>()
     if query.hasPrefix("/") && query.hasSuffix(".app") {
         candidates.insert(URL(fileURLWithPath: query).standardizedFileURL)
@@ -42,7 +25,50 @@ func resolveSDKApp(_ query: String, launch: Bool, cancellation: SDKCancellation)
     guard candidates.count == 1, let url = candidates.first, let bundle = Bundle(url: url), let bundleID = bundle.bundleIdentifier else {
         throw SDKDomainError("TARGET_UNAVAILABLE", "Application could not be uniquely resolved; use its bundle ID or full path")
     }
+
     guard !AppSafetyPolicy.isBlocked(bundleIdentifier: bundleID) else { throw SDKDomainError("PERMISSION_REQUIRED", "Application is excluded from Computer Use") }
+    let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+        ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+        ?? url.deletingPathExtension().lastPathComponent
+    return (bundleID, name, url.resolvingSymlinksInPath())
+}
+
+extension RunningAppDescriptor {
+    func sdkInfo(id: String) -> [String: Any] {
+        var info: [String: Any] = ["id": id, "name": name]
+        if let bundleIdentifier { info["identity"] = bundleIdentifier }
+        return info
+    }
+}
+
+func resolveSDKApp(_ query: String, launch: Bool, expectedIdentity: String? = nil, cancellation: SDKCancellation) throws -> RunningAppDescriptor {
+    let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    func matches() -> [RunningAppDescriptor] {
+        AppDiscovery.runningApps().filter {
+            $0.name.caseInsensitiveCompare(query) == .orderedSame ||
+            $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame ||
+            $0.runningApplication.bundleURL?.path == query
+        }
+    }
+    func allowed(_ app: RunningAppDescriptor) throws -> RunningAppDescriptor {
+        if let expectedIdentity, app.bundleIdentifier != expectedIdentity {
+            throw SDKDomainError("TARGET_UNAVAILABLE", "Application identity changed")
+        }
+        guard !AppSafetyPolicy.isBlocked(bundleIdentifier: app.bundleIdentifier) else {
+            throw SDKDomainError("PERMISSION_REQUIRED", "Application is excluded from Computer Use")
+        }
+        return app
+    }
+    let running = matches()
+    guard running.count <= 1 else { throw SDKDomainError("TARGET_UNAVAILABLE", "Application name is ambiguous: " + running.map { $0.bundleIdentifier ?? $0.name }.joined(separator: ", ") + ". Use a bundle ID or path") }
+    if let app = running.first { return try allowed(app) }
+    guard launch else { throw SDKDomainError("TARGET_UNAVAILABLE", "Application is no longer running; bind it explicitly to launch again") }
+    let identity = try resolveSDKAppIdentity(query)
+    let url = identity.url
+    let bundleID = identity.id
+    if let expectedIdentity, expectedIdentity != bundleID {
+        throw SDKDomainError("TARGET_UNAVAILABLE", "Application identity changed before launch")
+    }
     if cancellation.isCancelled { throw SDKDomainError("CANCELLED", "Application launch cancelled") }
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = false

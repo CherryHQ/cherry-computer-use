@@ -288,11 +288,57 @@
         "name": {
           "type": "string",
           "minLength": 1
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1
         }
       },
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "additionalProperties": false,
       "title": "AppInfo"
+    },
+    "AppIdentityInput": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "title": "AppIdentityInput"
+    },
+    "AppIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "query"
+      ],
+      "additionalProperties": false,
+      "title": "AppIdentity"
     },
     "AppList": {
       "type": "array",
@@ -309,7 +355,13 @@
           "minLength": 1,
           "maxLength": 512
         },
-        "launch": { "type": "boolean" }
+        "launch": {
+          "type": "boolean"
+        },
+        "expectedIdentity": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "required": [
         "query"

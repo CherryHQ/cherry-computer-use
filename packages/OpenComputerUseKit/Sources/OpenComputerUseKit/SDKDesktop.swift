@@ -45,7 +45,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         var cancellation: SDKCancellation?
         let running = DispatchGroup()
         init(appID: String, app: RunningAppDescriptor) { self.appID = appID; self.app = app }
-        var info: [String: Any] { ["id": id, "app": ["id": appID, "name": app.name], "status": status] }
+        var info: [String: Any] { ["id": id, "app": app.sdkInfo(id: appID), "status": status] }
     }
     private let controlLock = NSLock()
     private var controls: [String: AppControl] = [:]
@@ -145,18 +145,31 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             }.map { app -> [String: Any] in
                 let id = apps.first(where: { $0.value.runningApplication == app.runningApplication })?.key ?? UUID().uuidString
                 apps[id] = app
-                return ["id": id, "name": app.name]
+                return app.sdkInfo(id: id)
             }
+        case "resolveAppIdentity":
+            guard Set(params.keys) == ["query"], let query = params["query"] as? String, !query.isEmpty, query.count <= 512 else {
+                throw SDKDomainError("INVALID_ARGUMENT", "Expected an application name, bundle ID or path")
+            }
+            let identity = try resolveSDKAppIdentity(query)
+            return ["id": identity.id, "name": identity.name, "query": identity.url.path]
         case "resolveApp":
-            guard Set(params.keys).isSubset(of: ["query", "launch"]), let query = params["query"] as? String, !query.isEmpty, query.count <= 512 else {
+            guard Set(params.keys).isSubset(of: ["query", "launch", "expectedIdentity"]), let query = params["query"] as? String, !query.isEmpty, query.count <= 512 else {
                 throw SDKDomainError("INVALID_ARGUMENT", "Expected an application name, bundle ID or path")
             }
             if let launch = params["launch"], CFGetTypeID(launch as CFTypeRef) != CFBooleanGetTypeID() { throw SDKDomainError("INVALID_ARGUMENT", "launch must be a boolean") }
-            if let app = apps[query], !app.runningApplication.isTerminated { return ["id": query, "name": app.name] }
-            let app = try resolveSDKApp(query, launch: params["launch"] as? Bool ?? true, cancellation: cancellation)
+            let expectedIdentity = params["expectedIdentity"] as? String
+            if params["expectedIdentity"] != nil && (expectedIdentity == nil || expectedIdentity!.isEmpty) {
+                throw SDKDomainError("INVALID_ARGUMENT", "Expected a non-empty application identity")
+            }
+            if let app = apps[query], !app.runningApplication.isTerminated {
+                if let expectedIdentity, app.bundleIdentifier != expectedIdentity { throw SDKDomainError("TARGET_UNAVAILABLE", "Application identity changed") }
+                return app.sdkInfo(id: query)
+            }
+            let app = try resolveSDKApp(query, launch: params["launch"] as? Bool ?? true, expectedIdentity: expectedIdentity, cancellation: cancellation)
             let id = apps.first(where: { $0.value.runningApplication == app.runningApplication })?.key ?? UUID().uuidString
             apps[id] = app
-            return ["id": id, "name": app.name]
+            return app.sdkInfo(id: id)
         case "openAppSession":
             guard Set(params.keys) == ["appId"], let appID = params["appId"] as? String, !appID.isEmpty else {
                 throw SDKDomainError("INVALID_ARGUMENT", "Expected an application ID")
@@ -315,7 +328,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             screenshot = ["status": "unavailable", "reason": reason]
         }
         control.snapshots[snapshotID] = Snapshot(state: state, options: options, titles: titles, focusedWindow: focusedWindow(app.pid))
-        return ["id": snapshotID, "appSessionId": control.id, "app": ["id": appID, "name": app.name],
+        return ["id": snapshotID, "appSessionId": control.id, "app": app.sdkInfo(id: appID),
                 "window": ["id": state.targetWindowID.map(String.init) ?? snapshotID, "title": state.windowTitle ?? ""],
                 "tree": ["status": "available", "elements": elements, "text": state.renderedText(style: .fullState), "truncated": state.treeTruncation.sorted()],
                 "screenshot": screenshot]

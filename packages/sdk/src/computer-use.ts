@@ -93,6 +93,10 @@ export async function connectClient(
     },
     listApps: (options) =>
       connection.request('listApps', {}, validators.validateAppList, options),
+    resolveAppIdentity: async (params, options) => {
+      input(params, validators.validateAppIdentityInput)
+      return connection.request('resolveAppIdentity', params, validators.validateAppIdentity, options)
+    },
     resolveApp: async (params, options) => {
       input(params, validators.validateResolveAppInput)
       return connection.request('resolveApp', params, validators.validateAppInfo, options, params.launch === false ? 'none' : 'possible')
