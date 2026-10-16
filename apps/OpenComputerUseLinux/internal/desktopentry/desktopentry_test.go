@@ -184,3 +184,37 @@ func TestBusNameUsesDesktopFileID(t *testing.T) {
 		t.Errorf("object path: %s", got)
 	}
 }
+
+func TestFlatpakIdentitySurvivesUpdates(t *testing.T) {
+	root := t.TempDir()
+	branch := filepath.Join(root, "app", "org.example.Editor", "x86_64", "stable")
+	deploy := func(commit string) {
+		writeEntry(t, filepath.Join(branch, commit, "export", "share", "applications", "org.example.Editor.desktop"), "[Desktop Entry]\nType=Application\nName=Editor\nExec=/usr/bin/flatpak run org.example.Editor\n")
+		_ = os.Remove(filepath.Join(branch, "active"))
+		if err := os.Symlink(commit, filepath.Join(branch, "active")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	export := filepath.Join(root, "exports", "share", "applications", "org.example.Editor.desktop")
+	if err := os.MkdirAll(filepath.Dir(export), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(branch, "active", "export", "share", "applications", "org.example.Editor.desktop"), export); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	deploy(strings.Repeat("a", 64))
+	before, err := Read(export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy(strings.Repeat("b", 64))
+	after, err := Read(export)
+	if err != nil || after.Identity() != before.Identity() || strings.Contains(before.Path, strings.Repeat("a", 64)) {
+		t.Fatalf("update changed identity: %q -> %q %v", before.Identity(), after.Identity(), err)
+	}
+	// A deployment that is no longer active keeps its own, commit-specific identity.
+	stale, err := Read(filepath.Join(branch, strings.Repeat("a", 64), "export", "share", "applications", "org.example.Editor.desktop"))
+	if err != nil || stale.Identity() == after.Identity() {
+		t.Fatalf("inactive deployment took the active identity: %q %v", stale.Identity(), err)
+	}
+}

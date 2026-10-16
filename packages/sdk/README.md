@@ -178,7 +178,10 @@ checked before effects.
 Windows packaged identities use AUMIDs; desktop identities use canonical executable
 paths. App launches use the Windows Shell/application activation APIs outside the
 temporary UIA worker's kill-on-close Job Object. Linux identities use canonical
-desktop file paths; XDG user overrides and localized names are respected. Launch
+desktop file paths; XDG user overrides and localized names are respected. A Flatpak
+launcher's identity names its installation's `active` deployment, so it survives
+updates; Flatpak apps become resolvable by name once the session's `XDG_DATA_DIRS`
+and D-Bus services include Flatpak exports, normally after logging in again. Launch
 follows the Desktop Entry Specification on every desktop: `DBusActivatable` entries
 receive `org.freedesktop.Application.Activate` on the session bus, falling back to
 Exec only when no service is installed; other entries run their expanded Exec

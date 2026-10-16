@@ -71,6 +71,8 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
 - Exec launches set per-process accessibility opt-ins, and discovery drops a
   process's childless duplicate registration: Qt 6 on Wayland exposed no tree, and
   its GTK platform theme added an empty registration that made it ambiguous.
+- Flatpak identities name the installation's `active` deployment instead of the
+  commit directory their exports resolve to, which every update replaced.
 - The GTK fixture can run as a D-Bus-activatable `Gtk.Application`; Go and SDK
   cold-launch tests cover both Exec and D-Bus activation.
 
@@ -80,6 +82,10 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
   (Qt 6, Wayland) and Snap Firefox (from an unconfined client) cold-launch through
   the SDK with correct identity and accessible trees. Snap Firefox refuses AT-SPI
   to a client under another AppArmor label.
+- Flatpak GNOME Weather (D-Bus) and KCalc (Qt 6) cold-launch by name in isolated
+  X11, KWin and GNOME Shell sessions configured as after login, with stable
+  identities. In a session started before Flatpak was installed, neither resolves
+  by name and Weather cannot be activated until the user logs in again.
 - Isolated X11 session: Go cold-launch test passes for both paths; with the old
   `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
 - Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -91,6 +92,7 @@ func Read(path string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
+	canonical = stableFlatpakPath(canonical)
 	file, err := os.Open(canonical)
 	if err != nil {
 		return Entry{}, err
@@ -154,6 +156,23 @@ func Read(path string) (Entry, error) {
 		}
 	}
 	return entry, nil
+}
+
+// A Flatpak export resolves into a deployment directory named after its commit,
+// which every update replaces. The installation's "active" link names the same
+// launcher stably, so it is the identity while it still points at this deployment.
+var flatpakDeployment = regexp.MustCompile(`^(.*/app/[^/]+/[^/]+/[^/]+/)[0-9a-f]{64}(/export/share/applications/[^/]+)$`)
+
+func stableFlatpakPath(path string) string {
+	parts := flatpakDeployment.FindStringSubmatch(path)
+	if parts == nil {
+		return path
+	}
+	active := parts[1] + "active" + parts[2]
+	if resolved, err := filepath.EvalSymlinks(active); err != nil || resolved != path {
+		return path
+	}
+	return active
 }
 
 func (e Entry) Identity() string { return "linux:desktop:" + e.Path }
