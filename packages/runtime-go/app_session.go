@@ -38,7 +38,7 @@ func (d *Desktop) openAppSession(appID string) (AppSession, error) {
 			return session.AppSession, nil
 		}
 	}
-	session := &appSession{AppSession: AppSession{NewID(), App{appID, target.Name}, "active"}, target: target, snapshots: map[string]desktopSnapshot{}}
+	session := &appSession{AppSession: AppSession{NewID(), App{ID: appID, Name: target.Name, Identity: target.Identity}, "active"}, target: target, snapshots: map[string]desktopSnapshot{}}
 	d.sessions[session.ID] = session
 	return session.AppSession, nil
 }

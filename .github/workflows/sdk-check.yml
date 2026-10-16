@@ -122,7 +122,7 @@ jobs:
         name: Linux X11 engine, global input and SDK actions (isolated Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb at-spi2-core dbus python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends xvfb at-spi2-core dbus python3-gi gir1.2-gtk-3.0 libglib2.0-bin
           session=apps/OpenComputerUseLinux/testdata/x11-session.sh
           (cd apps/OpenComputerUseLinux && OPEN_COMPUTER_USE_LINUX_DESKTOP_TEST=1 testdata/x11-session.sh go test -count=1 -run 'X11|Guard|RealDesktop' -v ./internal/...)
           $session sh -c '
@@ -137,9 +137,11 @@ jobs:
             export COMPUTER_USE_RUNTIME_PATH="$PWD/dist/native/open-computer-use" COMPUTER_USE_LINUX_ACTION_FIXTURE=cherry-linux-fixture
             node --test protocol/linux-desktop.test.mjs; code=$?
             kill $fixture; exit $code'
+          $session sh apps/OpenComputerUseLinux/testdata/app-launch-session.sh
       - if: runner.os == 'Windows'
         working-directory: apps/OpenComputerUseWindows
         run: |
+          COMPUTER_USE_WINDOWS_LAUNCH_TEST=1 go test -run SDKColdLaunchExecutable -count=1 .
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
       - if: runner.os == 'Linux'

@@ -10,6 +10,7 @@ import (
 
 	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktopentry"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 )
 
@@ -155,8 +156,12 @@ func (d *linuxDesktop) Apps(ctx context.Context) ([]sdkruntime.Target, error) {
 		return nil, sdkError(err)
 	}
 	targets := make([]sdkruntime.Target, 0, len(apps))
+	entries, err := desktopentry.Load(ctx, desktopentry.Roots())
+	if err != nil {
+		return nil, sdkError(err)
+	}
 	for _, app := range apps {
-		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Native: app})
+		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Identity: desktopentry.ProcessIdentity(entries, "/proc", app.PID), Native: app})
 	}
 	return targets, nil
 }
