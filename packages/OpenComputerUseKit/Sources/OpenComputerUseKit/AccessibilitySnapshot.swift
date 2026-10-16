@@ -13,6 +13,7 @@ final class ElementRecord {
     let rawActions: [String]
     let prettyActions: [String]
     let isSyntheticText: Bool
+    let isValueSettable: Bool
     let parentIndex: Int?
     let name: String?
     let value: String?
@@ -26,6 +27,7 @@ final class ElementRecord {
         rawActions: [String],
         prettyActions: [String],
         isSyntheticText: Bool = false,
+        isValueSettable: Bool = false,
         parentIndex: Int? = nil,
         name: String? = nil,
         value: String? = nil
@@ -38,6 +40,7 @@ final class ElementRecord {
         self.rawActions = rawActions
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
+        self.isValueSettable = isValueSettable
         self.parentIndex = parentIndex
         self.name = name
         self.value = value
@@ -862,6 +865,7 @@ private struct TreeRenderer {
             role: role,
             rawActions: actions,
             prettyActions: prettyActions,
+            isValueSettable: traits.contains("settable"),
             parentIndex: parent,
             name: displayTitle ?? label,
             value: value

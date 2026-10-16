@@ -300,14 +300,9 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         let elements = state.elements.keys.sorted().map { index -> [String: Any] in
             let record = state.elements[index]!
             if let element = record.element, !record.isSyntheticText { titles[index] = text(element, kAXTitleAttribute) }
-            var actions: [String] = []
-            if record.localFrame != nil || !record.rawActions.isEmpty { actions.append("click") }
-            if record.localFrame != nil { actions.append("scroll") }
-            if ["AXTextField", "AXTextArea", "AXTextView", "AXComboBox"].contains(record.role ?? "") { actions.append("setValue") }
-            if !record.prettyActions.isEmpty { actions.append("performSecondaryAction") }
             var element: [String: Any] = [
                 "id": String(index), "role": record.role ?? (record.isSyntheticText ? "text" : "AXUnknown"), "name": record.name ?? "",
-                "actions": actions, "secondaryActions": record.prettyActions.map { ["id": $0, "label": $0] },
+                "actions": record.sdkActions, "secondaryActions": record.prettyActions.map { ["id": $0, "label": $0] },
             ]
             if let parent = record.parentIndex { element["parentId"] = String(parent) }
             if let value = record.value { element["value"] = value }
@@ -369,8 +364,23 @@ extension SDKDomainError {
         case .invalidArguments(let message): self.init("INVALID_ARGUMENT", message)
         case .permissionDenied(let message): self.init("PERMISSION_REQUIRED", message)
         case .appNotFound(let message): self.init("TARGET_UNAVAILABLE", message)
+        case .unsupportedAction(let message): self.init("UNSUPPORTED_CAPABILITY", message)
+        case .actionPreconditionFailed(let message): self.init("TARGET_UNAVAILABLE", message)
         default: self.init("TARGET_UNAVAILABLE", error.localizedDescription, effect: "possible")
         }
+    }
+}
+
+extension ElementRecord {
+    var sdkActions: [String] {
+        var actions: [String] = []
+        if localFrame != nil || !rawActions.isEmpty { actions.append("click") }
+        if localFrame != nil { actions.append("scroll") }
+        if isValueSettable && !isSyntheticText && ["AXTextField", "AXTextArea", "AXTextView", "AXComboBox"].contains(role ?? "") {
+            actions.append("setValue")
+        }
+        if !prettyActions.isEmpty { actions.append("performSecondaryAction") }
+        return actions
     }
 }
 

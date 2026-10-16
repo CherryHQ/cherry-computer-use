@@ -171,3 +171,11 @@ without launching. Running `AppInfo` and app sessions include the same optional
 `launch: false` retains its running-only semantics. Windows/Linux do not launch
 applications and reject installed identity resolution with `UNSUPPORTED_CAPABILITY`.
 Host stop decisions remain host-owned and must be checked before effects.
+
+On macOS, text elements advertise `setValue` only when their AX value is writable.
+A display-only browser address bar may need a click followed by a fresh observation
+to reveal the editable field. Use that field's new element ID, verify its value
+before Return, and verify the destination afterward. A set-value preflight rejection
+has `effect: none` and permits a fresh observation in the same session; failures
+after a write is attempted remain uncertain. Screenshot coordinates are converted
+to window points once before AX hit testing.
