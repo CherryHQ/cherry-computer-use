@@ -75,6 +75,11 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
   Chromium overwrites its readable environment; AppImage applications are matched
   by `APPIMAGE` only when they run from the image's mount; executable matching
   parses Exec as the specification quotes it.
+- Chromium and Electron launches add `--force-renderer-accessibility`, detected
+  from Chromium's resource pack beside the program or, for AppImages, inside the
+  image mounted by its runtime's `--appimage-mount`. A retry after failure was
+  rejected: Electron does not fail without it, and relaunching would replay an
+  effect or reach a single-instance app that ignores the switch.
 - Flatpak identities name the installation's `active` deployment instead of the
   commit directory their exports resolve to, which every update replaced.
 - The GTK fixture can run as a D-Bus-activatable `Gtk.Application`; Go and SDK
@@ -92,8 +97,8 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
   by name and Weather cannot be activated until the user logs in again.
 - T3 Code (Electron, quoted Exec, duplicate entries), Obsidian (Electron AppImage),
   MuseScore (Qt AppImage) and Flatpak KCalc cold-launch on the real desktop with
-  identities. Electron exposes page content only with
-  `--force-renderer-accessibility`; no session accessibility switch enabled it.
+  identities. With the detected switch, T3 Code and Obsidian expose 103 and 104
+  elements instead of one; MuseScore and Calculator are launched unchanged.
 - Isolated X11 session: Go cold-launch test passes for both paths; with the old
   `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
 - Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.

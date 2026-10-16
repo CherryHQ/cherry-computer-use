@@ -134,3 +134,25 @@ func TestLaunchRecordsForgetReusedProcessIDs(t *testing.T) {
 		t.Fatal("a reused PID inherited the launched identity")
 	}
 }
+
+func TestChromiumApplicationsAreDetectedBeforeLaunch(t *testing.T) {
+	root := t.TempDir()
+	for path, contents := range map[string]string{
+		"electron/app": "", "electron/chrome_100_percent.pak": "",
+		"code/chrome_100_percent.pak": "", "code/bin/code": "#!/bin/sh\n",
+		"native/editor": "",
+	} {
+		writeLaunchFile(t, filepath.Join(root, path), contents)
+	}
+	for path, want := range map[string]bool{"electron/app": true, "code/bin/code": true, "native/editor": false, "missing": false} {
+		if got := chromiumApplication(context.Background(), filepath.Join(root, path)); got != want {
+			t.Errorf("%s: Chromium %v, want %v", path, got, want)
+		}
+	}
+	image := filepath.Join(root, "Tool.AppImage")
+	writeLaunchFile(t, image, "\x7fELF\x02\x01\x01\x00AI\x02rest")
+	writeLaunchFile(t, filepath.Join(root, "plain"), "\x7fELF\x02\x01\x01\x00\x00\x00\x00rest")
+	if !appImage(image) || appImage(filepath.Join(root, "plain")) {
+		t.Error("type 2 AppImage magic misread")
+	}
+}

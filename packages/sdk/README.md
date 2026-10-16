@@ -188,7 +188,10 @@ Exec only when no service is installed; other entries run their expanded Exec
 (quoting, field codes, `Path`) detached from the runtime. Exec launches opt the
 process into accessibility (`QT_LINUX_ACCESSIBILITY_ALWAYS_ON`, `GNOME_ACCESSIBILITY`,
 `ACCESSIBILITY_ENABLED`), since Qt, Firefox and Chromium otherwise expose no tree
-until assistive technology is enabled session-wide. Confined Snap applications
+until assistive technology is enabled session-wide. Chromium and Electron programs,
+recognised by Chromium's resource pack beside the program or inside an AppImage
+(mounted read-only, without running its application), also receive
+`--force-renderer-accessibility`, without which their page content stays hidden. Confined Snap applications
 answer AT-SPI only to peers their AppArmor policy allows, such as an unconfined
 host. Terminal entries are not launched. Discovery associates processes through the owner of an activatable
 application's bus name, the processes this runtime launched (by PID and start

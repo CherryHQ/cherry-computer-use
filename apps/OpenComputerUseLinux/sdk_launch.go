@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/godbus/dbus/v5"
@@ -53,7 +58,7 @@ func (d *linuxDesktop) LaunchApp(ctx context.Context, identity sdk.AppIdentity) 
 			return sdk.Error("TARGET_UNAVAILABLE", "Application has neither a D-Bus service nor an Exec command")
 		}
 	}
-	pid, err := launchExec(entry)
+	pid, err := launchExec(ctx, entry)
 	if err == nil {
 		d.launches.remember(pid, entry)
 	}
@@ -109,7 +114,7 @@ func sessionBus(ctx context.Context) (*dbus.Conn, error) {
 // outlives the runtime and never holds its pipes. The GIO launch variables let
 // the runtime and desktop shells associate the new process with its entry; the
 // POSIX shell only records its own PID before replacing itself with the program.
-func launchExec(entry desktopentry.Entry) (int, error) {
+func launchExec(ctx context.Context, entry desktopentry.Entry) (int, error) {
 	if entry.Terminal {
 		return 0, sdk.Error("UNSUPPORTED_CAPABILITY", "Terminal applications have no accessible window to launch")
 	}
@@ -120,6 +125,9 @@ func launchExec(entry desktopentry.Entry) (int, error) {
 	program, err := exec.LookPath(args[0])
 	if err != nil {
 		return 0, sdk.Error("TARGET_UNAVAILABLE", "Application program is not installed: "+args[0])
+	}
+	if !slices.Contains(args, chromiumAccessibility) && chromiumApplication(ctx, program) {
+		args = slices.Insert(args, 1, chromiumAccessibility)
 	}
 	shim := `GIO_LAUNCHED_DESKTOP_FILE_PID=$$; export GIO_LAUNCHED_DESKTOP_FILE_PID; exec "$@"`
 	command := exec.Command("/bin/sh", append([]string{"-c", shim, "sh", program}, args[1:]...)...)
@@ -142,6 +150,71 @@ func launchExec(entry desktopentry.Entry) (int, error) {
 	}
 	go command.Wait()
 	return command.Process.Pid, nil
+}
+
+// Chromium and Electron publish their page content to AT-SPI only with this switch;
+// neither ACCESSIBILITY_ENABLED nor the session's org.a11y.Status enables it.
+const chromiumAccessibility = "--force-renderer-accessibility"
+
+// chromiumApplication reports whether program runs Chromium or Electron, which keep
+// their resource pack beside the binary or one level above a wrapper script (as
+// VS Code does). An AppImage is mounted read-only, without running its
+// application, to look inside. Unknown programs never receive the switch.
+func chromiumApplication(ctx context.Context, program string) bool {
+	resolved, err := filepath.EvalSymlinks(program)
+	if err != nil {
+		return false
+	}
+	if appImage(resolved) {
+		return appImageHasChromium(ctx, resolved)
+	}
+	directory := filepath.Dir(resolved)
+	return chromiumResources(directory) || chromiumResources(filepath.Dir(directory))
+}
+
+func chromiumResources(directory string) bool {
+	_, err := os.Stat(filepath.Join(directory, "chrome_100_percent.pak"))
+	return err == nil
+}
+
+// appImage reports a type 2 AppImage, whose runtime can mount the image alone.
+func appImage(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	magic := make([]byte, 11)
+	_, err = io.ReadFull(file, magic)
+	return err == nil && string(magic[:4]) == "\x7fELF" && string(magic[8:]) == "AI\x02"
+}
+
+// appImageHasChromium mounts the image with its runtime's --appimage-mount, which
+// prints the mount point and serves it until terminated, and checks the image root.
+func appImageHasChromium(ctx context.Context, image string) bool {
+	command := exec.Command(image, "--appimage-mount")
+	output, err := command.StdoutPipe()
+	if err != nil || command.Start() != nil {
+		return false
+	}
+	defer func() {
+		// SIGTERM lets the runtime unmount; SIGKILL would leave a stale mount.
+		_ = command.Process.Signal(syscall.SIGTERM)
+		_ = command.Wait()
+	}()
+	mounted := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(output).ReadString('\n')
+		mounted <- strings.TrimSpace(line)
+	}()
+	select {
+	case mount := <-mounted:
+		return filepath.IsAbs(mount) && chromiumResources(mount)
+	case <-time.After(5 * time.Second):
+		return false
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // busOwners maps the PIDs owning DBusActivatable applications' names to their
