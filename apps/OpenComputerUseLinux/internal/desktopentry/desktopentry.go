@@ -1,4 +1,5 @@
-// Package desktopentry discovers installed launchers; GIO owns their launch semantics.
+// Package desktopentry discovers installed launchers and expands their launch commands
+// as the Desktop Entry Specification defines; it never starts processes itself.
 package desktopentry
 
 import (
@@ -17,6 +18,9 @@ type Entry struct {
 	Aliases                    []string
 	Arguments                  []string
 	MatchExecutable            bool
+	// Launch keys, string-unescaped; Exec still holds its quoting and field codes.
+	Exec, Icon, WorkingDirectory string
+	Terminal, DBusActivatable    bool
 }
 
 func Roots() []string {
@@ -121,7 +125,12 @@ func Read(path string) (Entry, error) {
 		}
 	}
 	unescape := strings.NewReplacer(`\s`, " ", `\n`, "\n", `\t`, "\t", `\r`, "\r", `\\`, `\`)
-	entry := Entry{ID: filepath.Base(path), Path: canonical, Name: unescape.Replace(values["Name"])}
+	entry := Entry{
+		ID: filepath.Base(path), Path: canonical, Name: unescape.Replace(values["Name"]),
+		Exec: unescape.Replace(values["Exec"]), Icon: unescape.Replace(values["Icon"]),
+		WorkingDirectory: unescape.Replace(values["Path"]),
+		Terminal:         values["Terminal"] == "true", DBusActivatable: values["DBusActivatable"] == "true",
+	}
 	for key, value := range values {
 		if key == "Name" || strings.HasPrefix(key, "Name[") {
 			entry.Aliases = append(entry.Aliases, unescape.Replace(value))
@@ -237,4 +246,100 @@ func ProcessIdentity(entries []Entry, procRoot string, pid uint32) string {
 		}
 	}
 	return identity
+}
+
+// BusName is the well-known D-Bus name a DBusActivatable application owns: its
+// desktop file ID without the suffix. ok is false when the ID is not a valid name.
+func (e Entry) BusName() (name string, ok bool) {
+	name = strings.TrimSuffix(e.ID, ".desktop")
+	elements := strings.Split(name, ".")
+	if len(name) > 255 || len(elements) < 2 {
+		return "", false
+	}
+	for _, element := range elements {
+		if element == "" || (element[0] >= '0' && element[0] <= '9') {
+			return "", false
+		}
+		for _, c := range element {
+			if !(c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+				return "", false
+			}
+		}
+	}
+	return name, true
+}
+
+// BusPath is the object path of org.freedesktop.Application for a bus name.
+func BusPath(name string) string {
+	return "/" + strings.NewReplacer(".", "/", "-", "_").Replace(name)
+}
+
+// Command expands Exec for a launch without files or URLs. Quoting follows the
+// specification: double quotes group, and inside them a backslash escapes
+// '"', '`', '$' and '\'. File and URL codes are dropped, a code that forms a
+// whole argument removes that argument, and an unknown code rejects the entry.
+func (e Entry) Command() ([]string, error) {
+	var args []string
+	var current strings.Builder
+	started, quoted := false, false
+	for i := 0; i < len(e.Exec); i++ {
+		c := e.Exec[i]
+		switch {
+		case quoted && c == '\\' && i+1 < len(e.Exec) && strings.IndexByte("\"`$\\", e.Exec[i+1]) >= 0:
+			i++
+			current.WriteByte(e.Exec[i])
+		case c == '"':
+			quoted, started = !quoted, true
+		case !quoted && (c == ' ' || c == '\t' || c == '\n'):
+			if started {
+				args = append(args, current.String())
+				current.Reset()
+				started = false
+			}
+		case c == '%':
+			if i+1 >= len(e.Exec) {
+				return nil, fmt.Errorf("Exec ends with an incomplete field code")
+			}
+			i++
+			switch code := e.Exec[i]; code {
+			case '%':
+				current.WriteByte('%')
+				started = true
+			case 'f', 'F', 'u', 'U', 'd', 'D', 'n', 'N', 'v', 'm':
+				// No files or URLs are passed; deprecated codes are removed.
+			case 'c':
+				current.WriteString(e.Name)
+				started = true
+			case 'k':
+				current.WriteString(e.Path)
+				started = true
+			case 'i':
+				if e.Icon == "" {
+					continue
+				}
+				if started || quoted || (i+1 < len(e.Exec) && !strings.ContainsRune(" \t\n", rune(e.Exec[i+1]))) {
+					return nil, fmt.Errorf("Exec uses %%i inside an argument")
+				}
+				args = append(args, "--icon", e.Icon)
+			default:
+				return nil, fmt.Errorf("Exec has unknown field code %%%c", code)
+			}
+		default:
+			current.WriteByte(c)
+			started = true
+		}
+	}
+	if quoted {
+		return nil, fmt.Errorf("Exec has an unterminated quote")
+	}
+	if started {
+		args = append(args, current.String())
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("Exec has no program")
+	}
+	if !filepath.IsAbs(args[0]) && strings.Contains(args[0], "/") {
+		return nil, fmt.Errorf("Exec program must be an absolute path or a name on PATH")
+	}
+	return args, nil
 }

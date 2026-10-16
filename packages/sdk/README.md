@@ -145,7 +145,7 @@ SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Comp
 
 ## Persistent automation additions (unreleased)
 
-- `resolveApp({ query })` resolves an unambiguous application name or runtime ID. Matching native builds can also launch installed applications: macOS bundles, Windows AppsFolder applications/executable paths, and Linux XDG desktop entries (requires `gio`). Resolve first, then open an owned app session. Launch waits for a matching accessible window; obtain a fresh observation before input. Windows/Linux desktop policy may activate the launched application.
+- `resolveApp({ query })` resolves an unambiguous application name or runtime ID. Matching native builds can also launch installed applications: macOS bundles, Windows AppsFolder applications/executable paths, and Linux XDG desktop entries (D-Bus activation or Exec; no GIO tools required). Resolve first, then open an owned app session. Launch waits for a matching accessible window; obtain a fresh observation before input. Windows/Linux desktop policy may activate the launched application.
 - `perform(action)` validates and executes the same `Action` input as `act`, returning `{ status: 'completed', appSessionId }` without capturing another observation. This receipt confirms input dispatch, not the user's task outcome.
 - Every action consumes element/coordinate refs. Only `typeText`/`pressKey` through `perform` can reuse the last target snapshot ID, with native target validation. An explicit observation replaces that keyboard target; errors require fresh observation. A different app/window cannot inherit the target.
 - `act` retains its existing action-plus-observation behavior. New methods require matching rebuilt SDK/native artifacts. There is no automatic fallback or retry after an uncertain action.
@@ -178,10 +178,14 @@ checked before effects.
 Windows packaged identities use AUMIDs; desktop identities use canonical executable
 paths. App launches use the Windows Shell/application activation APIs outside the
 temporary UIA worker's kill-on-close Job Object. Linux identities use canonical
-desktop file paths; XDG user overrides and localized names are respected. GIO owns
-Exec quoting, field codes, working directories and D-Bus activation, including
-installed Flatpak launchers. Discovery associates processes through launch metadata,
-Flatpak application IDs or an unambiguous executable match. Unidentifiable or
+desktop file paths; XDG user overrides and localized names are respected. Launch
+follows the Desktop Entry Specification on every desktop: `DBusActivatable` entries
+receive `org.freedesktop.Application.Activate` on the session bus, falling back to
+Exec only when no service is installed; other entries run their expanded Exec
+(quoting, field codes, `Path`) detached from the runtime. Terminal entries are not
+launched. Discovery associates processes through the owner of an activatable
+application's bus name, launch metadata, Flatpak application IDs or an unambiguous
+executable match. Unidentifiable or
 ambiguous running targets are never selected by a guessed name after launch.
 
 After dispatch, cancellation, missing accessibility or window timeout reports

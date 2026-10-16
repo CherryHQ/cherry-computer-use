@@ -23,11 +23,41 @@ func TestSDKColdLaunchDesktopEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launcher := filepath.Join(t.TempDir(), "启动 fixture.desktop")
-	contents := "[Desktop Entry]\nType=Application\nName=SDK Cold Launch\nExec=/usr/bin/python3 \"" + filepath.Join(working, "testdata", "gtk_fixture.py") + "\" \"SDK Cold Launch\"\n"
-	if err := os.WriteFile(launcher, []byte(contents), 0600); err != nil {
+	fixture := filepath.Join(working, "testdata", "gtk_fixture.py")
+	t.Run("Exec", func(t *testing.T) {
+		launcher := filepath.Join(t.TempDir(), "启动 fixture.desktop")
+		writeLaunchFile(t, launcher, "[Desktop Entry]\nType=Application\nName=SDK Cold Launch\nExec=/usr/bin/python3 \""+fixture+"\" \"SDK Cold Launch\" %U\n")
+		coldLaunch(t, launcher)
+	})
+	// Like GNOME applications, the service command line differs from Exec and has
+	// no launch environment; a launcher that exits before activation completes
+	// leaves the service to quit without a window.
+	t.Run("DBusActivatable", func(t *testing.T) {
+		data := os.Getenv("XDG_DATA_HOME")
+		if !filepath.IsAbs(data) {
+			t.Skip("requires the isolated session's private XDG_DATA_HOME")
+		}
+		const id = "org.cherry.SDKDBusLaunch"
+		command := "/usr/bin/python3 \"" + fixture + "\" --application-id " + id + " \"SDK D-Bus Launch\""
+		writeLaunchFile(t, filepath.Join(data, "dbus-1", "services", id+".service"), "[D-BUS Service]\nName="+id+"\nExec="+command+" --gapplication-service\n")
+		launcher := filepath.Join(data, "applications", id+".desktop")
+		writeLaunchFile(t, launcher, "[Desktop Entry]\nType=Application\nName=SDK D-Bus Launch\nDBusActivatable=true\nExec="+command+" --new-window\n")
+		coldLaunch(t, launcher)
+	})
+}
+
+func writeLaunchFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+func coldLaunch(t *testing.T, launcher string) {
 	driver := newLinuxDesktop()
 	t.Cleanup(func() { _ = driver.Close(context.Background()) })
 	identity, err := driver.ResolveAppIdentity(context.Background(), launcher)

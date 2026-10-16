@@ -160,8 +160,13 @@ func (d *linuxDesktop) Apps(ctx context.Context) ([]sdkruntime.Target, error) {
 	if err != nil {
 		return nil, sdkError(err)
 	}
+	owners := busOwners(ctx, entries)
 	for _, app := range apps {
-		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Identity: desktopentry.ProcessIdentity(entries, "/proc", app.PID), Native: app})
+		identity, owner := owners[app.PID]
+		if !owner {
+			identity = desktopentry.ProcessIdentity(entries, "/proc", app.PID)
+		}
+		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Identity: identity, Native: app})
 	}
 	return targets, nil
 }

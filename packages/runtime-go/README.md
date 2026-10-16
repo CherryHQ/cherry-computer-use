@@ -17,7 +17,7 @@ launch with identity revalidation. `resolveApp` preserves running-only rebinding
 rejects ambiguity/mismatched identities before effects, and waits for the matching
 accessible window after dispatch. App lists, sessions and snapshots carry the same
 optional installed identity. Windows uses AppsFolder/executables; Linux uses XDG
-desktop entries and GIO. Desktop activation policy may foreground launched apps.
+desktop entries with D-Bus activation or Exec. Desktop activation policy may foreground launched apps.
 
 Each app control context owns its snapshots and cancellation state. Observation
 and action require its `appSessionId`. App stop/state messages bypass the ordinary

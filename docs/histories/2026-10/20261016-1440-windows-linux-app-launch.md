@@ -46,3 +46,42 @@ a draft PR so the user can perform Linux acceptance on their own machine.
 - `apps/OpenComputerUseLinux/internal/desktopentry/desktopentry.go`
 - `apps/OpenComputerUseLinux/sdk_launch.go`
 - `protocol/app-launch.test.mjs`
+
+## 2026-10-16 | Follow-up: Linux real-machine acceptance and native launch
+
+### Execution context
+
+- Agent: Claude Code, Ubuntu 24.04 GNOME Wayland (arm64) with Xephyr isolation.
+
+### User request
+
+Test the PR's behavior; then handle launch across Linux desktops without GIO.
+
+### Changes
+
+- Real-machine acceptance found that `gio launch` never delivers `Activate` to
+  `DBusActivatable` entries (GNOME Clocks, Text Editor, Files, Settings and others),
+  which time out with no window.
+- Launch now calls `org.freedesktop.Application.Activate` over the session bus,
+  falling back to Exec only when no service is installed; Exec is expanded per the
+  specification (quoting, field codes, `Path`) and started detached with GIO launch
+  metadata. Terminal entries are rejected. CI no longer installs GIO tools.
+- App discovery maps owners of activatable application bus names to identities,
+  because D-Bus-activated service command lines differ from Exec.
+- The GTK fixture can run as a D-Bus-activatable `Gtk.Application`; Go and SDK
+  cold-launch tests cover both Exec and D-Bus activation.
+
+### Validation
+
+- Real desktop: Calculator (Exec), Clocks, Text Editor and Files (D-Bus) cold-launch
+  through the SDK with correct identity and accessible trees.
+- Isolated X11 session: Go cold-launch test passes for both paths; with the old
+  `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
+- Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.
+
+### Key files
+
+- `apps/OpenComputerUseLinux/sdk_launch.go`
+- `apps/OpenComputerUseLinux/internal/desktopentry/desktopentry.go`
+- `apps/OpenComputerUseLinux/testdata/app-launch-session.sh`
+- `apps/OpenComputerUseLinux/testdata/gtk_fixture.py`
