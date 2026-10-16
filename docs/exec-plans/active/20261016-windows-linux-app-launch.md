@@ -43,6 +43,7 @@ launch policy is outside this change.
 - [x] Implement Windows and Linux platform drivers.
 - [x] Validate shared contracts, Windows executable and Calculator cold launch.
 - [x] Linux real-machine acceptance on GNOME Wayland (Ubuntu 24.04, arm64).
+- [x] Launch acceptance in isolated X11, KWin, Sway, Hyprland and GNOME Shell (CI).
 - [x] Replace `gio launch`, which loses D-Bus activations, with native launch.
 - [x] Synchronize documentation, release notes and history.
 

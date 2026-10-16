@@ -27,6 +27,11 @@ Name=Cherry SDK D-Bus Launch
 DBusActivatable=true
 Exec=$command --new-window
 EOF
+# Desktop sessions hand their display to D-Bus activation once the compositor runs;
+# isolated sessions start the bus first, so activated services would lack it.
+for variable in WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GDK_BACKEND; do
+  eval "[ -n \"\${$variable:-}\" ]" && dbus-update-activation-environment "$variable"
+done
 export COMPUTER_USE_RUNTIME_PATH="$root/dist/native/open-computer-use"
 COMPUTER_USE_LAUNCH_APP="$launcher" node --test protocol/app-launch.test.mjs
 COMPUTER_USE_LAUNCH_APP="$id" node --test protocol/app-launch.test.mjs

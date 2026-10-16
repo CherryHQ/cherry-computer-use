@@ -78,6 +78,11 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
 - Isolated X11 session: Go cold-launch test passes for both paths; with the old
   `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
 - Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.
+- The SDK launch test (Exec and D-Bus) passes in isolated X11, KWin, Sway,
+  Hyprland and headless GNOME Shell, each with native Wayland and XWayland apps
+  where applicable, and in KWin with GIO tools hidden. CI now runs it in each
+  compositor job. Isolated sessions start D-Bus before the compositor, so the test
+  session passes the display to D-Bus activation as desktop sessions do.
 
 ### Key files
 
