@@ -70,5 +70,13 @@ bus names to their entries. Terminal entries are rejected rather than launched.
 Exec launches also opt the process into accessibility, because Qt 6 on Wayland,
 Gecko and Chromium expose nothing until assistive technology is announced; Qt's
 GTK platform theme adds a childless registration that discovery now drops.
-Future work: a transient systemd scope per launch for desktops that track apps by
-cgroup, and Wayland activation tokens if focus policy requires them.
+Electron and AppImage launches are identified through remembered launch PIDs and
+`APPIMAGE` within the image mount, and Chromium-based programs get
+`--force-renderer-accessibility` when detected before launch. Flatpak identities
+use the installation's `active` deployment.
+
+## Closure
+
+Closed for review with Linux validated on a real GNOME Wayland machine and in
+isolated X11, KWin, Sway, Hyprland and GNOME Shell sessions (CI runs the launch
+test in each). Deferred follow-ups are tracked in `../tech-debt-tracker.md`.
