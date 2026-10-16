@@ -68,13 +68,18 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
   metadata. Terminal entries are rejected. CI no longer installs GIO tools.
 - App discovery maps owners of activatable application bus names to identities,
   because D-Bus-activated service command lines differ from Exec.
+- Exec launches set per-process accessibility opt-ins, and discovery drops a
+  process's childless duplicate registration: Qt 6 on Wayland exposed no tree, and
+  its GTK platform theme added an empty registration that made it ambiguous.
 - The GTK fixture can run as a D-Bus-activatable `Gtk.Application`; Go and SDK
   cold-launch tests cover both Exec and D-Bus activation.
 
 ### Validation
 
-- Real desktop: Calculator (Exec), Clocks, Text Editor and Files (D-Bus) cold-launch
-  through the SDK with correct identity and accessible trees.
+- Real desktop: Calculator (Exec), Clocks, Text Editor and Files (D-Bus), KWrite
+  (Qt 6, Wayland) and Snap Firefox (from an unconfined client) cold-launch through
+  the SDK with correct identity and accessible trees. Snap Firefox refuses AT-SPI
+  to a client under another AppArmor label.
 - Isolated X11 session: Go cold-launch test passes for both paths; with the old
   `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
 - Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.

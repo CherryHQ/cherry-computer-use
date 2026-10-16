@@ -67,5 +67,8 @@ which also removes the GIO tool dependency that Debian-family KDE or minimal
 compositor installations may lack. D-Bus-activated processes run a service
 command line without launch metadata, so discovery first maps owned application
 bus names to their entries. Terminal entries are rejected rather than launched.
+Exec launches also opt the process into accessibility, because Qt 6 on Wayland,
+Gecko and Chromium expose nothing until assistive technology is announced; Qt's
+GTK platform theme adds a childless registration that discovery now drops.
 Future work: a transient systemd scope per launch for desktops that track apps by
 cgroup, and Wayland activation tokens if focus policy requires them.

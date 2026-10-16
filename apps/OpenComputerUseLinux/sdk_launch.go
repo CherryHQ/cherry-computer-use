@@ -127,6 +127,10 @@ func launchExec(entry desktopentry.Entry) error {
 		}
 	}
 	command.Env = append(command.Env, "GIO_LAUNCHED_DESKTOP_FILE="+entry.Path)
+	// The application is launched to be controlled through AT-SPI. Qt, Gecko and
+	// Chromium expose their tree only once assistive technology is announced
+	// session-wide; these opt-ins announce it to this process alone.
+	command.Env = append(command.Env, "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1", "GNOME_ACCESSIBILITY=1", "ACCESSIBILITY_ENABLED=1")
 	if err := command.Start(); err != nil {
 		return sdk.Error("TARGET_UNAVAILABLE", "Application launch failed: "+err.Error())
 	}

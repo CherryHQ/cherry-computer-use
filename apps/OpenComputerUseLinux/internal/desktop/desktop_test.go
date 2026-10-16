@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
@@ -119,5 +120,26 @@ func TestMainWindowPrefersActiveThenShowing(t *testing.T) {
 	}
 	if _, err := MainWindow(App{Name: "x"}, nil); err == nil {
 		t.Fatal("an application without windows must be an error")
+	}
+}
+
+func TestEmptyDuplicateRegistrationIsDropped(t *testing.T) {
+	qtTheme := App{Ref: Ref{Bus: ":1.1"}, PID: 7, Name: "kwrite", Toolkit: "gtk"}
+	qt := App{Ref: Ref{Bus: ":1.2"}, PID: 7, Name: "kwrite", Toolkit: "Qt"}
+	idle := App{Ref: Ref{Bus: ":1.3"}, PID: 8, Name: "tray"}
+	unread := App{Ref: Ref{Bus: ":1.4"}, PID: 9, Name: "pair"}
+	unreadEmpty := App{Ref: Ref{Bus: ":1.5"}, PID: 9, Name: "pair"}
+	counts := map[string]int32{":1.1": 0, ":1.2": 1, ":1.3": 0, ":1.5": 0}
+	kept := dropEmptyDuplicates([]App{qtTheme, qt, idle, unread, unreadEmpty}, func(app App) (int32, bool) {
+		count, ok := counts[app.Ref.Bus]
+		return count, ok
+	})
+	var buses []string
+	for _, app := range kept {
+		buses = append(buses, app.Ref.Bus)
+	}
+	// The unreadable registration counts as populated: only a known-empty duplicate goes.
+	if got := strings.Join(buses, ","); got != ":1.2,:1.3,:1.4" {
+		t.Fatalf("kept %s", got)
 	}
 }

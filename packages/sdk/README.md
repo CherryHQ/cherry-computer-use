@@ -182,8 +182,12 @@ desktop file paths; XDG user overrides and localized names are respected. Launch
 follows the Desktop Entry Specification on every desktop: `DBusActivatable` entries
 receive `org.freedesktop.Application.Activate` on the session bus, falling back to
 Exec only when no service is installed; other entries run their expanded Exec
-(quoting, field codes, `Path`) detached from the runtime. Terminal entries are not
-launched. Discovery associates processes through the owner of an activatable
+(quoting, field codes, `Path`) detached from the runtime. Exec launches opt the
+process into accessibility (`QT_LINUX_ACCESSIBILITY_ALWAYS_ON`, `GNOME_ACCESSIBILITY`,
+`ACCESSIBILITY_ENABLED`), since Qt, Firefox and Chromium otherwise expose no tree
+until assistive technology is enabled session-wide. Confined Snap applications
+answer AT-SPI only to peers their AppArmor policy allows, such as an unconfined
+host. Terminal entries are not launched. Discovery associates processes through the owner of an activatable
 application's bus name, launch metadata, Flatpak application IDs or an unambiguous
 executable match. Unidentifiable or
 ambiguous running targets are never selected by a guessed name after launch.
