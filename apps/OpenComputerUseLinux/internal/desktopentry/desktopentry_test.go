@@ -218,3 +218,49 @@ func TestFlatpakIdentitySurvivesUpdates(t *testing.T) {
 		t.Fatalf("inactive deployment took the active identity: %q %v", stale.Identity(), err)
 	}
 }
+
+func TestQuotedExecProgramIsMatched(t *testing.T) {
+	root := t.TempDir()
+	program := filepath.Join(root, "My App", "app")
+	writeEntry(t, program, "")
+	if err := os.Chmod(program, 0700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(root, "app.desktop")
+	writeEntry(t, launcher, "[Desktop Entry]\nType=Application\nName=App\nExec=\""+program+"\" --flag %U\n")
+	entry, err := Read(launcher)
+	if err != nil || entry.Executable != program || strings.Join(entry.Arguments, "|") != "--flag" || !entry.MatchExecutable {
+		t.Fatalf("quoted program: %+v %v", entry, err)
+	}
+}
+
+func TestAppImageIdentityRequiresTheImageMount(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "Editor.AppImage")
+	writeEntry(t, image, "")
+	if err := os.Chmod(image, 0700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(root, "editor.desktop")
+	writeEntry(t, launcher, "[Desktop Entry]\nType=Application\nName=Editor\nExec=\""+image+"\" %F\n")
+	entry, err := Read(launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mount := filepath.Join(root, ".mount_Editor")
+	inside, outside := filepath.Join(mount, "bin", "editor"), filepath.Join(root, "browser")
+	writeEntry(t, inside, "")
+	writeEntry(t, outside, "")
+	for pid, executable := range map[string]string{"50": inside, "51": outside} {
+		writeEntry(t, filepath.Join(root, "proc", pid, "environ"), "APPIMAGE="+image+"\x00APPDIR="+mount+"\x00")
+		if err := os.Symlink(executable, filepath.Join(root, "proc", pid, "exe")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	if got := ProcessIdentity([]Entry{entry}, filepath.Join(root, "proc"), 50); got != entry.Identity() {
+		t.Fatalf("AppImage application lost identity: %q", got)
+	}
+	if got := ProcessIdentity([]Entry{entry}, filepath.Join(root, "proc"), 51); got != "" {
+		t.Fatalf("program started by the AppImage took its identity: %q", got)
+	}
+}

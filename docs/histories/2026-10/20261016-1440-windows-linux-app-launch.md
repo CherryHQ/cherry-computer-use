@@ -71,6 +71,10 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
 - Exec launches set per-process accessibility opt-ins, and discovery drops a
   process's childless duplicate registration: Qt 6 on Wayland exposed no tree, and
   its GTK platform theme added an empty registration that made it ambiguous.
+- The runtime remembers the processes it launched by PID and start time, because
+  Chromium overwrites its readable environment; AppImage applications are matched
+  by `APPIMAGE` only when they run from the image's mount; executable matching
+  parses Exec as the specification quotes it.
 - Flatpak identities name the installation's `active` deployment instead of the
   commit directory their exports resolve to, which every update replaced.
 - The GTK fixture can run as a D-Bus-activatable `Gtk.Application`; Go and SDK
@@ -86,6 +90,10 @@ Test the PR's behavior; then handle launch across Linux desktops without GIO.
   X11, KWin and GNOME Shell sessions configured as after login, with stable
   identities. In a session started before Flatpak was installed, neither resolves
   by name and Weather cannot be activated until the user logs in again.
+- T3 Code (Electron, quoted Exec, duplicate entries), Obsidian (Electron AppImage),
+  MuseScore (Qt AppImage) and Flatpak KCalc cold-launch on the real desktop with
+  identities. Electron exposes page content only with
+  `--force-renderer-accessibility`; no session accessibility switch enabled it.
 - Isolated X11 session: Go cold-launch test passes for both paths; with the old
   `gio launch` dispatch the D-Bus case times out. SDK protocol test passes for both.
 - Linux Go unit tests and vet pass, including Exec expansion and bus-name rules.

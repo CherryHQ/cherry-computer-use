@@ -13,6 +13,7 @@ import (
 
 	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktopentry"
 )
 
 func TestSDKColdLaunchDesktopEntry(t *testing.T) {
@@ -115,4 +116,21 @@ func coldLaunch(t *testing.T, launcher string) {
 		}
 	}
 	t.Fatal("launched fixture has no accessible counter")
+}
+
+func TestLaunchRecordsForgetReusedProcessIDs(t *testing.T) {
+	var records launches
+	entry := desktopentry.Entry{Path: "/apps/editor.desktop"}
+	records.remember(os.Getpid(), entry)
+	if identity, ok := records.identity(uint32(os.Getpid())); !ok || identity != entry.Identity() {
+		t.Fatalf("launched process lost identity: %q %v", identity, ok)
+	}
+	if len(records.entries()) != 1 {
+		t.Fatal("launched entry is not offered to discovery")
+	}
+	// Another process with the same PID has a different start time.
+	records.processes[uint32(os.Getpid())] = launch{"0", entry}
+	if _, ok := records.identity(uint32(os.Getpid())); ok || len(records.entries()) != 0 {
+		t.Fatal("a reused PID inherited the launched identity")
+	}
 }

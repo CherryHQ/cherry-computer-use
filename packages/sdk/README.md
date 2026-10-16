@@ -191,8 +191,9 @@ process into accessibility (`QT_LINUX_ACCESSIBILITY_ALWAYS_ON`, `GNOME_ACCESSIBI
 until assistive technology is enabled session-wide. Confined Snap applications
 answer AT-SPI only to peers their AppArmor policy allows, such as an unconfined
 host. Terminal entries are not launched. Discovery associates processes through the owner of an activatable
-application's bus name, launch metadata, Flatpak application IDs or an unambiguous
-executable match. Unidentifiable or
+application's bus name, the processes this runtime launched (by PID and start
+time), launch metadata, an AppImage's image path for processes running from its
+mount, Flatpak application IDs or an unambiguous executable match. Unidentifiable or
 ambiguous running targets are never selected by a guessed name after launch.
 
 After dispatch, cancellation, missing accessibility or window timeout reports

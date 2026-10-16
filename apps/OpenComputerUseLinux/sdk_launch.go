@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
@@ -51,7 +53,11 @@ func (d *linuxDesktop) LaunchApp(ctx context.Context, identity sdk.AppIdentity) 
 			return sdk.Error("TARGET_UNAVAILABLE", "Application has neither a D-Bus service nor an Exec command")
 		}
 	}
-	return launchExec(entry)
+	pid, err := launchExec(entry)
+	if err == nil {
+		d.launches.remember(pid, entry)
+	}
+	return err
 }
 
 // errNoService means the bus had nothing to activate, so nothing was dispatched.
@@ -103,17 +109,17 @@ func sessionBus(ctx context.Context) (*dbus.Conn, error) {
 // outlives the runtime and never holds its pipes. The GIO launch variables let
 // the runtime and desktop shells associate the new process with its entry; the
 // POSIX shell only records its own PID before replacing itself with the program.
-func launchExec(entry desktopentry.Entry) error {
+func launchExec(entry desktopentry.Entry) (int, error) {
 	if entry.Terminal {
-		return sdk.Error("UNSUPPORTED_CAPABILITY", "Terminal applications have no accessible window to launch")
+		return 0, sdk.Error("UNSUPPORTED_CAPABILITY", "Terminal applications have no accessible window to launch")
 	}
 	args, err := entry.Command()
 	if err != nil {
-		return sdk.Error("TARGET_UNAVAILABLE", err.Error())
+		return 0, sdk.Error("TARGET_UNAVAILABLE", err.Error())
 	}
 	program, err := exec.LookPath(args[0])
 	if err != nil {
-		return sdk.Error("TARGET_UNAVAILABLE", "Application program is not installed: "+args[0])
+		return 0, sdk.Error("TARGET_UNAVAILABLE", "Application program is not installed: "+args[0])
 	}
 	shim := `GIO_LAUNCHED_DESKTOP_FILE_PID=$$; export GIO_LAUNCHED_DESKTOP_FILE_PID; exec "$@"`
 	command := exec.Command("/bin/sh", append([]string{"-c", shim, "sh", program}, args[1:]...)...)
@@ -132,10 +138,10 @@ func launchExec(entry desktopentry.Entry) error {
 	// session-wide; these opt-ins announce it to this process alone.
 	command.Env = append(command.Env, "QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1", "GNOME_ACCESSIBILITY=1", "ACCESSIBILITY_ENABLED=1")
 	if err := command.Start(); err != nil {
-		return sdk.Error("TARGET_UNAVAILABLE", "Application launch failed: "+err.Error())
+		return 0, sdk.Error("TARGET_UNAVAILABLE", "Application launch failed: "+err.Error())
 	}
 	go command.Wait()
-	return nil
+	return command.Process.Pid, nil
 }
 
 // busOwners maps the PIDs owning DBusActivatable applications' names to their
@@ -173,4 +179,77 @@ func busOwners(ctx context.Context, entries []desktopentry.Entry) map[uint32]str
 		}
 	}
 	return owners
+}
+
+// launches remembers the processes this runtime started. Chromium overwrites its
+// environment to set process titles, so an Electron application's launch metadata
+// cannot be read back; its PID and start time identify it instead. Like GIO's
+// launch PID, only the started process itself is matched, never its children.
+type launches struct {
+	mu        sync.Mutex
+	processes map[uint32]launch
+}
+
+type launch struct {
+	start string
+	entry desktopentry.Entry
+}
+
+func (l *launches) remember(pid int, entry desktopentry.Entry) {
+	start := processStart(uint32(pid))
+	if start == "" {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.processes == nil {
+		l.processes = map[uint32]launch{}
+	}
+	l.processes[uint32(pid)] = launch{start, entry}
+}
+
+// identity reports a launched process's entry, forgetting PIDs that were reused.
+func (l *launches) identity(pid uint32) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, ok := l.processes[pid]
+	if !ok {
+		return "", false
+	}
+	if processStart(pid) != record.start {
+		delete(l.processes, pid)
+		return "", false
+	}
+	return record.entry.Identity(), true
+}
+
+// entries lets discovery associate an application launched by a path outside
+// the XDG data directories, such as an AppImage launcher.
+func (l *launches) entries() []desktopentry.Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entries := []desktopentry.Entry{}
+	for pid, record := range l.processes {
+		if processStart(pid) != record.start {
+			delete(l.processes, pid)
+			continue
+		}
+		entries = append(entries, record.entry)
+	}
+	return entries
+}
+
+// processStart is the start time in /proc/PID/stat, which stays fixed across exec
+// and differs when a PID is reused.
+func processStart(pid uint32) string {
+	stat, err := os.ReadFile("/proc/" + strconv.FormatUint(uint64(pid), 10) + "/stat")
+	if err != nil {
+		return ""
+	}
+	// The command name may contain spaces; fields after it are fixed.
+	fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
+	if len(fields) < 20 {
+		return ""
+	}
+	return fields[19]
 }

@@ -138,21 +138,13 @@ func Read(path string) (Entry, error) {
 			entry.Aliases = append(entry.Aliases, unescape.Replace(value))
 		}
 	}
-	// Only use a plain executable token for process association; never interpret Exec.
-	if fields := strings.Fields(values["Exec"]); len(fields) > 0 && !strings.ContainsAny(fields[0], `"'\%=`) {
-		if binary, err := exec.LookPath(fields[0]); err == nil && (filepath.IsAbs(fields[0]) || !strings.Contains(fields[0], "/")) {
+	// Associate processes through the program Exec names, parsed as the
+	// specification quotes it; a wrapper such as env never matches a process.
+	if args, err := entry.Command(); err == nil && !strings.Contains(args[0], "=") {
+		if binary, err := exec.LookPath(args[0]); err == nil {
 			entry.Executable, _ = filepath.EvalSymlinks(binary)
-			entry.MatchExecutable = values["Terminal"] != "true"
-			for index, argument := range fields[1:] {
-				if index == len(fields)-2 && (argument == "%u" || argument == "%U" || argument == "%f" || argument == "%F") {
-					break
-				}
-				if strings.ContainsAny(argument, `"'\%`) {
-					entry.MatchExecutable = false
-					break
-				}
-				entry.Arguments = append(entry.Arguments, argument)
-			}
+			entry.MatchExecutable = !entry.Terminal
+			entry.Arguments = args[1:]
 		}
 	}
 	return entry, nil
@@ -227,6 +219,12 @@ func ProcessIdentity(entries []Entry, procRoot string, pid uint32) string {
 				return entry.Identity()
 			}
 		}
+	}
+	// An AppImage runtime runs the application from a private mount (APPDIR) and
+	// names the image in APPIMAGE. Programs it starts from elsewhere inherit both,
+	// so only a process executing inside the mount is the image's application.
+	if identity, ok := appImageIdentity(entries, process, string(environment)); ok {
+		return identity
 	}
 	// Flatpak applications may be D-Bus activated and have no GIO launch environment.
 	if info, err := os.ReadFile(filepath.Join(process, "root", ".flatpak-info")); err == nil {
@@ -361,4 +359,32 @@ func (e Entry) Command() ([]string, error) {
 		return nil, fmt.Errorf("Exec program must be an absolute path or a name on PATH")
 	}
 	return args, nil
+}
+
+func appImageIdentity(entries []Entry, process, environment string) (string, bool) {
+	var image, mount string
+	for _, variable := range strings.Split(environment, "\x00") {
+		if value, ok := strings.CutPrefix(variable, "APPIMAGE="); ok {
+			image = value
+		} else if value, ok := strings.CutPrefix(variable, "APPDIR="); ok {
+			mount = value
+		}
+	}
+	executable, err := filepath.EvalSymlinks(filepath.Join(process, "exe"))
+	if image == "" || !filepath.IsAbs(mount) || err != nil || !strings.HasPrefix(executable, filepath.Clean(mount)+"/") {
+		return "", false
+	}
+	if canonical, err := filepath.EvalSymlinks(image); err == nil {
+		image = canonical
+	}
+	identity := ""
+	for _, entry := range entries {
+		if entry.Executable == image {
+			if identity != "" && identity != entry.Identity() {
+				return "", false
+			}
+			identity = entry.Identity()
+		}
+	}
+	return identity, identity != ""
 }
