@@ -844,8 +844,14 @@ public final class ComputerUseService {
             throw ComputerUseError.stateUnavailable("element \(elementIndex) has no backing accessibility object")
         }
 
-        guard try isSettableForSetValue(element: element, attribute: kAXValueAttribute) else {
-            throw ComputerUseError.message(nonSettableSetValueErrorMessage)
+        let settable: Bool
+        do {
+            settable = try isSettableForSetValue(element: element, attribute: kAXValueAttribute)
+        } catch {
+            throw ComputerUseError.actionPreconditionFailed(error.localizedDescription)
+        }
+        guard settable else {
+            throw ComputerUseError.unsupportedAction(nonSettableSetValueErrorMessage)
         }
 
         let cursorTarget = visualCursorTarget(for: record, snapshot: snapshot)
@@ -1203,11 +1209,15 @@ public final class ComputerUseService {
             .first
     }
 
-    private func hitTestElement(at point: CGPoint, in snapshot: AppSnapshot) throws -> ElementRecord? {
+    func hitTestElement(
+        at point: CGPoint,
+        in snapshot: AppSnapshot,
+        hitTest: (AXUIElement, Float, Float, UnsafeMutablePointer<AXUIElement?>) -> AXError = AXUIElementCopyElementAtPosition
+    ) throws -> ElementRecord? {
         let appElement = AXUIElementCreateApplication(snapshot.app.pid)
-        let globalPoint = try screenshotToGlobalPoint(snapshot: snapshot, x: Double(point.x), y: Double(point.y))
+        let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: point)
         var hitElement: AXUIElement?
-        let result = AXUIElementCopyElementAtPosition(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
+        let result = hitTest(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
         guard result == .success, let hitElement else {
             return nil
         }
