@@ -1,5 +1,14 @@
 # @cherrystudio/computer-use
 
+## 0.1.8
+
+### Patch Changes
+
+- [#26](https://github.com/CherryHQ/cherry-computer-use/pull/26) [`528567b`](https://github.com/CherryHQ/cherry-computer-use/commit/528567bc50e77bdfc5fcf5d2ac57babd4a3b6cf6) Thanks [@DeJeune](https://github.com/DeJeune)! - Support identity-authorized installed application launch on Windows and Linux.
+  Windows resolves AppsFolder applications and canonical executables; Linux resolves
+  XDG desktop entries and launches them through D-Bus activation or Exec, without GIO tools. Preserve running-only rebinding,
+  revalidate identity before effects, and wait for the matching accessible window.
+
 ## 0.1.7
 
 ### Patch Changes
