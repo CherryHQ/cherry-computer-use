@@ -1,5 +1,11 @@
 # @cherrystudio/computer-use
 
+## 0.1.9
+
+### Patch Changes
+
+- [#27](https://github.com/CherryHQ/cherry-computer-use/pull/27) [`fd2abb8`](https://github.com/CherryHQ/cherry-computer-use/commit/fd2abb899f7f1b6f8324af4619ff9ac4e644c7fa) Thanks [@DeJeune](https://github.com/DeJeune)! - On macOS, advertise setValue only for writable text controls, report preflight input rejections without marking the session as having uncertain effects, and avoid applying screenshot scaling twice during accessibility hit testing.
+
 ## 0.1.8
 
 ### Patch Changes
