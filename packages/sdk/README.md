@@ -145,7 +145,7 @@ SDK 包名保持 `@cherrystudio/computer-use`。macOS helper 改为 `Cherry Comp
 
 ## Persistent automation additions (unreleased)
 
-- `resolveApp({ query })` resolves an unambiguous application name or runtime ID. macOS also supports bundle IDs/paths and launches installed apps without activating them. Windows/Linux require a listed running target; unsupported launch is explicit. Resolve first, then open an owned app session. Native launch completion does not guarantee a usable window: obtain an observation before input.
+- `resolveApp({ query })` resolves an unambiguous application name or runtime ID. Matching native builds can also launch installed applications: macOS bundles, Windows AppsFolder applications/executable paths, and Linux XDG desktop entries (D-Bus activation or Exec; no GIO tools required). Resolve first, then open an owned app session. Launch waits for a matching accessible window; obtain a fresh observation before input. Windows/Linux desktop policy may activate the launched application.
 - `perform(action)` validates and executes the same `Action` input as `act`, returning `{ status: 'completed', appSessionId }` without capturing another observation. This receipt confirms input dispatch, not the user's task outcome.
 - Every action consumes element/coordinate refs. Only `typeText`/`pressKey` through `perform` can reuse the last target snapshot ID, with native target validation. An explicit observation replaces that keyboard target; errors require fresh observation. A different app/window cannot inherit the target.
 - `act` retains its existing action-plus-observation behavior. New methods require matching rebuilt SDK/native artifacts. There is no automatic fallback or retry after an uncertain action.
@@ -160,14 +160,45 @@ On macOS, SDK `typeText` sends keyboard text to the validated application PID, i
 
 ### Authorizing application launch
 
-On macOS, `resolveAppIdentity({ query })` resolves an installed application name,
-bundle ID or path without launching or activating it. It returns a stable bundle
-`id`, display `name`, and canonical path `query`. Authorize that identity in the
+`resolveAppIdentity({ query })` resolves an installed application without launching
+or activating it. It returns a stable `id`, display `name`, and canonical `query`.
+macOS accepts bundle names/IDs/paths; Windows accepts AppsFolder names/AUMIDs and
+executable names/paths; Linux accepts desktop names/IDs/paths. Authorize identity in the
 host before calling `resolveApp({ query, expectedIdentity: id, launch: true })`.
 The runtime checks `expectedIdentity` before launch; a changed identity fails
 without launching. Running `AppInfo` and app sessions include the same optional
 `identity`; their opaque `id` is still only a runtime control reference.
 
-`launch: false` retains its running-only semantics. Windows/Linux do not launch
-applications and reject installed identity resolution with `UNSUPPORTED_CAPABILITY`.
-Host stop decisions remain host-owned and must be checked before effects.
+`launch: false` retains its running-only semantics, including installed aliases of
+an already running application. Older Windows/Linux runtimes reject installed
+identity resolution with `UNSUPPORTED_CAPABILITY`; rebuild/package matching native
+artifacts to enable launch. Host stop decisions remain host-owned and must be
+checked before effects.
+
+Windows packaged identities use AUMIDs; desktop identities use canonical executable
+paths. App launches use the Windows Shell/application activation APIs outside the
+temporary UIA worker's kill-on-close Job Object. Linux identities use canonical
+desktop file paths; XDG user overrides and localized names are respected. A Flatpak
+launcher's identity names its installation's `active` deployment, so it survives
+updates; Flatpak apps become resolvable by name once the session's `XDG_DATA_DIRS`
+and D-Bus services include Flatpak exports, normally after logging in again. Launch
+follows the Desktop Entry Specification on every desktop: `DBusActivatable` entries
+receive `org.freedesktop.Application.Activate` on the session bus, falling back to
+Exec only when no service is installed; other entries run their expanded Exec
+(quoting, field codes, `Path`) detached from the runtime. Exec launches opt the
+process into accessibility (`QT_LINUX_ACCESSIBILITY_ALWAYS_ON`, `GNOME_ACCESSIBILITY`,
+`ACCESSIBILITY_ENABLED`), since Qt, Firefox and Chromium otherwise expose no tree
+until assistive technology is enabled session-wide. Chromium and Electron programs,
+recognised by Chromium's resource pack beside the program or inside an AppImage
+(mounted read-only, without running its application), also receive
+`--force-renderer-accessibility`, without which their page content stays hidden. Confined Snap applications
+answer AT-SPI only to peers their AppArmor policy allows, such as an unconfined
+host. Terminal entries are not launched. Discovery associates processes through the owner of an activatable
+application's bus name, the processes this runtime launched (by PID and start
+time), launch metadata, an AppImage's image path for processes running from its
+mount, Flatpak application IDs or an unambiguous executable match. Unidentifiable or
+ambiguous running targets are never selected by a guessed name after launch.
+
+After dispatch, cancellation, missing accessibility or window timeout reports
+`effect: possible`; do not replay launch automatically. These SDK additions do not
+change the legacy CLI/MCP launch policy or authorize global input.

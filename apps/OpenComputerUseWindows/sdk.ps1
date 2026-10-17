@@ -6,13 +6,27 @@ $script:sdkCode = 'INVALID_ARGUMENT'
 $script:sdkEffect = 'none'
 
 function Get-SDKTarget($process) {
-    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$process.MainWindowHandle; name = $process.ProcessName }
+    $identityPID = [int]$process.Id
+    if ($process.ProcessName -eq 'ApplicationFrameHost') {
+        $identityPID = 0
+        try {
+            $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
+            $condition = New-Object Windows.Automation.NotCondition (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), ([int]$process.Id))
+            $child = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+            if ($null -ne $child) { $identityPID = $child.Current.ProcessId }
+        } catch {}
+    }
+    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$process.MainWindowHandle; name = $process.ProcessName; identity = [SDKApplicationIdentity]::ForProcess($identityPID) }
 }
 function Resolve-SDKTarget($target) {
     $process = Get-Process -Id ([int]$target.pid) -ErrorAction Stop
     if ($process.StartTime.ToUniversalTime().Ticks.ToString() -ne $target.started -or [long]$process.MainWindowHandle -ne [long]$target.hwnd) {
         $script:sdkCode = 'STALE_SNAPSHOT'
         throw 'Application process or window changed'
+    }
+    if ($target.identity -and $process.ProcessName -eq 'ApplicationFrameHost' -and (Get-SDKTarget $process).identity -cne $target.identity) {
+        $script:sdkCode = 'STALE_SNAPSHOT'
+        throw 'Hosted application identity changed'
     }
     if ($process.MainWindowHandle -eq 0) { throw 'Application has no window' }
     return $process
@@ -143,7 +157,9 @@ try {
     if ($null -eq $operation -or $operation -isnot [pscustomobject]) { throw 'Expected a command object' }
     $script:sdkCode = 'TARGET_UNAVAILABLE'
     . "$PSScriptRoot/runtime.ps1" -DefinitionsOnly
+    . "$PSScriptRoot/sdk_apps.ps1"
     switch ($operation.method) {
+        'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query }
         'apps' { $result = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { try { Get-SDKTarget $_ } catch {} }) }
         'observe' { $result = Observe-SDK $operation.target $operation.options }
         'act' { $result = Invoke-SDKAction $operation }
