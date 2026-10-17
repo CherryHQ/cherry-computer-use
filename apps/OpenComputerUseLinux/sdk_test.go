@@ -10,7 +10,7 @@ import (
 )
 
 func testDesktop(env map[string]string) *linuxDesktop {
-	return &linuxDesktop{desktop.New(desktop.Config{Env: env, InputGuard: inputGuard})}
+	return &linuxDesktop{engine: desktop.New(desktop.Config{Env: env, InputGuard: inputGuard})}
 }
 
 func globalActions() map[string]struct {

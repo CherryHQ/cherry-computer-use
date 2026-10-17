@@ -3,6 +3,10 @@
 
 The runtime itself never needs Python; this fixture only supplies controls whose
 real state changes the tests can assert. It prints "ready" once mapped.
+
+With a leading --application-id ID it is a Gtk.Application, so a D-Bus service
+file can activate it the way desktops activate DBusActivatable launchers. Run
+as --gapplication-service, it shows its window only when Activate arrives.
 """
 
 import sys
@@ -12,7 +16,13 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
-TITLE = sys.argv[1] if len(sys.argv) > 1 else "Cherry Linux Fixture"
+ARGS = sys.argv[1:]
+APPLICATION_ID = None
+if ARGS[:1] == ["--application-id"] and len(ARGS) > 1:
+    APPLICATION_ID, ARGS = ARGS[1], ARGS[2:]
+SERVICE = [arg for arg in ARGS if arg.startswith("--gapplication")]
+ARGS = [arg for arg in ARGS if not arg.startswith("--gapplication")]
+TITLE = ARGS[0] if ARGS else "Cherry Linux Fixture"
 
 
 def named(widget, name):
@@ -23,9 +33,17 @@ def named(widget, name):
 def main():
     GLib.set_prgname("cherry-linux-fixture")
     GLib.set_application_name("Cherry Linux Fixture")
-    window = Gtk.Window(title=TITLE)
+    if APPLICATION_ID is None:
+        show(Gtk.Window(title=TITLE)).connect("destroy", Gtk.main_quit)
+        Gtk.main()
+        return 0
+    application = Gtk.Application(application_id=APPLICATION_ID)
+    application.connect("activate", lambda app: show(Gtk.ApplicationWindow(application=app, title=TITLE)))
+    return application.run([sys.argv[0]] + SERVICE)
+
+
+def show(window):
     window.set_default_size(360, 320)
-    window.connect("destroy", Gtk.main_quit)
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     window.add(box)
 
@@ -62,8 +80,8 @@ def main():
     second.grab_focus()
     window.present()
     print("ready", flush=True)
-    Gtk.main()
+    return window
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

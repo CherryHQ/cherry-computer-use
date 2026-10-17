@@ -13,16 +13,20 @@ import (
 //go:embed sdk.ps1
 var sdkWindowsScript string
 
+//go:embed sdk_apps.ps1
+var sdkAppsScript string
+
 type sdkBridge interface {
 	Run(context.Context, any) (json.RawMessage, error)
 	Close(context.Context) error
 }
 type windowsDesktop struct{ bridge sdkBridge }
 type windowsTarget struct {
-	PID     int    `json:"pid"`
-	Started string `json:"started"`
-	HWND    int64  `json:"hwnd"`
-	Name    string `json:"name"`
+	PID      int    `json:"pid"`
+	Started  string `json:"started"`
+	HWND     int64  `json:"hwnd"`
+	Name     string `json:"name"`
+	Identity string `json:"identity"`
 }
 type windowsObservation struct {
 	Target windowsTarget
@@ -61,9 +65,29 @@ func (d *windowsDesktop) Apps(ctx context.Context) ([]sdk.Target, error) {
 	}
 	targets := make([]sdk.Target, 0, len(apps))
 	for _, app := range apps {
-		targets = append(targets, sdk.Target{Key: fmt.Sprintf("%d:%s", app.PID, app.Started), Name: app.Name, Native: app})
+		targets = append(targets, sdk.Target{Key: fmt.Sprintf("%d:%s", app.PID, app.Started), Name: app.Name, Identity: app.Identity, Native: app})
 	}
 	return targets, nil
+}
+
+func (d *windowsDesktop) ResolveAppIdentity(ctx context.Context, query string) (sdk.AppIdentity, error) {
+	var identity sdk.AppIdentity
+	err := d.run(ctx, map[string]any{"method": "resolveIdentity", "query": query}, &identity)
+	return identity, err
+}
+
+func (d *windowsDesktop) LaunchApp(ctx context.Context, identity sdk.AppIdentity) error {
+	current, err := d.ResolveAppIdentity(ctx, identity.Query)
+	if err != nil {
+		return err
+	}
+	if current.ID != identity.ID {
+		return sdk.Error("TARGET_UNAVAILABLE", "Application identity changed before launch")
+	}
+	if ctx.Err() != nil {
+		return sdk.Error("CANCELLED", "Application launch cancelled before dispatch")
+	}
+	return launchWindowsApp(current)
 }
 func (d *windowsDesktop) Observe(ctx context.Context, target sdk.Target, options sdk.ObserveOptions) (sdk.Observation, error) {
 	var result struct {

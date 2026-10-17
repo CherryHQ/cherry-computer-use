@@ -74,7 +74,40 @@ func (e *Engine) Apps(ctx context.Context) ([]App, []error, error) {
 	if err := emptyDesktopError(len(refs), len(apps), skipped); err != nil {
 		return nil, skipped, err
 	}
-	return apps, skipped, nil
+	return dropEmptyDuplicates(apps, func(app App) (int32, bool) {
+		var count int32
+		return count, e.property(ctx, app.Ref, "Accessible", "ChildCount", &count) == nil
+	}), skipped, nil
+}
+
+// dropEmptyDuplicates removes a childless registration of a process that also has
+// a registration with children. A Qt application whose GTK platform theme loads
+// GTK registers twice, and only its Qt registration has windows; keeping both
+// would make every lookup of that application ambiguous. Unreadable counts and
+// processes without any populated registration are left as they are.
+func dropEmptyDuplicates(apps []App, childCount func(App) (int32, bool)) []App {
+	registrations := map[uint32]int{}
+	for _, app := range apps {
+		registrations[app.PID]++
+	}
+	empty, populated := map[int]bool{}, map[uint32]bool{}
+	for index, app := range apps {
+		if registrations[app.PID] < 2 {
+			continue
+		}
+		if count, ok := childCount(app); ok && count == 0 {
+			empty[index] = true
+		} else {
+			populated[app.PID] = true
+		}
+	}
+	kept := make([]App, 0, len(apps))
+	for index, app := range apps {
+		if !empty[index] || !populated[app.PID] {
+			kept = append(kept, app)
+		}
+	}
+	return kept
 }
 
 // A desktop that registers applications but yields none is a failed read, not an

@@ -10,14 +10,18 @@ import (
 
 	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
+	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktopentry"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
 )
 
 // linuxDesktop adapts the shared engine to SDK sessions; runtime-go owns identities and snapshots.
-type linuxDesktop struct{ engine *desktop.Engine }
+type linuxDesktop struct {
+	engine   *desktop.Engine
+	launches launches
+}
 
 func newLinuxDesktop() *linuxDesktop {
-	return &linuxDesktop{desktop.New(desktop.Config{InputGuard: inputGuard, WaylandHelper: waylandHelperPath()})}
+	return &linuxDesktop{engine: desktop.New(desktop.Config{InputGuard: inputGuard, WaylandHelper: waylandHelperPath()})}
 }
 
 // pointerInput reports whether pointer input can be offered: XTEST on X11, and
@@ -155,8 +159,21 @@ func (d *linuxDesktop) Apps(ctx context.Context) ([]sdkruntime.Target, error) {
 		return nil, sdkError(err)
 	}
 	targets := make([]sdkruntime.Target, 0, len(apps))
+	entries, err := desktopentry.Load(ctx, desktopentry.Roots())
+	if err != nil {
+		return nil, sdkError(err)
+	}
+	entries = append(entries, d.launches.entries()...)
+	owners := busOwners(ctx, entries)
 	for _, app := range apps {
-		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Native: app})
+		identity, known := owners[app.PID]
+		if !known {
+			identity, known = d.launches.identity(app.PID)
+		}
+		if !known {
+			identity = desktopentry.ProcessIdentity(entries, "/proc", app.PID)
+		}
+		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Identity: identity, Native: app})
 	}
 	return targets, nil
 }

@@ -39,13 +39,14 @@ func Unavailable(code, message string) Availability {
 }
 
 type App struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Identity string `json:"identity,omitempty"`
 }
 
 type Target struct {
-	Key, Name string
-	Native    any
+	Key, Name, Identity string
+	Native              any
 }
 
 type Window struct {
@@ -228,7 +229,7 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			id := AppID(target.Key)
 			d.apps[id] = target
 			present[id] = true
-			apps = append(apps, App{id, target.Name})
+			apps = append(apps, App{ID: id, Name: target.Name, Identity: target.Identity})
 		}
 		for id := range d.apps {
 			if !present[id] {
@@ -267,35 +268,24 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		}
 		return map[string]any{"permissions": permissions}, nil
 	case "resolveAppIdentity":
-		return nil, Error("UNSUPPORTED_CAPABILITY", "Installed application identity resolution is unavailable on this platform")
-	case "resolveApp":
 		var input struct {
-			Query  string `json:"query"`
-			Launch *bool  `json:"launch"`
+			Query string `json:"query"`
 		}
-		if decodeObject(params, &input) != nil || input.Query == "" || len(input.Query) > 512 {
-			return nil, Error("INVALID_ARGUMENT", "Expected an application name or ID")
+		if decodeObject(params, &input) != nil || !validAppQuery(input.Query) {
+			return nil, Error("INVALID_ARGUMENT", "Expected an application name, ID or path")
 		}
-		value, err := d.Call(ctx, "listApps", json.RawMessage(`{}`))
-		if err != nil {
-			return nil, err
+		launcher, ok := d.driver.(ApplicationDriver)
+		if !ok {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "Installed application identity resolution is unavailable on this platform")
 		}
-		matches := []App{}
-		for _, app := range value.([]App) {
-			if app.ID == input.Query || strings.EqualFold(app.Name, input.Query) {
-				matches = append(matches, app)
-			}
+		return launcher.ResolveAppIdentity(ctx, strings.TrimSpace(input.Query))
+	case "resolveApp":
+		var input resolveAppInput
+		if decodeObject(params, &input) != nil || !validAppQuery(input.Query) ||
+			(input.ExpectedIdentity != nil && *input.ExpectedIdentity == "") {
+			return nil, Error("INVALID_ARGUMENT", "Expected an application name, ID or path and a non-empty expected identity")
 		}
-		if len(matches) == 1 {
-			return matches[0], nil
-		}
-		if len(matches) > 1 {
-			return nil, Error("TARGET_UNAVAILABLE", "Application name is ambiguous; use an ID from listApps")
-		}
-		if input.Launch != nil && !*input.Launch {
-			return nil, Error("TARGET_UNAVAILABLE", "Application is no longer running; bind it explicitly to launch again")
-		}
-		return nil, Error("UNSUPPORTED_CAPABILITY", "Application is not running; launching applications is unavailable on this platform")
+		return d.resolveApp(ctx, input)
 	case "openAppSession":
 		var input struct {
 			AppID string `json:"appId"`

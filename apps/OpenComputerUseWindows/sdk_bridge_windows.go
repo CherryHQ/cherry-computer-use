@@ -24,7 +24,7 @@ func newSDKBridge() (sdkBridge, error) {
 	if err != nil {
 		return nil, err
 	}
-	for name, content := range map[string]string{"runtime.ps1": windowsRuntimeScript, "sdk.ps1": sdkWindowsScript} {
+	for name, content := range map[string]string{"runtime.ps1": windowsRuntimeScript, "sdk.ps1": sdkWindowsScript, "sdk_apps.ps1": sdkAppsScript} {
 		if err = os.WriteFile(filepath.Join(directory, name), []byte(content), 0600); err != nil {
 			os.RemoveAll(directory)
 			return nil, err
