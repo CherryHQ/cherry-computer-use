@@ -4,6 +4,12 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-09 | Chromium / Electron 页面输入（CDP，Windows / Linux / macOS） | Edge、Chrome 和 Electron 应用在启动时带过远程调试开关的情况下，Agent 可以直接把文字和按键投递进页面：`+ * =` 等符号、中文与 emoji 都能原样写入，且不需要把窗口切到前台。 | `packages/runtime-go/webcdp` 新增跨平台 CDP 通道：从命令行或 `DevToolsActivePort` 发现端点、按窗口标题选页面 target、`Input.insertText`（写后回读校验）与 `Input.dispatchKeyEvent`（命名键/修饰键）；WebSocket 用标准库实现，无新增依赖。Windows/Linux driver 与 macOS 的 Swift session 在 `typeText`/`pressKey` 上优先尝试，失败回退原路径；`OPEN_COMPUTER_USE_DISABLE_CDP=1` 可关闭。 |
+
+## 2026-11
+
+| 日期 | 功能域 | 用户价值 | 变更摘要 |
+| --- | --- | --- | --- |
 | 2026-11-09 | Windows 宿主应用输入与窗口识别 | Windows 上的 UWP/WinUI（计算器、设置）与 Chromium/Electron 应用现在可以真正接收文字输入、按键与坐标点击；同一进程里的多个 UWP 窗口不再互相顶掉目标。 | Windows bridge 把输入投递到真实输入窗口（`Windows.UI.Core.CoreWindow` / `Chrome_RenderWidgetHostHWND`），字符统一走 `WM_CHAR`，需要修饰键的按键与指针操作在前台走 `SendInput`，后台无法投递时返回 `UNSUPPORTED_CAPABILITY`；窗口身份改为 HWND（`EnumWindows` + 宿主 AUMID），`apps` 按窗口枚举。 |
 
 ## 2026-09

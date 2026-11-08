@@ -42,6 +42,8 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         var status = "active"
         fileprivate var snapshots: [String: Snapshot] = [:]
         fileprivate var keyboardTarget: (id: String, snapshot: Snapshot)?
+        /// Resolved while observing; nil means this window has no page channel.
+        fileprivate var webCDP: WebCDPInput.Endpoint?
         var cancellation: SDKCancellation?
         let running = DispatchGroup()
         init(appID: String, app: RunningAppDescriptor) { self.appID = appID; self.app = app }
@@ -194,7 +196,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             try validateTarget(action, in: snapshot)
             try check(cancellation)
             do {
-                try perform(action, on: snapshot.state)
+                try perform(action, on: snapshot.state, control: control)
             } catch let error as SDKDomainError {
                 if error.effect != "none" { controlLock.withLock { uncertain = true } }
                 throw error
@@ -219,7 +221,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         }
     }
 
-    private func perform(_ action: SDKAction, on state: AppSnapshot) throws {
+    private func perform(_ action: SDKAction, on state: AppSnapshot, control: AppControl) throws {
         switch action.kind {
         case let .click(elementID, point, button, count):
             try engine.performClick(on: state, elementIndex: elementID, x: point.map { Double($0.x) }, y: point.map { Double($0.y) }, clickCount: count, mouseButton: button)
@@ -230,12 +232,34 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         case let .drag(from, to):
             try engine.performDrag(on: state, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y)
         case let .typeText(text):
+            // Chromium and Electron pages only accept real page input. The channel was resolved while
+            // observing, so this never sends input to find out whether it works.
+            if state.mode != .fixture, let endpoint = control.webCDP {
+                switch WebCDPInput.insertText(text, endpoint: endpoint) {
+                case .delivered:
+                    return
+                case .notDelivered:
+                    throw SDKDomainError("TARGET_UNAVAILABLE", "The page ignored the text; it may have blocked or replaced the input", effect: "possible")
+                case .unavailable:
+                    control.webCDP = nil
+                }
+            }
             if state.mode == .fixture {
                 try engine.performTypeText(on: state, text: text)
             } else {
                 try InputSimulation.typeText(text, pid: state.app.pid)
             }
         case let .pressKey(key):
+            if state.mode != .fixture, let endpoint = control.webCDP {
+                switch WebCDPInput.pressKey(key, endpoint: endpoint) {
+                case .delivered:
+                    return
+                case .notDelivered:
+                    throw SDKDomainError("TARGET_UNAVAILABLE", "The page ignored the key", effect: "possible")
+                case .unavailable:
+                    control.webCDP = nil
+                }
+            }
             try engine.performPressKey(on: state, key: key)
         case let .setValue(elementID, value):
             try engine.performSetValue(on: state, elementIndex: elementID, value: value)
@@ -288,6 +312,10 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             throw SDKDomainError(error)
         }
         try check(cancellation)
+        // Resolve the page channel here, once per observation, instead of inferring it from input later.
+        control.webCDP = state.mode == .fixture
+            ? nil
+            : WebCDPInput.resolveEndpoint(pid: state.app.pid, windowTitle: state.windowTitle)
         let snapshotID = UUID().uuidString
         let image = state.screenshotPNGData.flatMap { data -> (Data, Int, Int)? in
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -323,8 +351,15 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             screenshot = ["status": "unavailable", "reason": reason]
         }
         control.snapshots[snapshotID] = Snapshot(state: state, options: options, titles: titles, focusedWindow: focusedWindow(app.pid))
+        let inputChannel: [String: Any]
+        if let endpoint = control.webCDP {
+            inputChannel = ["kind": "page", "page": endpoint.title]
+        } else {
+            inputChannel = ["kind": "accessibility"]
+        }
         return ["id": snapshotID, "appSessionId": control.id, "app": app.sdkInfo(id: appID),
                 "window": ["id": state.targetWindowID.map(String.init) ?? snapshotID, "title": state.windowTitle ?? ""],
+                "inputChannel": inputChannel,
                 "tree": ["status": "available", "elements": elements, "text": state.renderedText(style: .fullState), "truncated": state.treeTruncation.sorted()],
                 "screenshot": screenshot]
     }

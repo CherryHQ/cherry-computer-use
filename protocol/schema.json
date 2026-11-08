@@ -410,6 +410,27 @@
       "additionalProperties": false,
       "title": "StopAppSessionResult"
     },
+    "InputChannel": {
+      "type": "object",
+      "description": "Where text and key input for the observed window actually goes.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["accessibility", "page"],
+          "description": "accessibility = platform accessibility tree and window messages; page = Chrome DevTools Protocol."
+        },
+        "page": {
+          "type": "string",
+          "description": "Page title when kind is page: the DevTools target that receives input."
+        },
+        "reason": {
+          "$ref": "#/definitions/Failure"
+        }
+      },
+      "required": ["kind"],
+      "additionalProperties": false,
+      "title": "InputChannel"
+    },
     "WindowInfo": {
       "type": "object",
       "properties": {
@@ -554,6 +575,9 @@
         "window": {
           "$ref": "#/definitions/WindowInfo"
         },
+        "inputChannel": {
+          "$ref": "#/definitions/InputChannel"
+        },
         "tree": {
           "oneOf": [
             {
@@ -630,7 +654,7 @@
           ]
         }
       },
-      "required": ["id", "appSessionId", "app", "window", "tree", "screenshot"],
+      "required": ["id", "appSessionId", "app", "window", "inputChannel", "tree", "screenshot"],
       "additionalProperties": false,
       "title": "Snapshot"
     },

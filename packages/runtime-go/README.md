@@ -12,6 +12,19 @@ its global-input actions require `allowGlobalInput`, and Wayland keys also its
 `getPermissionStatus` and `requestPermissions`; others report no permissions. Drivers keep
 native references outside wire data. Permission requests remain unsupported.
 
+`webcdp` (subpackage) delivers text and key input to Chromium and Electron pages over the Chrome
+DevTools Protocol. It is platform neutral by design: the platform driver supplies the process ID and
+window title, the package finds the endpoint (`--remote-debugging-port` or `DevToolsActivePort` inside
+`--user-data-dir`), selects the matching page target and sends `Input.insertText` /
+`Input.dispatchKeyEvent`. The page channel is resolved once per observation (`Resolve`) and cached by the driver, so actions
+never send input to find out whether input works. Text is read back to confirm delivery:
+`ErrUnavailable` means nothing was sent (safe to fall back), `ErrNotDelivered` means the page ignored
+it and the caller must not retry through another channel. The WebSocket client is a
+small RFC 6455 implementation, so this module keeps zero third-party dependencies.
+`OPEN_COMPUTER_USE_DISABLE_CDP=1` turns the channel off. Windows and Linux drivers use it for
+`typeText`/`pressKey` without an element target; the macOS Swift runtime mirrors the same contract
+in `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WebCDPInput.swift` and shares the same test vectors.
+
 `ApplicationDriver` adds side-effect-free installed identity lookup and native
 launch with identity revalidation. `resolveApp` preserves running-only rebinding,
 rejects ambiguity/mismatched identities before effects, and waits for the matching
