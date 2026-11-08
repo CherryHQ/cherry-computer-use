@@ -141,7 +141,8 @@ export class RuntimeConnection {
     params: object,
     validate: (value: unknown) => value is T,
     options: CallOptions = {},
-    uncertainEffect: Effect = 'none'
+    uncertainEffect: Effect = 'none',
+    owned?: (value: T) => boolean
   ): Promise<T> {
     if (this.closing)
       throw new ComputerUseError(
@@ -176,9 +177,22 @@ export class RuntimeConnection {
     try {
       const value = await this.sendRequest(id, method, params)
       if (!validate(value)) {
-        const error = new ComputerUseError(
+        // A result that does not match the protocol is a defect of this one response, not proof that
+        // the transport is unusable. Failing the connection here disposes both pipes, so the graceful
+        // shutdown below can never be sent and the owner can only report "cleanup unconfirmed" — the
+        // state that blocks every later call. Reject this request and keep the session alive instead.
+        throw new ComputerUseError(
           'PROTOCOL_ERROR',
           `Invalid ${method} response`,
+          { effect: uncertainEffect }
+        )
+      }
+      if (owned && !owned(value)) {
+        // The response is well formed but claims another session's data. That is a trust breach
+        // rather than a shape defect, so the connection must not survive it.
+        const error = new ComputerUseError(
+          'PROTOCOL_ERROR',
+          `${method} response does not belong to this session`,
           { effect: uncertainEffect }
         )
         this.fail(error)
