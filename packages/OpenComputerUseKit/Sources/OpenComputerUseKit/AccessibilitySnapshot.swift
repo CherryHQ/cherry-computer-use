@@ -47,7 +47,7 @@ final class ElementRecord {
     }
 }
 
-enum SnapshotMode {
+enum SnapshotMode: Equatable {
     case accessibility
     case fixture
 }

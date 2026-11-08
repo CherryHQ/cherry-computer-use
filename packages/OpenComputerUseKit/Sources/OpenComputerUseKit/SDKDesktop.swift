@@ -230,12 +230,20 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         case let .drag(from, to):
             try engine.performDrag(on: state, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y)
         case let .typeText(text):
+            // Chromium and Electron pages only accept real page input; CDP delivers exact characters
+            // without activating the app. Accessibility stays the fallback for every other app.
+            if state.mode != .fixture, WebCDPInput.insertText(text, pid: state.app.pid, windowTitle: state.windowTitle) {
+                return
+            }
             if state.mode == .fixture {
                 try engine.performTypeText(on: state, text: text)
             } else {
                 try InputSimulation.typeText(text, pid: state.app.pid)
             }
         case let .pressKey(key):
+            if state.mode != .fixture, WebCDPInput.pressKey(key, pid: state.app.pid, windowTitle: state.windowTitle) {
+                return
+            }
             try engine.performPressKey(on: state, key: key)
         case let .setValue(elementID, value):
             try engine.performSetValue(on: state, elementIndex: elementID, value: value)

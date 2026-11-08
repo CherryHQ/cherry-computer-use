@@ -20,7 +20,8 @@ window title, the package finds the endpoint (`--remote-debugging-port` or `DevT
 `ErrUnavailable` or an error so the driver falls back to its platform path. The WebSocket client is a
 small RFC 6455 implementation, so this module keeps zero third-party dependencies.
 `OPEN_COMPUTER_USE_DISABLE_CDP=1` turns the channel off. Windows and Linux drivers use it for
-`typeText`/`pressKey` without an element target; the macOS Swift runtime still needs its own client.
+`typeText`/`pressKey` without an element target; the macOS Swift runtime mirrors the same contract
+in `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WebCDPInput.swift` and shares the same test vectors.
 
 `ApplicationDriver` adds side-effect-free installed identity lookup and native
 launch with identity revalidation. `resolveApp` preserves running-only rebinding,

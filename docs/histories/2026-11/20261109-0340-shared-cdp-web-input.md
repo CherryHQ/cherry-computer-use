@@ -24,6 +24,10 @@
   因为页面输入不需要全局输入授权。
 - **[关闭开关]**: `OPEN_COMPUTER_USE_DISABLE_CDP=1`（跨平台），替代原来 Windows 专属的
   `OPEN_COMPUTER_USE_WINDOWS_CDP=0`。
+- **[macOS]**: 同一契约用 Swift 实现（`WebCDPInput.swift`）：`ps` 读命令行、`DevToolsActivePort`、
+  `/json/list` 选 target、`URLSessionWebSocketTask` 传 `Input.insertText` / `Input.dispatchKeyEvent`，
+  写后回读校验；`MacOSSDKDesktop.perform` 在非 fixture 模式下先试 CDP，失败回退 AX / `InputSimulation`。
+  同步入口用受限等待把 async 传输桥接回 SDK 的同步动作路径。
 - **[测试]**: `webcdp` 内新增纯 Go 单元测试：handshake accept key（RFC 示例）、帧编解码
   （含 16/64 位长度）、ping→pong、握手成功/失败、命令行与 `DevToolsActivePort` 解析、
   target 选择、键位描述符。
@@ -38,6 +42,9 @@ CDP 与操作系统无关，把它写在 Windows 的 PowerShell 里意味着 mac
 - `packages/runtime-go/webcdp/`（新增 6 个实现文件 + 1 个测试文件）
 - `apps/OpenComputerUseWindows/sdk_webinput.go`（新增）、`apps/OpenComputerUseWindows/sdk.go`
 - `apps/OpenComputerUseLinux/sdk_webinput.go`（新增）、`apps/OpenComputerUseLinux/sdk.go`
+- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WebCDPInput.swift`（新增）
+- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SDKDesktop.swift`
+- `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/WebCDPInputTests.swift`（新增）
 - `packages/runtime-go/README.md`
 - `docs/exec-plans/active/20261109-0300-cross-platform-cdp-web-input.md`
 - `docs/ARCHITECTURE.md`
@@ -54,3 +61,5 @@ CDP 与操作系统无关，把它写在 Windows 的 PowerShell 里意味着 mac
 - 同一协议驱动上游 WinForms fixture（`protocol/fixtures/windows-actions.ps1`）七动作序列 11/11：
   `clicks=3 wheels=1 keys=1 drags=12`，非 Chromium 应用的路径未受影响。
 - Linux：`GOOS=linux go build ./...` 通过；真实桌面验证留给 CI（4 个 Linux 场景）。
+- macOS：Swift 侧只能由 CI（`SDK and native (macos-26)`：`swift test` + 打包）编译验证，本机无 Swift
+  工具链；单测覆盖与 Go 相同的向量（命令行/`DevToolsActivePort` 解析、target 选择、键表、禁用开关）。

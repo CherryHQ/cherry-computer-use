@@ -1,6 +1,6 @@
 # 跨平台 CDP 通道：Chromium / Electron 页面输入
 
-状态：Active（v1 已在 Windows 与 Linux 落地，macOS 待接）
+状态：Active（v1 已在 Windows、Linux、macOS 落地）
 
 ## 为什么放在共享层
 
@@ -23,9 +23,10 @@ apps/OpenComputerUseWindows/sdk_webinput.go   # driver 适配（pid + 窗口标�
 apps/OpenComputerUseLinux/sdk_webinput.go     # 同一适配，走 /proc
 ```
 
-macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`）。它需要的契约与本包一致，
-但当前没有 Go↔Swift 桥：要么按同一套命令补一份 Swift 实现，要么后续把本包编译成 helper。
-在那之前 macOS 继续走 AX，功能不受影响。
+macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`），没有 Go↔Swift 桥，因此按同一契约
+补了一份 Swift 实现 `WebCDPInput.swift`（同样是发现 → 选 target → `Input.insertText` /
+`Input.dispatchKeyEvent`，写后回读校验，失败返回 false 交给 AX）。Go 与 Swift 两侧的解析/键表
+用同一组测试向量（见各自单测），避免行为漂移。
 
 ## v1 行为
 
@@ -44,19 +45,20 @@ macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`）。它�
 
 ## 未完成 / 下一步
 
-1. macOS：按同一契约补 Swift 侧 CDP 客户端（或把 `webcdp` 编成 helper），复用同一套测试向量。
-2. 页面级坐标点击/拖拽：需要把窗口 client 坐标换算到视口 CSS 坐标（`Page.getLayoutMetrics` +
+1. 页面级坐标点击/拖拽：需要把窗口 client 坐标换算到视口 CSS 坐标（`Page.getLayoutMetrics` +
    窗口/视口差值），标定完成前继续用 UIA/AT-SPI 命中测试。
-3. `observe`：`Accessibility.getFullAXTree` + `DOM.getDocument` 生成元素树（引用用
+2. `observe`：`Accessibility.getFullAXTree` + `DOM.getDocument` 生成元素树（引用用
    `backendDOMNodeId`），截图用 `Page.captureScreenshot`（不受遮挡/最小化影响）。
-4. 多窗口 / OOPIF：`Target.getTargets`、`Target.setAutoAttach`、`Browser.getWindowForTarget`。
-5. 可重复 smoke：CI 里启动带调试开关的 Chromium + 固定页面，跑
+3. 多窗口 / OOPIF：`Target.getTargets`、`Target.setAutoAttach`、`Browser.getWindowForTarget`。
+4. 可重复 smoke：CI 里启动带调试开关的 Chromium + 固定页面，跑
    `typeText`/`pressKey`/断言页面值；本 PR 只有手工验证记录。
-6. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
+5. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
 
 ## 决策记录
 
 - 2026-11-09：CDP 实现放共享 Go 包，不放平台 bridge；平台只提供 `(pid, 窗口标题)`。
 - 2026-11-09：只在应用已经暴露 CDP 时启用，不替用户决定重启（会丢现场）。
 - 2026-11-09：`typeText` 写后回读页面值，写不进去就回退，不返回假成功。
-- 2026-11-09：WebSocket 用标准库手写，`packages/runtime-go` 保持零第三方依赖。
+- 2026-11-09：WebSocket 用标准库手写，`packages/runtime-go` 保持零第三方依赖；
+  Swift 侧用 `URLSessionWebSocketTask`，不引入第三方包。
+- 2026-11-09：macOS 用 Swift 镜像同一契约（不把 Go 包塞进 .app bundle，保持签名与权限身份不变）。
