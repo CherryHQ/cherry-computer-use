@@ -22,7 +22,7 @@ import (
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display/x11"
 )
 
-var version = "0.1.9"
+var version = "0.1.10"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 
