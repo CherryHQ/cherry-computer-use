@@ -18,8 +18,10 @@ Add-Type -AssemblyName System.Drawing
 
 Add-Type -ReferencedAssemblies UIAutomationClient -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Automation;
 
 public static class OCUWin32 {
@@ -59,6 +61,231 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder name, int count);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    // Process.MainWindowHandle reports one window per process and flips between the windows of a
+    // shared host (ApplicationFrameHost owns every UWP frame). Enumerate the real top-level windows.
+    public static long[] TopLevelWindows(uint processId) {
+        var found = new List<long>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            uint owner;
+            GetWindowThreadProcessId(hWnd, out owner);
+            if (owner == processId && IsWindowVisible(hWnd)) { found.Add(hWnd.ToInt64()); }
+            return true;
+        }, IntPtr.Zero);
+        return found.ToArray();
+    }
+
+    public static long[] AllTopLevelWindows() {
+        var found = new List<long>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            if (IsWindowVisible(hWnd)) { found.Add(hWnd.ToInt64()); }
+            return true;
+        }, IntPtr.Zero);
+        return found.ToArray();
+    }
+
+    public static string ClassNameOf(IntPtr hWnd) {
+        var name = new StringBuilder(256);
+        return GetClassName(hWnd, name, name.Capacity) > 0 ? name.ToString() : "";
+    }
+
+    public static string WindowTextOf(IntPtr hWnd) {
+        var text = new StringBuilder(1024);
+        return GetWindowText(hWnd, text, text.Capacity) > 0 ? text.ToString() : "";
+    }
+
+    public static uint OwnerProcessOf(IntPtr hWnd) {
+        uint processId;
+        GetWindowThreadProcessId(hWnd, out processId);
+        return processId;
+    }
+
+    public static bool IsAlive(IntPtr hWnd) { return hWnd != IntPtr.Zero && IsWindow(hWnd); }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
+
+    // The frame window of a hosted app (UWP ApplicationFrameWindow, Chromium widget) never sees keyboard
+    // or mouse messages; the hosted input window does.
+    public static IntPtr FindChildByClass(IntPtr parent, string[] classes) {
+        IntPtr found = IntPtr.Zero;
+        EnumChildWindows(parent, delegate(IntPtr hWnd, IntPtr lParam) {
+            string name = ClassNameOf(hWnd);
+            for (int i = 0; i < classes.Length; i++) {
+                if (name == classes[i]) { found = hWnd; return false; }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GuiThreadInfo {
+        public int size;
+        public uint flags;
+        public IntPtr active;
+        public IntPtr focus;
+        public IntPtr capture;
+        public IntPtr menuOwner;
+        public IntPtr moveSize;
+        public IntPtr caret;
+        public RECT caretRectangle;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr RealChildWindowFromPoint(IntPtr parent, POINT point);
+
+    // Hit-test inside the target's own window tree: unlike WindowFromPoint it ignores occlusion, so a
+    // covered background window still routes posted input to the child control under the point.
+    public static IntPtr DeepestChildAt(IntPtr parent, int screenX, int screenY) {
+        IntPtr current = parent;
+        for (int depth = 0; depth < 6; depth++) {
+            var point = new POINT();
+            point.X = screenX;
+            point.Y = screenY;
+            if (!ScreenToClient(current, ref point)) { break; }
+            IntPtr child = RealChildWindowFromPoint(current, point);
+            if (child == IntPtr.Zero || child == current) { break; }
+            current = child;
+        }
+        return current;
+    }
+
+    // Classic apps route keyboard input to the focused child control, not to the top-level window.
+    public static IntPtr FocusedWindowOf(IntPtr hWnd) {
+        uint owner;
+        uint threadId = GetWindowThreadProcessId(hWnd, out owner);
+        var info = new GuiThreadInfo();
+        info.size = Marshal.SizeOf(typeof(GuiThreadInfo));
+        try {
+            if (GetGUIThreadInfo(threadId, ref info) && info.focus != IntPtr.Zero) { return info.focus; }
+        } catch {
+        }
+        return IntPtr.Zero;
+    }
+
+    public static IntPtr WindowAtPoint(int x, int y) {
+        var point = new POINT();
+        point.X = x;
+        point.Y = y;
+        return WindowFromPoint(point);
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    public struct KeyInput {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public ushort virtualKey;
+        [FieldOffset(10)] public ushort scanCode;
+        [FieldOffset(12)] public uint flags;
+        [FieldOffset(16)] public uint time;
+        [FieldOffset(24)] public IntPtr extraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    public struct PointerInput {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public int dx;
+        [FieldOffset(12)] public int dy;
+        [FieldOffset(16)] public uint mouseData;
+        [FieldOffset(20)] public uint flags;
+        [FieldOffset(24)] public uint time;
+        [FieldOffset(32)] public IntPtr extraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint count, KeyInput[] inputs, int size);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint count, PointerInput[] inputs, int size);
+
+    const uint KEY_UP = 0x0002;
+    const uint MOUSE_MOVE = 0x0001;
+    const uint MOUSE_LEFT_DOWN = 0x0002;
+    const uint MOUSE_LEFT_UP = 0x0004;
+    const uint MOUSE_RIGHT_DOWN = 0x0008;
+    const uint MOUSE_RIGHT_UP = 0x0010;
+    const uint MOUSE_MIDDLE_DOWN = 0x0020;
+    const uint MOUSE_MIDDLE_UP = 0x0040;
+    const uint MOUSE_ABSOLUTE = 0x8000;
+
+    // Real keyboard input: the only way to deliver modifier and navigation keys to hosted apps.
+    public static bool SendKeyChord(ushort virtualKey, bool shift, bool control, bool alt) {
+        var inputs = new List<KeyInput>();
+        if (control) { inputs.Add(KeyEvent(0x11, false)); }
+        if (shift) { inputs.Add(KeyEvent(0x10, false)); }
+        if (alt) { inputs.Add(KeyEvent(0x12, false)); }
+        inputs.Add(KeyEvent(virtualKey, false));
+        inputs.Add(KeyEvent(virtualKey, true));
+        if (alt) { inputs.Add(KeyEvent(0x12, true)); }
+        if (shift) { inputs.Add(KeyEvent(0x10, true)); }
+        if (control) { inputs.Add(KeyEvent(0x11, true)); }
+        return SendInput((uint)inputs.Count, inputs.ToArray(), 40) == (uint)inputs.Count;
+    }
+
+    static KeyInput KeyEvent(ushort virtualKey, bool up) {
+        var input = new KeyInput();
+        input.type = 1;
+        input.virtualKey = virtualKey;
+        if (up) { input.flags = KEY_UP; }
+        return input;
+    }
+
+    public static bool SendPointerClick(int screenX, int screenY, string button, int count) {
+        int width = GetSystemMetrics(0);
+        int height = GetSystemMetrics(1);
+        if (width < 2 || height < 2) { return false; }
+        var move = new PointerInput();
+        move.type = 0;
+        move.dx = (int)Math.Round(screenX * 65535.0 / (width - 1));
+        move.dy = (int)Math.Round(screenY * 65535.0 / (height - 1));
+        move.flags = MOUSE_MOVE | MOUSE_ABSOLUTE;
+        uint downFlag = MOUSE_LEFT_DOWN, upFlag = MOUSE_LEFT_UP;
+        if (button == "right") { downFlag = MOUSE_RIGHT_DOWN; upFlag = MOUSE_RIGHT_UP; }
+        else if (button == "middle") { downFlag = MOUSE_MIDDLE_DOWN; upFlag = MOUSE_MIDDLE_UP; }
+        var events = new List<PointerInput>();
+        events.Add(move);
+        int repeat = Math.Max(1, count);
+        for (int i = 0; i < repeat; i++) {
+            var down = new PointerInput(); down.type = 0; down.flags = downFlag; events.Add(down);
+            var up = new PointerInput(); up.type = 0; up.flags = upFlag; events.Add(up);
+        }
+        return SendInput((uint)events.Count, events.ToArray(), 40) == (uint)events.Count;
+    }
 }
 "@
 
@@ -151,11 +378,163 @@ function Assert-OperationActive {
     }
 }
 
+# ApplicationFrameHost hosts the frame window of every UWP app and Chromium-based apps host their
+# content in a render widget child. Messages posted to the frame window are discarded, so messages
+# have to be posted to the window that actually owns the keyboard/mouse input queue.
+function Get-InputWindowHandle([IntPtr]$hwnd) {
+    if ($hwnd -eq [IntPtr]::Zero) {
+        return $hwnd
+    }
+    $class = [OCUWin32]::ClassNameOf($hwnd)
+    if ($class -eq 'ApplicationFrameWindow') {
+        $child = [OCUWin32]::FindChildByClass($hwnd, @('Windows.UI.Core.CoreWindow', 'ApplicationFrameInputSinkWindow'))
+        if ($child -ne [IntPtr]::Zero) {
+            return $child
+        }
+    } elseif ($class -like 'Chrome_WidgetWin*') {
+        $child = [OCUWin32]::FindChildByClass($hwnd, @('Chrome_RenderWidgetHostHWND'))
+        if ($child -ne [IntPtr]::Zero) {
+            return $child
+        }
+    }
+    return $hwnd
+}
+
+# Deepest child control of the target under a screen point (occlusion-independent), so posted mouse
+# messages reach the same control a real click would hit.
+function Get-InputTargetUnderPoint([IntPtr]$hwnd, [int]$screenX, [int]$screenY) {
+    $child = [OCUWin32]::DeepestChildAt($hwnd, $screenX, $screenY)
+    if ($child -eq [IntPtr]::Zero -or [OCUWin32]::OwnerProcessOf($child) -ne [OCUWin32]::OwnerProcessOf($hwnd)) {
+        return $hwnd
+    }
+    return $child
+}
+
+# Where keyboard messages have to be posted so the application actually sees them.
+function Get-KeyDeliveryWindow([IntPtr]$hwnd) {
+    $inputWindow = Get-InputWindowHandle $hwnd
+    if ($inputWindow -ne $hwnd) {
+        return $inputWindow
+    }
+    $focused = [OCUWin32]::FocusedWindowOf($hwnd)
+    if ($focused -ne [IntPtr]::Zero -and [OCUWin32]::OwnerProcessOf($focused) -eq [OCUWin32]::OwnerProcessOf($hwnd)) {
+        return $focused
+    }
+    return $hwnd
+}
+
+function Test-WindowForeground([IntPtr]$hwnd) {
+    $foreground = [OCUWin32]::GetForegroundWindow()
+    if ($foreground -eq [IntPtr]::Zero -or $hwnd -eq [IntPtr]::Zero) {
+        return $false
+    }
+    if ($foreground -eq $hwnd) {
+        return $true
+    }
+    return ([OCUWin32]::GetAncestor($foreground, 2) -eq [OCUWin32]::GetAncestor($hwnd, 2))
+}
+
+# Hosted content (UWP/Chromium) never receives posted mouse messages, and real pointer input needs the
+# target to own the pointer. Hit-test through UI Automation and use the element's own pattern instead: that is
+# what the click means semantically, and it works in the background.
+# The smallest element of the target's own tree that contains the point. Unlike
+# AutomationElement.FromPoint this ignores which window is on top, so it also works for covered windows.
+function Get-ElementAtScreenPoint([IntPtr]$hwnd, [int]$x, [int]$y) {
+    try {
+        $root = Get-MainElement $null $hwnd
+        $all = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+        $best = $null
+        $bestArea = [double]::MaxValue
+        $limit = [math]::Min($all.Count, 2000)
+        for ($i = 0; $i -lt $limit; $i++) {
+            $element = $all.Item($i)
+            try {
+                $rect = $element.Current.BoundingRectangle
+                if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
+                if ($x -lt $rect.X -or $x -gt ($rect.X + $rect.Width) -or $y -lt $rect.Y -or $y -gt ($rect.Y + $rect.Height)) { continue }
+                $area = $rect.Width * $rect.Height
+                if ($area -lt $bestArea) {
+                    $best = $element
+                    $bestArea = $area
+                }
+            } catch {
+            }
+        }
+        return $best
+    } catch {
+        return $null
+    }
+}
+
+function Get-ElementParent($element) {
+    try {
+        return [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($element)
+    } catch {
+        return $null
+    }
+}
+
+function Send-SemanticClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [int]$depth = 2) {
+    $element = Get-ElementAtScreenPoint $hwnd $screenX $screenY
+    if ($null -eq $element) {
+        return $false
+    }
+    $hostPids = @([OCUWin32]::OwnerProcessOf($hwnd), 0)
+    $hosted = Get-WindowHostedProcessId $hwnd ([int][OCUWin32]::OwnerProcessOf($hwnd))
+    if ($hosted -gt 0) {
+        $hostPids += $hosted
+    }
+    if ([int]$element.Current.ProcessId -notin $hostPids) {
+        return $false
+    }
+    $node = $element
+    for ($level = 0; $level -le $depth -and $null -ne $node; $level++) {
+        $processId = [int]$node.Current.ProcessId
+        if ($processId -notin $hostPids) {
+            break
+        }
+        if (Invoke-PreferredClick $node) {
+            return $true
+        }
+        $node = Get-ElementParent $node
+    }
+    return $false
+}
+
+function Get-ScrollableAncestor($element, [int]$depth = 8) {
+    $node = $element
+    for ($level = 0; $level -le $depth -and $null -ne $node; $level++) {
+        $pattern = Get-CurrentPatternOrNull $node ([Windows.Automation.ScrollPattern]::Pattern)
+        if ($null -ne $pattern) {
+            return $node
+        }
+        $node = Get-ElementParent $node
+    }
+    return $null
+}
+
 function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
+    $inputWindow = Get-InputWindowHandle $hwnd
+    # Real pointer input is exact, but it needs the target to own the pointer; posted mouse messages are
+    # ignored by many toolkits (UWP, WinForms, Chromium), so the element action under the point is the
+    # reliable background path and posted messages stay the last resort for classic windows.
+    if ((Test-WindowForeground $hwnd) -and [OCUWin32]::SendPointerClick($screenX, $screenY, $button, $count)) {
+        return
+    }
+    if ($button -ne 'right' -and $button -ne 'middle' -and (Send-SemanticClick $hwnd $screenX $screenY)) {
+        return
+    }
+    if ($inputWindow -ne $hwnd) {
+        $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+        throw "Coordinate clicks cannot be delivered to this hosted application while it is in the background; click the element instead, or bring the window to the foreground and retry"
+    }
+    # Posted mouse messages are delivered to the window they are posted to; a real click goes to the
+    # child control under the pointer, which is what classic apps hit-test against.
+    $clickWindow = Get-InputTargetUnderPoint $hwnd $screenX $screenY
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
     $point.Y = $screenY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$point)
+    [void][OCUWin32]::ScreenToClient($clickWindow, [ref]$point)
     $lParam = ConvertTo-LParam $point.X $point.Y
 
     $down = $WM_LBUTTONDOWN
@@ -174,41 +553,47 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
     $repeat = [math]::Max(1, $count)
     for ($i = 0; $i -lt $repeat; $i++) {
         Assert-OperationActive
-        [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
+        [void][OCUWin32]::PostMessage($clickWindow, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
         try {
-            [void][OCUWin32]::PostMessage($hwnd, $down, [IntPtr]$downFlag, $lParam)
+            [void][OCUWin32]::PostMessage($clickWindow, $down, [IntPtr]$downFlag, $lParam)
             Start-Sleep -Milliseconds 35
-        } finally { [void][OCUWin32]::PostMessage($hwnd, $up, [IntPtr]::Zero, $lParam) }
+        } finally { [void][OCUWin32]::PostMessage($clickWindow, $up, [IntPtr]::Zero, $lParam) }
         Start-Sleep -Milliseconds 50
     }
 }
 
 function Send-Drag([IntPtr]$hwnd, [int]$fromX, [int]$fromY, [int]$toX, [int]$toY) {
+    $inputWindow = Get-InputWindowHandle $hwnd
+    if ($inputWindow -ne $hwnd) {
+        $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+        throw "Dragging cannot be delivered to this hosted application while it is in the background; bring the window to the foreground and retry"
+    }
+    $dragWindow = Get-InputTargetUnderPoint $hwnd $fromX $fromY
     $start = New-Object OCUWin32+POINT
     $start.X = $fromX
     $start.Y = $fromY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$start)
+    [void][OCUWin32]::ScreenToClient($dragWindow, [ref]$start)
     $end = New-Object OCUWin32+POINT
     $end.X = $toX
     $end.Y = $toY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$end)
+    [void][OCUWin32]::ScreenToClient($dragWindow, [ref]$end)
 
     $steps = 12
     $startParam = ConvertTo-LParam $start.X $start.Y
-    [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $startParam)
+    [void][OCUWin32]::PostMessage($dragWindow, $WM_MOUSEMOVE, [IntPtr]::Zero, $startParam)
     Assert-OperationActive
     $lastParam = $startParam
     try {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONDOWN, [IntPtr]1, $startParam)
+        [void][OCUWin32]::PostMessage($dragWindow, $WM_LBUTTONDOWN, [IntPtr]1, $startParam)
         for ($i = 1; $i -le $steps; $i++) {
             Assert-OperationActive
             $x = [int][math]::Round($start.X + (($end.X - $start.X) * $i / $steps))
             $y = [int][math]::Round($start.Y + (($end.Y - $start.Y) * $i / $steps))
             $lastParam = ConvertTo-LParam $x $y
-            [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]1, $lastParam)
+            [void][OCUWin32]::PostMessage($dragWindow, $WM_MOUSEMOVE, [IntPtr]1, $lastParam)
             Start-Sleep -Milliseconds 20
         }
-    } finally { [void][OCUWin32]::PostMessage($hwnd, $WM_LBUTTONUP, [IntPtr]::Zero, $lastParam) }
+    } finally { [void][OCUWin32]::PostMessage($dragWindow, $WM_LBUTTONUP, [IntPtr]::Zero, $lastParam) }
 }
 
 function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direction, [double]$pages) {
@@ -225,13 +610,19 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
     if ($direction -eq "left" -or $direction -eq "right") {
         $message = $WM_MOUSEHWHEEL
     }
-    [void][OCUWin32]::PostMessage($hwnd, $message, (ConvertTo-WheelWParam $delta), $lParam)
+    $wheelWindow = Get-InputTargetUnderPoint $hwnd $screenX $screenY
+    [void][OCUWin32]::PostMessage($wheelWindow, $message, (ConvertTo-WheelWParam $delta), $lParam)
 }
 
 function Send-Text([IntPtr]$hwnd, [string]$text) {
+    $target = Get-KeyDeliveryWindow $hwnd
     foreach ($char in $text.ToCharArray()) {
         Assert-OperationActive
-        [void][OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        if ($char -eq "`r" -or $char -eq "`n") {
+            Send-Key $hwnd 'Return'
+            continue
+        }
+        [void][OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 8
     }
 }
@@ -267,6 +658,7 @@ function Get-VirtualKey([string]$key) {
         "backspace" = 0x08; "back_space" = 0x08; "delete" = 0x2E; "space" = 0x20
         "left" = 0x25; "up" = 0x26; "right" = 0x27; "down" = 0x28
         "home" = 0x24; "end" = 0x23; "page_up" = 0x21; "prior" = 0x21; "page_down" = 0x22; "next" = 0x22
+        "insert" = 0x2D; "printscreen" = 0x2C
     }
     if ($map.ContainsKey($normalized)) {
         return $map[$normalized]
@@ -282,38 +674,101 @@ function Get-VirtualKey([string]$key) {
         if (($code -ge 0x30 -and $code -le 0x39) -or ($code -ge 0x41 -and $code -le 0x5A)) {
             return $code
         }
+        $symbols = @{
+            ' ' = 0x20; ';' = 0xBA; '=' = 0xBB; ',' = 0xBC; '-' = 0xBD; '.' = 0xBE; '/' = 0xBF; '`' = 0xC0
+            '[' = 0xDB; '\' = 0xDC; ']' = 0xDD; "'" = 0xDE; "+" = 0xBB; "*" = 0x38; "%" = 0x35; "(" = 0x39
+            ")" = 0x30; "!" = 0x31; "@" = 0x32; "#" = 0x33; "$" = 0x34; "^" = 0x36; "&" = 0x37
+            "_" = 0xBD; ":" = 0xBA; '"' = 0xDE; "<" = 0xBC; ">" = 0xBE; "?" = 0xBF; "{" = 0xDB; "}" = 0xDD
+            "|" = 0xDC; "~" = 0xC0
+        }
+        if ($symbols.ContainsKey($normalized)) {
+            return $symbols[$normalized]
+        }
     }
     throw "Unsupported key: $key"
 }
 
-function Send-Key([IntPtr]$hwnd, [string]$key) {
-    $parts = $key -split "\+"
-    $main = $parts[$parts.Length - 1]
-    $modifiers = @()
-    for ($i = 0; $i -lt $parts.Length - 1; $i++) {
-        switch ($parts[$i].ToLowerInvariant()) {
-            "ctrl" { $modifiers += 0x11 }
-            "control" { $modifiers += 0x11 }
-            "shift" { $modifiers += 0x10 }
-            "alt" { $modifiers += 0x12 }
-            "super" { $modifiers += 0x5B }
-            "win" { $modifiers += 0x5B }
-            "cmd" { $modifiers += 0x5B }
+# Characters an application can receive as plain WM_CHAR input (no modifier state needed).
+function Test-CharacterKey([string]$key) {
+    if ($key.Length -ne 1) { return $false }
+    $code = [int][char]$key
+    return ($code -ge 0x20 -and $code -ne 0x7F)
+}
+
+# Splits 'ctrl+shift+s' into a main key and its modifiers. A bare '+' or a trailing '+' is the key
+# itself, so 'ctrl++' works too.
+function Split-KeyChord([string]$key) {
+    $chord = @{ main = $key; shift = $false; control = $false; alt = $false; super = $false }
+    while ($true) {
+        $match = [regex]::Match($chord.main, '^(ctrl|control|shift|alt|super|win|cmd)\+(?<rest>.+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $match.Success) { break }
+        switch ($match.Groups[1].Value.ToLowerInvariant()) {
+            "ctrl" { $chord.control = $true }
+            "control" { $chord.control = $true }
+            "shift" { $chord.shift = $true }
+            "alt" { $chord.alt = $true }
+            "super" { $chord.super = $true }
+            "win" { $chord.super = $true }
+            "cmd" { $chord.super = $true }
         }
+        $chord.main = $match.Groups['rest'].Value
+    }
+    return $chord
+}
+
+function Test-KeySupported([string]$key) {
+    $chord = Split-KeyChord $key
+    if ((Test-CharacterKey $chord.main) -and -not $chord.control -and -not $chord.alt -and -not $chord.super) {
+        return
+    }
+    $null = Get-VirtualKey $chord.main
+}
+
+# Keys that need modifier state, navigation semantics or a real input queue.
+function Send-Key([IntPtr]$hwnd, [string]$key) {
+    $chord = Split-KeyChord $key
+    $main = $chord.main
+    $shift = $chord.shift
+    $control = $chord.control
+    $alt = $chord.alt
+    $super = $chord.super
+    Assert-OperationActive
+    $target = Get-KeyDeliveryWindow $hwnd
+    if (-not $control -and -not $alt -and -not $super -and (Test-CharacterKey $main)) {
+        # Plain characters reach hosted apps as character input; this is also what fixes '+' '*'
+        # '=' and friends, which previously had no virtual-key mapping at all.
+        $char = if ($shift) { $main.ToUpperInvariant() } else { $main }
+        [void][OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 20
+        return
     }
     $vk = Get-VirtualKey $main
-    Assert-OperationActive
+    if (Test-WindowForeground $hwnd) {
+        if ([OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
+            return
+        }
+    }
+    if ($target -ne $hwnd) {
+        $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+        throw "Key '$key' cannot be delivered to this hosted application in the background; bring the window to the foreground and retry, or use an element action instead"
+    }
+    $modifiers = @()
+    if ($control) { $modifiers += 0x11 }
+    if ($shift) { $modifiers += 0x10 }
+    if ($alt) { $modifiers += 0x12 }
+    if ($super) { $modifiers += 0x5B }
+    $keyWindow = Get-KeyDeliveryWindow $hwnd
     try {
         foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
+            [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
         }
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
+        [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 25
     } finally {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
+        [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
         [array]::Reverse($modifiers)
         foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+            [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
         }
     }
 }
@@ -360,9 +815,70 @@ function Resolve-App([string]$query) {
     throw "appNotFound(`"$query`")"
 }
 
-function Get-MainElement($process) {
-    if ($process.MainWindowHandle -ne 0) {
-        return [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
+function Get-ProcessWindows([int]$processId) {
+    return @([OCUWin32]::TopLevelWindows([uint32]$processId) | ForEach-Object { [IntPtr]$_ })
+}
+
+function Get-WindowHostedProcessId([IntPtr]$hwnd, [int]$hostProcessId) {
+    if ([OCUWin32]::ClassNameOf($hwnd) -ne 'ApplicationFrameWindow') {
+        return [int]$hostProcessId
+    }
+    try {
+        $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
+        $condition = New-Object Windows.Automation.NotCondition (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), $hostProcessId)
+        $child = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($null -ne $child) {
+            return [int]$child.Current.ProcessId
+        }
+    } catch {
+    }
+    return 0
+}
+
+function Get-WindowAppIdentity([IntPtr]$hwnd, [int]$hostProcessId) {
+    $identityPid = Get-WindowHostedProcessId $hwnd $hostProcessId
+    if ($identityPid -le 0) {
+        $identityPid = $hostProcessId
+    }
+    return [SDKApplicationIdentity]::ForProcess($identityPid)
+}
+
+# A window handle is the identity of a hosted application: ApplicationFrameHost owns the frame
+# windows of every running UWP app, so Process.MainWindowHandle flips between them and cannot
+# tell Calculator from Settings.
+function Resolve-AppWindowHandle($process, [string]$identity, [long]$preferred = 0) {
+    if ($preferred -ne 0) {
+        $handle = [IntPtr][long]$preferred
+        if ([OCUWin32]::IsAlive($handle) -and [OCUWin32]::OwnerProcessOf($handle) -eq [uint32]$process.Id) {
+            return $handle
+        }
+    }
+    $candidates = @(Get-ProcessWindows ([int]$process.Id))
+    if ($candidates.Count -eq 0) {
+        return [IntPtr][long]$process.MainWindowHandle
+    }
+    $frameWindows = @($candidates | Where-Object { [OCUWin32]::ClassNameOf($_) -eq 'ApplicationFrameWindow' })
+    $pool = if ($frameWindows.Count -gt 0) { $frameWindows } else { $candidates }
+    if (-not [string]::IsNullOrEmpty($identity)) {
+        foreach ($handle in $pool) {
+            if ((Get-WindowAppIdentity $handle ([int]$process.Id)) -ceq $identity) {
+                return $handle
+            }
+        }
+    }
+    foreach ($handle in $pool) {
+        if ([OCUWin32]::WindowTextOf($handle) -ceq $process.MainWindowTitle) {
+            return $handle
+        }
+    }
+    return $pool[0]
+}
+
+function Get-MainElement($process, [long]$windowHandle = 0) {
+    if ($windowHandle -eq 0 -and $null -ne $script:TargetHwnd) { $windowHandle = [long]$script:TargetHwnd }
+    $hwnd = if ($windowHandle -ne 0) { [IntPtr][long]$windowHandle } else { [IntPtr][long]$process.MainWindowHandle }
+    if ($hwnd -ne [IntPtr]::Zero -and [OCUWin32]::IsAlive($hwnd)) {
+        return [Windows.Automation.AutomationElement]::FromHandle($hwnd)
     }
     $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), $process.Id
     $children = [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, $condition)
@@ -372,8 +888,9 @@ function Get-MainElement($process) {
     throw "No top-level UI Automation window is available for $($process.ProcessName). Run the Windows runtime in the signed-in desktop session."
 }
 
-function Get-WindowBounds($process, $element) {
-    $hwnd = [IntPtr]$process.MainWindowHandle
+function Get-WindowBounds($process, $element, [long]$windowHandle = 0) {
+    if ($windowHandle -eq 0 -and $null -ne $script:TargetHwnd) { $windowHandle = [long]$script:TargetHwnd }
+    $hwnd = if ($windowHandle -ne 0) { [IntPtr][long]$windowHandle } else { [IntPtr][long]$process.MainWindowHandle }
     if ($hwnd -ne [IntPtr]::Zero) {
         $fromWin32 = Get-WindowRectFrame $hwnd
         if ($null -ne $fromWin32) {
@@ -812,10 +1329,20 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
     elseif ($direction -eq "down") { $vertical = [Windows.Automation.ScrollAmount]::LargeIncrement }
     elseif ($direction -eq "left") { $horizontal = [Windows.Automation.ScrollAmount]::LargeDecrement }
     elseif ($direction -eq "right") { $horizontal = [Windows.Automation.ScrollAmount]::LargeIncrement }
+    # A scroll pattern that currently has nothing to scroll is a no-op for a real wheel too, not a failure.
+    try {
+        if ($vertical -ne [Windows.Automation.ScrollAmount]::NoAmount -and -not $scroll.Current.VerticallyScrollable) { return $true }
+        if ($horizontal -ne [Windows.Automation.ScrollAmount]::NoAmount -and -not $scroll.Current.HorizontallyScrollable) { return $true }
+    } catch {
+    }
     $repeat = [math]::Max(1, [int][math]::Ceiling($pages))
     for ($i = 0; $i -lt $repeat; $i++) {
         Assert-OperationActive
-        $scroll.Scroll($horizontal, $vertical)
+        try {
+            $scroll.Scroll($horizontal, $vertical)
+        } catch {
+            return $false
+        }
         Start-Sleep -Milliseconds 40
     }
     return $true
@@ -917,8 +1444,19 @@ function Invoke-TypeText($process, [string]$text, [bool]$AllowFocusFallback = $t
     if ($null -ne $element) {
         $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
         if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            if (-not $AllowFocusFallback -or -not (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK")) {
-                throw "UIA ValuePattern text fallback is disabled by default because it may bring the target app to the foreground; set OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1 to enable it."
+            # Writing into the element that already owns the caret does not move focus, so it stays
+            # enabled without opting in. Reaching an unfocused control can still activate the app,
+            # so that path keeps requiring OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1.
+            $alreadyFocused = $false
+            try {
+                $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                $alreadyFocused = $null -ne $focused -and $focused.Equals($element)
+            } catch {
+            }
+            if (-not $alreadyFocused) {
+                if (-not $AllowFocusFallback -or -not (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK")) {
+                    throw "UIA ValuePattern text fallback is disabled by default because it may bring the target app to the foreground; set OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1 to enable it."
+                }
             }
             $current = ""
             try { $current = [string]$valuePattern.Current.Value } catch {}
@@ -930,7 +1468,7 @@ function Invoke-TypeText($process, [string]$text, [bool]$AllowFocusFallback = $t
 }
 
 function Invoke-Operation($process, $operation, $element) {
-    $hwnd = [IntPtr]$process.MainWindowHandle
+    $hwnd = if ($null -ne $operation.windowHandle -and [long]$operation.windowHandle -ne 0) { [IntPtr][long]$operation.windowHandle } else { [IntPtr][long]$process.MainWindowHandle }
     $windowBounds = $operation.windowBounds
     switch ($operation.tool) {
         "click" {
@@ -962,7 +1500,10 @@ function Invoke-Operation($process, $operation, $element) {
             } elseif ($clickMethod -eq "auto") {
                 $handled = $false
                 if ($null -ne $element -and $operation.mouse_button -ne "right" -and $operation.mouse_button -ne "middle") {
-                    $handled = $operation.click_count -eq 1 -and (Invoke-PreferredClick $element)
+                    # A double click is a semantic activation for hosted content: invoking twice would toggle or
+                    # repeat the control's action instead of activating it.
+                    $hostedContent = (Get-InputWindowHandle $hwnd) -ne $hwnd
+                    $handled = ($operation.click_count -eq 1 -or $hostedContent) -and (Invoke-PreferredClick $element)
                 }
                 if (-not $handled) {
                     if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
@@ -987,8 +1528,18 @@ function Invoke-Operation($process, $operation, $element) {
             $handled = $false
             if ($null -ne $element) {
                 $handled = Invoke-Scroll $element $operation.direction ([double]$operation.pages)
+                if (-not $handled) {
+                    $scrollable = Get-ScrollableAncestor $element
+                    if ($null -ne $scrollable) {
+                        $handled = Invoke-Scroll $scrollable $operation.direction ([double]$operation.pages)
+                    }
+                }
             }
             if (-not $handled) {
+                if ((Get-InputWindowHandle $hwnd) -ne $hwnd) {
+                    $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                    throw "Scrolling cannot be delivered to this hosted application while it is in the background and the target exposes no ScrollPattern; observe a scrollable element or bring the window to the foreground"
+                }
                 $frame = if ($null -ne $operation.element) { $operation.element.frame } else { New-Frame 0 0 $windowBounds.width $windowBounds.height }
                 $point = Get-ScreenPoint $frame $windowBounds
                 Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)

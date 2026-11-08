@@ -1,5 +1,11 @@
 # 功能发布记录
 
+## 2026-11
+
+| 日期 | 功能域 | 用户价值 | 变更摘要 |
+| --- | --- | --- | --- |
+| 2026-11-09 | Windows 宿主应用输入与窗口识别 | Windows 上的 UWP/WinUI（计算器、设置）与 Chromium/Electron 应用现在可以真正接收文字输入、按键与坐标点击；同一进程里的多个 UWP 窗口不再互相顶掉目标。 | Windows bridge 把输入投递到真实输入窗口（`Windows.UI.Core.CoreWindow` / `Chrome_RenderWidgetHostHWND`），字符统一走 `WM_CHAR`，需要修饰键的按键与指针操作在前台走 `SendInput`，后台无法投递时返回 `UNSUPPORTED_CAPABILITY`；窗口身份改为 HWND（`EnumWindows` + 宿主 AUMID），`apps` 按窗口枚举。 |
+
 ## 2026-09
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
