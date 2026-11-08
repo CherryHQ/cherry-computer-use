@@ -16,7 +16,7 @@
 - **[字符输入]**: 可打印字符统一走 `WM_CHAR` 到输入窗口，`+ * = / % ( )` 等符号不再依赖虚拟键表；`type_text` 在计算器这类无文本控件的应用上从"静默无效果"变为真实输入。
 - **[按键语义]**: `SendInput` 补齐（x64 40 字节 `INPUT` 布局）：目标窗口已在前台时发送组合键、方向键、`Return`、`Backspace` 与真实指针点击；后台则返回 `UNSUPPORTED_CAPABILITY` 并说明替代方案，不再假成功。`Split-KeyChord` 重写，`+`、`ctrl++` 可表达。
 - **[后台点击]**: 坐标点击新增 UI Automation 命中测试（`Send-SemanticClick`）：在目标自己的树里取“包含该点且面积最小”的元素，再触发它自己的 pattern。该做法与遮挡无关，宿主内容与经典应用都适用；双击对宿主内容按“语义激活”处理一次，而不是重复调用两次。真实指针路径（前台 + `SendInput`）仍是首选，posted 消息降为经典窗口的最后兜底。
-- **[经典应用回归]**: posted 鼠标/滚轮改投到目标窗口内指针下的最深子窗口（`RealChildWindowFromPoint` 递归下探，遮挡无关），posted 键盘改投到目标进程的焦点窗口（`GetGUIThreadInfo`）。WinForms 等控件对 posted 鼠标消息常无反应，因此坐标点击优先走命中测试 + pattern。
+- **[经典应用不变]**: 经典 Win32 窗口继续使用原来的 posted 消息路径（顶层窗口），避免破坏在顶层 `WndProc` 计数的应用与既有 `protocol/windows-desktop.test.mjs` 契约；`SendInput`、命中测试只在宿主内容（UWP/Chromium）上使用。
 - **[滚动]**: `Invoke-Scroll` 先判断当前轴是否可滚（无可滚内容视为 no-op，与真实滚轮一致），自身无 `ScrollPattern` 时向可滚祖先回退；宿主内容且无处可滚时显式报错。
 - **[窗口身份]**: `EnumWindows` 枚举真实顶层窗口，UWP 按每个窗口的宿主 AUMID 匹配；校验改为 `IsWindow(hwnd)` + `GetWindowThreadProcessId(hwnd) == pid`，不再与 `Process.MainWindowHandle` 比较。`observe` / `act` / 截图 / `window.title` / `apps` 全部使用目标 hwnd；`apps` 按窗口枚举，UWP 用窗口标题作为名称；SDK `Target.Key` 带上 hwnd，计算器与设置成为两个独立 app。
 - **[错误分类]**: 元素不支持某动作时返回 `UNSUPPORTED_CAPABILITY`（原先把 `setValue` 到按钮报成 `STALE_SNAPSHOT`）；`cancelEvent` 缺失不再报 `INVALID_ARGUMENT`。

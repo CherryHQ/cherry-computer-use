@@ -148,64 +148,6 @@ public static class OCUWin32 {
         return found;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public struct GuiThreadInfo {
-        public int size;
-        public uint flags;
-        public IntPtr active;
-        public IntPtr focus;
-        public IntPtr capture;
-        public IntPtr menuOwner;
-        public IntPtr moveSize;
-        public IntPtr caret;
-        public RECT caretRectangle;
-    }
-
-    [DllImport("user32.dll")]
-    public static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr WindowFromPoint(POINT point);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr RealChildWindowFromPoint(IntPtr parent, POINT point);
-
-    // Hit-test inside the target's own window tree: unlike WindowFromPoint it ignores occlusion, so a
-    // covered background window still routes posted input to the child control under the point.
-    public static IntPtr DeepestChildAt(IntPtr parent, int screenX, int screenY) {
-        IntPtr current = parent;
-        for (int depth = 0; depth < 6; depth++) {
-            var point = new POINT();
-            point.X = screenX;
-            point.Y = screenY;
-            if (!ScreenToClient(current, ref point)) { break; }
-            IntPtr child = RealChildWindowFromPoint(current, point);
-            if (child == IntPtr.Zero || child == current) { break; }
-            current = child;
-        }
-        return current;
-    }
-
-    // Classic apps route keyboard input to the focused child control, not to the top-level window.
-    public static IntPtr FocusedWindowOf(IntPtr hWnd) {
-        uint owner;
-        uint threadId = GetWindowThreadProcessId(hWnd, out owner);
-        var info = new GuiThreadInfo();
-        info.size = Marshal.SizeOf(typeof(GuiThreadInfo));
-        try {
-            if (GetGUIThreadInfo(threadId, ref info) && info.focus != IntPtr.Zero) { return info.focus; }
-        } catch {
-        }
-        return IntPtr.Zero;
-    }
-
-    public static IntPtr WindowAtPoint(int x, int y) {
-        var point = new POINT();
-        point.X = x;
-        point.Y = y;
-        return WindowFromPoint(point);
-    }
-
     [StructLayout(LayoutKind.Explicit, Size = 40)]
     public struct KeyInput {
         [FieldOffset(0)] public uint type;
@@ -400,29 +342,6 @@ function Get-InputWindowHandle([IntPtr]$hwnd) {
     return $hwnd
 }
 
-# Deepest child control of the target under a screen point (occlusion-independent), so posted mouse
-# messages reach the same control a real click would hit.
-function Get-InputTargetUnderPoint([IntPtr]$hwnd, [int]$screenX, [int]$screenY) {
-    $child = [OCUWin32]::DeepestChildAt($hwnd, $screenX, $screenY)
-    if ($child -eq [IntPtr]::Zero -or [OCUWin32]::OwnerProcessOf($child) -ne [OCUWin32]::OwnerProcessOf($hwnd)) {
-        return $hwnd
-    }
-    return $child
-}
-
-# Where keyboard messages have to be posted so the application actually sees them.
-function Get-KeyDeliveryWindow([IntPtr]$hwnd) {
-    $inputWindow = Get-InputWindowHandle $hwnd
-    if ($inputWindow -ne $hwnd) {
-        return $inputWindow
-    }
-    $focused = [OCUWin32]::FocusedWindowOf($hwnd)
-    if ($focused -ne [IntPtr]::Zero -and [OCUWin32]::OwnerProcessOf($focused) -eq [OCUWin32]::OwnerProcessOf($hwnd)) {
-        return $focused
-    }
-    return $hwnd
-}
-
 function Test-WindowForeground([IntPtr]$hwnd) {
     $foreground = [OCUWin32]::GetForegroundWindow()
     if ($foreground -eq [IntPtr]::Zero -or $hwnd -eq [IntPtr]::Zero) {
@@ -515,22 +434,19 @@ function Get-ScrollableAncestor($element, [int]$depth = 8) {
 
 function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
     $inputWindow = Get-InputWindowHandle $hwnd
-    # Real pointer input is exact, but it needs the target to own the pointer; posted mouse messages are
-    # ignored by many toolkits (UWP, WinForms, Chromium), so the element action under the point is the
-    # reliable background path and posted messages stay the last resort for classic windows.
-    if ((Test-WindowForeground $hwnd) -and [OCUWin32]::SendPointerClick($screenX, $screenY, $button, $count)) {
-        return
-    }
-    if ($button -ne 'right' -and $button -ne 'middle' -and (Send-SemanticClick $hwnd $screenX $screenY)) {
-        return
-    }
+    # Hosted content ignores posted mouse messages: use real pointer input when the target already owns the
+    # pointer, otherwise the element action under the point. Classic windows keep posted messages.
     if ($inputWindow -ne $hwnd) {
+        if ((Test-WindowForeground $hwnd) -and [OCUWin32]::SendPointerClick($screenX, $screenY, $button, $count)) {
+            return
+        }
+        if ($button -ne 'right' -and $button -ne 'middle' -and (Send-SemanticClick $hwnd $screenX $screenY)) {
+            return
+        }
         $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
         throw "Coordinate clicks cannot be delivered to this hosted application while it is in the background; click the element instead, or bring the window to the foreground and retry"
     }
-    # Posted mouse messages are delivered to the window they are posted to; a real click goes to the
-    # child control under the pointer, which is what classic apps hit-test against.
-    $clickWindow = Get-InputTargetUnderPoint $hwnd $screenX $screenY
+    $clickWindow = $hwnd
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
     $point.Y = $screenY
@@ -568,7 +484,7 @@ function Send-Drag([IntPtr]$hwnd, [int]$fromX, [int]$fromY, [int]$toX, [int]$toY
         $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
         throw "Dragging cannot be delivered to this hosted application while it is in the background; bring the window to the foreground and retry"
     }
-    $dragWindow = Get-InputTargetUnderPoint $hwnd $fromX $fromY
+    $dragWindow = $hwnd
     $start = New-Object OCUWin32+POINT
     $start.X = $fromX
     $start.Y = $fromY
@@ -610,12 +526,12 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
     if ($direction -eq "left" -or $direction -eq "right") {
         $message = $WM_MOUSEHWHEEL
     }
-    $wheelWindow = Get-InputTargetUnderPoint $hwnd $screenX $screenY
+    $wheelWindow = $hwnd
     [void][OCUWin32]::PostMessage($wheelWindow, $message, (ConvertTo-WheelWParam $delta), $lParam)
 }
 
 function Send-Text([IntPtr]$hwnd, [string]$text) {
-    $target = Get-KeyDeliveryWindow $hwnd
+    $target = Get-InputWindowHandle $hwnd
     foreach ($char in $text.ToCharArray()) {
         Assert-OperationActive
         if ($char -eq "`r" -or $char -eq "`n") {
@@ -733,7 +649,7 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
     $alt = $chord.alt
     $super = $chord.super
     Assert-OperationActive
-    $target = Get-KeyDeliveryWindow $hwnd
+    $target = Get-InputWindowHandle $hwnd
     if (-not $control -and -not $alt -and -not $super -and (Test-CharacterKey $main)) {
         # Plain characters reach hosted apps as character input; this is also what fixes '+' '*'
         # '=' and friends, which previously had no virtual-key mapping at all.
@@ -743,12 +659,12 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
         return
     }
     $vk = Get-VirtualKey $main
-    if (Test-WindowForeground $hwnd) {
-        if ([OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
+    # Hosted content ignores posted key messages, so it needs real input; classic windows keep the
+    # historical posted-message path (apps may count keys on the top-level window).
+    if ($target -ne $hwnd) {
+        if ((Test-WindowForeground $hwnd) -and [OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
             return
         }
-    }
-    if ($target -ne $hwnd) {
         $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
         throw "Key '$key' cannot be delivered to this hosted application in the background; bring the window to the foreground and retry, or use an element action instead"
     }
@@ -757,18 +673,17 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
     if ($shift) { $modifiers += 0x10 }
     if ($alt) { $modifiers += 0x12 }
     if ($super) { $modifiers += 0x5B }
-    $keyWindow = Get-KeyDeliveryWindow $hwnd
     try {
         foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
+            [void][OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
         }
-        [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
+        [void][OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 25
     } finally {
-        [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
+        [void][OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
         [array]::Reverse($modifiers)
         foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($keyWindow, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+            [void][OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
         }
     }
 }
