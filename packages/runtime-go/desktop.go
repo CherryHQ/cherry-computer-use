@@ -97,6 +97,25 @@ type Capture struct {
 	Reason *Reason `json:"reason,omitempty"`
 }
 
+// InputChannel reports where text and key input for this window actually goes, so callers can plan the
+// action instead of falling back after the fact.
+type InputChannel struct {
+	Kind   string  `json:"kind"`
+	Page   string  `json:"page,omitempty"`
+	Reason *Reason `json:"reason,omitempty"`
+}
+
+// AccessibleInputChannel is the default: the platform accessibility tree plus window messages.
+func AccessibleInputChannel() InputChannel { return InputChannel{Kind: "accessibility"} }
+
+// PageInputChannel reports that input is delivered through the browser page (Chrome DevTools Protocol).
+func PageInputChannel(page string) InputChannel { return InputChannel{Kind: "page", Page: page} }
+
+// UnavailableInputChannel reports that text and key input cannot be delivered to this window.
+func UnavailableInputChannel(code, message string) InputChannel {
+	return InputChannel{Kind: "accessibility", Reason: &Reason{Code: code, Message: message}}
+}
+
 type Observation struct {
 	Window     Window  `json:"window"`
 	Tree       Tree    `json:"tree"`
@@ -109,6 +128,7 @@ type Snapshot struct {
 	AppSessionID string `json:"appSessionId"`
 	App          App    `json:"app"`
 	Observation
+	InputChannel InputChannel `json:"inputChannel"`
 }
 
 type ObserveOptions struct {
@@ -144,6 +164,13 @@ func (o ObserveOptions) LimitText(value string, tree *Tree) string {
 type PermissionDriver interface {
 	Permissions(context.Context) ([]Permission, error)
 	RequestPermissions(context.Context, []string) ([]Permission, error)
+}
+
+// InputChannelDriver reports where text and key input for a window actually goes. Drivers that can
+// deliver page input (Chromium/Electron over CDP) report it here instead of letting callers discover it
+// by attempting input.
+type InputChannelDriver interface {
+	InputChannel(context.Context, Target, Observation) (InputChannel, error)
 }
 
 // Drivers retain platform references inside Native fields, never in the wire identity.
@@ -440,7 +467,13 @@ func (d *Desktop) observe(ctx context.Context, session *appSession, options Obse
 		observation.Tree.Truncated = []string{}
 	}
 	observation.Window.ID = NewID()
-	snapshot := Snapshot{ID: id, AppSessionID: session.ID, App: session.App, Observation: observation}
+	channel := AccessibleInputChannel()
+	if driver, ok := d.driver.(InputChannelDriver); ok {
+		if reported, err := driver.InputChannel(ctx, session.target, observation); err == nil && reported.Kind != "" {
+			channel = reported
+		}
+	}
+	snapshot := Snapshot{ID: id, AppSessionID: session.ID, App: session.App, Observation: observation, InputChannel: channel}
 	session.snapshots[id] = desktopSnapshot{snapshot, options}
 	return snapshot, nil
 }

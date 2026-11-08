@@ -27,6 +27,14 @@ func (d *linuxDesktop) resolveWebInput(targetKey string, pid int, windowTitle st
 	d.cdpEndpoints[targetKey] = endpoint
 }
 
+// InputChannel reports the resolved page channel, so observations say where text and keys will go.
+func (d *linuxDesktop) InputChannel(_ context.Context, target sdkruntime.Target, _ sdkruntime.Observation) (sdkruntime.InputChannel, error) {
+	if endpoint := d.cdpEndpoint(target.Key); endpoint != nil {
+		return sdkruntime.PageInputChannel(endpoint.Target.Title), nil
+	}
+	return sdkruntime.AccessibleInputChannel(), nil
+}
+
 func (d *linuxDesktop) cdpEndpoint(targetKey string) *webcdp.Endpoint {
 	d.cdpLock.Lock()
 	defer d.cdpLock.Unlock()

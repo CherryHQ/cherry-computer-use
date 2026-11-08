@@ -351,8 +351,15 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             screenshot = ["status": "unavailable", "reason": reason]
         }
         control.snapshots[snapshotID] = Snapshot(state: state, options: options, titles: titles, focusedWindow: focusedWindow(app.pid))
+        let inputChannel: [String: Any]
+        if let endpoint = control.webCDP {
+            inputChannel = ["kind": "page", "page": endpoint.title]
+        } else {
+            inputChannel = ["kind": "accessibility"]
+        }
         return ["id": snapshotID, "appSessionId": control.id, "app": app.sdkInfo(id: appID),
                 "window": ["id": state.targetWindowID.map(String.init) ?? snapshotID, "title": state.windowTitle ?? ""],
+                "inputChannel": inputChannel,
                 "tree": ["status": "available", "elements": elements, "text": state.renderedText(style: .fullState), "truncated": state.treeTruncation.sorted()],
                 "screenshot": screenshot]
     }

@@ -56,8 +56,22 @@ macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`），没�
 3. 多窗口 / OOPIF：`Target.getTargets`、`Target.setAutoAttach`、`Browser.getWindowForTarget`。
 4. 可重复 smoke：CI 里启动带调试开关的 Chromium + 固定页面，跑
    `typeText`/`pressKey`/断言页面值；本 PR 只有手工验证记录。
-5. 把解析结果暴露到 observation/capabilities（例如 `cdp: true`），让模型提前知道走哪条通道。
-6. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
+5. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
+
+## 观测里暴露通道（已落地）
+
+`protocol/schema.json` 的 `Snapshot.inputChannel` 是必填字段：
+
+```json
+{ "inputChannel": { "kind": "page", "page": "文档标题 - Profile 1 - Microsoft Edge" } }
+{ "inputChannel": { "kind": "accessibility" } }
+{ "inputChannel": { "kind": "accessibility", "reason": { "code": "...", "message": "..." } } }
+```
+
+- Go 侧：`sdkruntime.InputChannel` + `InputChannelDriver`，dispatcher 在构造 snapshot 时询问 driver，
+  没实现的 driver 默认 `accessibility`；Windows/Linux 从缓存里已有的 `webcdp.Endpoint` 直接回答。
+- Swift 侧：`AppControl.webCDP` 命中时输出 `page` 与页面标题，否则 `accessibility`。
+- 这样调用方在 `observe` 之后就知道 `typeText`/`pressKey` 走哪条路，不需要靠失败再回退。
 
 ## 决策记录
 

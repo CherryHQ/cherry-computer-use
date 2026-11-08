@@ -41,6 +41,13 @@ Validate parameters on the native side too. The client validates requests and do
 
 Native code owns app/window/element IDs and snapshot validity. IDs must not refer to another client or a restarted process. Re-observation or an action that may change the target invalidates the previous snapshot for that target. Native code revalidates process/window/element identity and action support before execution. Windows coordinates refer to the observed window, and out-of-window points are rejected before dispatch. On Linux a failed semantic action never falls back to pointer input; coordinates refer to the observed X window as on Windows.
 
+Every snapshot reports `inputChannel`, so a caller can plan the action instead of discovering the channel by
+attempting input: `{"kind": "accessibility"}` means the platform accessibility tree and window messages,
+`{"kind": "page", "page": "<title>"}` means text and keys for that window go through the Chrome DevTools
+Protocol (`Input.insertText` / `Input.dispatchKeyEvent`) to the named page target, and an optional `reason`
+explains why input is unavailable. The channel is resolved while observing the window; a page channel that
+stops working is reported as a delivery failure with effect `possible`, never retried through another channel.
+
 `activation: 'never'` and `allowGlobalInput: false` are defaults sent by the SDK. Native code must honor them or report a structured failure. Host authorization is additional; these input flags do not establish permission to control a target.
 
 ## Application control sessions

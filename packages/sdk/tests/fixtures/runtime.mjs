@@ -39,6 +39,7 @@ function snapshot() {
     appSessionId: mode === 'foreign-snapshot' ? 'foreign' : 'control',
     app: { id: 'app', name: '测试 🙂' },
     window: { id: 'window', title: 'Fixture' },
+    inputChannel: { kind: 'accessibility' },
     tree: {
       status: 'available',
       truncated: [],

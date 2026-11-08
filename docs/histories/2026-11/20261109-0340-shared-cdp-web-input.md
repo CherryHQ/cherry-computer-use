@@ -36,6 +36,9 @@
   + 目标 key；macOS: `AppControl.webCDP`），`typeText`/`pressKey` 只用已解析结果。失败分两类：
   `ErrUnavailable`（未发出，安全回退）与 `ErrNotDelivered`（页面收到但没接受，禁止换通道重发）。
 
+- **[通道可见]**: `Snapshot.inputChannel`（schema 必填）报告 `kind: accessibility|page`、`page` 标题与可选
+  `reason`；Go 用 `InputChannelDriver`，Swift 用 `AppControl.webCDP`，都从 observe 时解析的结果直接回答。
+
 ### 🧠 Design Intent (Why)
 CDP 与操作系统无关，把它写在 Windows 的 PowerShell 里意味着 macOS/Linux 必须各自再实现一遍，
 而且把"网页输入"绑在某个平台的 bridge 上。共享包只依赖 `(pid, 窗口标题)` 两个平台输入，
@@ -49,6 +52,8 @@ CDP 与操作系统无关，把它写在 Windows 的 PowerShell 里意味着 mac
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WebCDPInput.swift`（新增）
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SDKDesktop.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/WebCDPInputTests.swift`（新增）
+- `protocol/schema.json`、`protocol/README.md`
+- `packages/sdk/tests/fixtures/runtime.mjs`
 - `packages/runtime-go/README.md`
 - `docs/exec-plans/active/20261109-0300-cross-platform-cdp-web-input.md`
 - `docs/ARCHITECTURE.md`
