@@ -367,25 +367,33 @@ for (const mode of [
   })
 }
 
-for (const mode of [
-  'malformed',
-  'null-envelope',
-  'ambiguous-envelope',
-  'exit',
-  'eof'
-]) {
+for (const mode of ['null-envelope', 'ambiguous-envelope', 'exit', 'eof']) {
   test(`${mode} response closes the client and releases its process`, async (t) => {
     const { client, child } = await start(t, mode)
     await assert.rejects(
       client.getAppState({ appSessionId: 'control' }),
-      hasCode(
-        mode === 'exit' || mode === 'eof' ? 'RUNTIME_EXITED' : 'PROTOCOL_ERROR'
-      )
+      hasCode(mode === 'exit' || mode === 'eof' ? 'RUNTIME_EXITED' : 'PROTOCOL_ERROR')
     )
     await assert.rejects(client.close(), hasCode('CLEANUP_FAILED'))
     assert.ok(child.exitCode !== null || child.signalCode !== null)
   })
 }
+
+// A response whose shape is wrong must not poison the connection: failing it would dispose the pipes,
+// make the graceful shutdown impossible and leave the owner stuck on "cleanup unconfirmed".
+test('a malformed result rejects only that request and still closes cleanly', async (t) => {
+  const { client, child, connection } = await start(t, 'malformed')
+  await assert.rejects(
+    client.getAppState({ appSessionId: 'control' }),
+    hasCode('PROTOCOL_ERROR')
+  )
+  // The session stays usable, so the caller can recover with a fresh observation.
+  assert.equal((await client.listApps())[0]?.name, 'clicks:0')
+  const closed = new Promise((resolve) => connection.onClosed(resolve))
+  await client.close()
+  assert.deepEqual(await closed, { cleanup: 'complete' })
+  assert.ok(child.exitCode !== null || child.signalCode !== null)
+})
 
 test('a broken input pipe rejects an in-flight write without an unhandled rejection', async (t) => {
   const { client, child } = await start(t, 'write-failure')

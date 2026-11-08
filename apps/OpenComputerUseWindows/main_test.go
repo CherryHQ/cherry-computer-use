@@ -257,6 +257,38 @@ func TestWindowsRuntimeForegroundActionsRequireOptIn(t *testing.T) {
 	}
 }
 
+func TestWindowsRuntimePreDispatchRefusalsReportNoEffect(t *testing.T) {
+	// A refusal that happens before any input reaches the target must not claim an uncertain effect:
+	// the SDK treats "possible" as a reason to discard the whole session, which the host can only
+	// surface as unconfirmed cleanup.
+	lines := strings.Split(windowsRuntimeScript, "\n")
+	for _, message := range []string{
+		"UIA ValuePattern text fallback is disabled by default",
+		"click_method 'global' is not supported on Windows",
+		"click_method 'accessibility' requires element_index",
+		"Scrolling cannot be delivered to this hosted application",
+	} {
+		found := false
+		for i, line := range lines {
+			if !strings.Contains(line, message) || !strings.Contains(line, "throw") {
+				continue
+			}
+			for j := i - 1; j >= 0 && j >= i-4; j-- {
+				if strings.Contains(lines[j], "$script:sdkEffect = 'none'") {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%q must be reported with effect none", message)
+		}
+	}
+}
+
 func TestUTF8EncodingInPowerShellScript(t *testing.T) {
 	// Verify that the PowerShell script sets UTF-8 encoding
 	if !strings.Contains(windowsRuntimeScript, "$OutputEncoding = [System.Text.Encoding]::UTF8") {

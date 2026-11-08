@@ -1370,6 +1370,10 @@ function Invoke-TypeText($process, [string]$text, [bool]$AllowFocusFallback = $t
             }
             if (-not $alreadyFocused) {
                 if (-not $AllowFocusFallback -or -not (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK")) {
+                    # Nothing has been typed yet: reporting an uncertain ("possible") effect here would force the
+                    # caller to discard the whole session even though the target never received any input.
+                    $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                    $script:sdkEffect = 'none'
                     throw "UIA ValuePattern text fallback is disabled by default because it may bring the target app to the foreground; set OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1 to enable it."
                 }
             }
@@ -1391,11 +1395,19 @@ function Invoke-Operation($process, $operation, $element) {
             if ([string]::IsNullOrWhiteSpace($clickMethod)) { $clickMethod = "auto" }
 
             if ($clickMethod -eq "accessibility") {
-                if ($null -eq $element) { throw "click_method 'accessibility' requires element_index" }
+                if ($null -eq $element) {
+                    $script:sdkCode = 'INVALID_ARGUMENT'
+                    $script:sdkEffect = 'none'
+                    throw "click_method 'accessibility' requires element_index"
+                }
                 if ($operation.mouse_button -eq "right" -or $operation.mouse_button -eq "middle") {
+                    $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                    $script:sdkEffect = 'none'
                     throw "click_method 'accessibility' does not support mouse_button '$($operation.mouse_button)'"
                 }
                 if (-not (Invoke-PreferredClick $element)) {
+                    $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                    $script:sdkEffect = 'none'
                     throw "click_method 'accessibility' could not click the requested element"
                 }
             } elseif ($clickMethod -eq "app_post") {
@@ -1409,8 +1421,12 @@ function Invoke-Operation($process, $operation, $element) {
                 }
                 Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
             } elseif ($clickMethod -eq "global") {
+                $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                $script:sdkEffect = 'none'
                 throw "click_method 'global' is not supported on Windows"
             } elseif ($clickMethod -eq "sky_click") {
+                $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                $script:sdkEffect = 'none'
                 throw "click_method 'sky_click' is not supported on Windows"
             } elseif ($clickMethod -eq "auto") {
                 $handled = $false
@@ -1432,11 +1448,17 @@ function Invoke-Operation($process, $operation, $element) {
                     Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
                 }
             } else {
+                $script:sdkCode = 'INVALID_ARGUMENT'
+                $script:sdkEffect = 'none'
                 throw "Invalid click_method '$clickMethod'"
             }
         }
         "perform_secondary_action" {
-            if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
+            if ($null -eq $element) {
+                $script:sdkCode = 'INVALID_ARGUMENT'
+                $script:sdkEffect = 'none'
+                throw "unknown element_index '$($operation.element.index)'"
+            }
             Invoke-SecondaryAction $element $operation.action
         }
         "scroll" {
@@ -1453,6 +1475,7 @@ function Invoke-Operation($process, $operation, $element) {
             if (-not $handled) {
                 if ((Get-InputWindowHandle $hwnd) -ne $hwnd) {
                     $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                    $script:sdkEffect = 'none'
                     throw "Scrolling cannot be delivered to this hosted application while it is in the background and the target exposes no ScrollPattern; observe a scrollable element or bring the window to the foreground"
                 }
                 $frame = if ($null -ne $operation.element) { $operation.element.frame } else { New-Frame 0 0 $windowBounds.width $windowBounds.height }

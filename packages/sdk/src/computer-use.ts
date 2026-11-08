@@ -106,11 +106,10 @@ export async function connectClient(
       return connection.request(
         'openAppSession',
         params,
-        (value): value is Wire.AppSession =>
-          validators.validateAppSession(value) &&
-          value.app.id === params.appId &&
-          value.status === 'active',
-        options
+        validators.validateAppSession,
+        options,
+        'none',
+        (value) => value.app.id === params.appId && value.status === 'active'
       )
     },
     listAppSessions: (options) =>
@@ -125,10 +124,10 @@ export async function connectClient(
       return connection.request(
         'stopAppSession',
         params,
-        (value): value is Wire.StopAppSessionResult =>
-          validators.validateStopAppSessionResult(value) &&
-          value.appSessionId === params.appSessionId,
-        options
+        validators.validateStopAppSessionResult,
+        options,
+        'none',
+        (value) => value.appSessionId === params.appSessionId
       )
     },
     getAppState: async (params, options) => {
@@ -137,11 +136,10 @@ export async function connectClient(
         await connection.request(
           'getAppState',
           { activation: 'never', ...params },
-          (value): value is Wire.Snapshot =>
-            validators.validateSnapshot(value) &&
-            value.appSessionId === params.appSessionId,
+          validators.validateSnapshot,
           options,
-          params.activation === 'allow' ? 'possible' : 'none'
+          params.activation === 'allow' ? 'possible' : 'none',
+          (value) => value.appSessionId === params.appSessionId
         )
       )
     },
@@ -150,10 +148,10 @@ export async function connectClient(
       return connection.request(
         'perform',
         { allowGlobalInput: false, ...params },
-        (value): value is Wire.PerformResult =>
-          validators.validatePerformResult(value) && value.appSessionId === params.appSessionId,
+        validators.validatePerformResult,
         options,
-        'possible'
+        'possible',
+        (value) => value.appSessionId === params.appSessionId
       )
     },
     act: async (params, options) => {
@@ -161,12 +159,12 @@ export async function connectClient(
       const result = await connection.request(
         'act',
         { allowGlobalInput: false, ...params },
-        (value): value is Wire.ActionResult =>
-          validators.validateActionResult(value) &&
-          (value.observation.status === 'unavailable' ||
-            value.observation.snapshot.appSessionId === params.appSessionId),
+        validators.validateActionResult,
         options,
-        'possible'
+        'possible',
+        (value) =>
+          value.observation.status === 'unavailable' ||
+          value.observation.snapshot.appSessionId === params.appSessionId
       )
       return {
         status: result.status,
