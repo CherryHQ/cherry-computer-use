@@ -1,34 +1,32 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 $script:sdkCode = 'INVALID_ARGUMENT'
 $script:sdkEffect = 'none'
 
-function Get-SDKTarget($process) {
-    $identityPID = [int]$process.Id
-    if ($process.ProcessName -eq 'ApplicationFrameHost') {
-        $identityPID = 0
-        try {
-            $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
-            $condition = New-Object Windows.Automation.NotCondition (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), ([int]$process.Id))
-            $child = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
-            if ($null -ne $child) { $identityPID = $child.Current.ProcessId }
-        } catch {}
-    }
-    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$process.MainWindowHandle; name = $process.ProcessName; identity = [SDKApplicationIdentity]::ForProcess($identityPID) }
+function Get-SDKTarget($process, [long]$windowHandle = 0) {
+    if ($windowHandle -eq 0 -and $null -ne $script:TargetHwnd) { $windowHandle = [long]$script:TargetHwnd }
+    if ($windowHandle -eq 0) { $windowHandle = [long](Resolve-AppWindowHandle $process $null) }
+    $identityPID = Get-WindowHostedProcessId ([IntPtr][long]$windowHandle) ([int]$process.Id)
+    if ($identityPID -le 0) { $identityPID = [int]$process.Id }
+    $title = [OCUWin32]::WindowTextOf([IntPtr][long]$windowHandle)
+    # ApplicationFrameHost is a shared host with no useful name of its own; the hosted app is the app.
+    $name = if ($process.ProcessName -eq 'ApplicationFrameHost' -and -not [string]::IsNullOrWhiteSpace($title)) { $title } else { $process.ProcessName }
+    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$windowHandle; name = $name; title = $title; identity = [SDKApplicationIdentity]::ForProcess($identityPID) }
 }
 function Resolve-SDKTarget($target) {
     $process = Get-Process -Id ([int]$target.pid) -ErrorAction Stop
-    if ($process.StartTime.ToUniversalTime().Ticks.ToString() -ne $target.started -or [long]$process.MainWindowHandle -ne [long]$target.hwnd) {
+    $hwnd = [IntPtr][long]$target.hwnd
+    if ($process.StartTime.ToUniversalTime().Ticks.ToString() -ne $target.started -or [long]$target.hwnd -eq 0 -or -not [OCUWin32]::IsAlive($hwnd) -or [OCUWin32]::OwnerProcessOf($hwnd) -ne [uint32]$process.Id) {
         $script:sdkCode = 'STALE_SNAPSHOT'
         throw 'Application process or window changed'
     }
-    if ($target.identity -and $process.ProcessName -eq 'ApplicationFrameHost' -and (Get-SDKTarget $process).identity -cne $target.identity) {
+    $script:TargetHwnd = [long]$target.hwnd
+    if ($target.identity -and (Get-SDKTarget $process ([long]$target.hwnd)).identity -cne $target.identity) {
         $script:sdkCode = 'STALE_SNAPSHOT'
         throw 'Hosted application identity changed'
     }
-    if ($process.MainWindowHandle -eq 0) { throw 'Application has no window' }
     return $process
 }
 function Get-SDKCapture($process) {
@@ -40,14 +38,14 @@ public static class SDKWindowCapture {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
 }
 '@
-        $bounds = Get-WindowRectFrame ([IntPtr]$process.MainWindowHandle)
+        $bounds = Get-WindowRectFrame ([IntPtr][long]$script:TargetHwnd)
         if ($null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0 -or $bounds.width * $bounds.height -gt 16000000) { throw 'Invalid window capture dimensions' }
         $bitmap = New-Object System.Drawing.Bitmap ([int]$bounds.width), ([int]$bounds.height)
         try {
             $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
             try {
                 $hdc = $graphics.GetHdc()
-                try { if (-not [SDKWindowCapture]::PrintWindow([IntPtr]$process.MainWindowHandle, $hdc, 2)) { throw 'Window did not provide an image' } }
+                try { if (-not [SDKWindowCapture]::PrintWindow([IntPtr][long]$script:TargetHwnd, $hdc, 2)) { throw 'Window did not provide an image' } }
                 finally { $graphics.ReleaseHdc($hdc) }
             } finally { $graphics.Dispose() }
             $stream = New-Object System.IO.MemoryStream
@@ -71,10 +69,47 @@ function Get-SDKSecondaryActions($record) {
         if ($name -in @('Invoke', 'Toggle', 'Select', 'Expand', 'Collapse', 'ScrollIntoView')) { @{ id = $name; label = $name } }
     }
 }
+function Get-SDKRunningTargets {
+    $targets = @()
+    $seen = @{}
+    $byProcess = @{}
+    foreach ($raw in ([OCUWin32]::AllTopLevelWindows())) {
+        $handle = [IntPtr][long]$raw
+        $owner = [int][OCUWin32]::OwnerProcessOf($handle)
+        if ($owner -le 0) { continue }
+        if (-not $byProcess.ContainsKey($owner)) { $byProcess[$owner] = New-Object System.Collections.Generic.List[IntPtr] }
+        $byProcess[$owner].Add($handle)
+    }
+    foreach ($processId in $byProcess.Keys) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($null -eq $process) { continue }
+        $handles = @($byProcess[$processId])
+        $frames = @($handles | Where-Object { [OCUWin32]::ClassNameOf($_) -eq 'ApplicationFrameWindow' })
+        if ($frames.Count -gt 0) {
+            $pool = $frames
+        } elseif ([long]$process.MainWindowHandle -ne 0) {
+            $pool = @([IntPtr][long]$process.MainWindowHandle)
+        } else {
+            continue
+        }
+        foreach ($handle in $pool) {
+            try {
+                $target = Get-SDKTarget $process ([long]$handle)
+                $key = "$($target.pid)|$($target.identity)"
+                if ($seen.ContainsKey($key)) { continue }
+                $seen[$key] = $true
+                $targets += $target
+            } catch {
+            }
+        }
+    }
+    return $targets
+}
 function Observe-SDK($target, $options) {
     $process = Resolve-SDKTarget $target
-    $root = Get-MainElement $process
-    $bounds = Get-WindowBounds $process $root
+    $hwnd = [long]$script:TargetHwnd
+    $root = Get-MainElement $process $hwnd
+    $bounds = Get-WindowBounds $process $root $hwnd
     $rendered = Render-Tree $root $bounds (Resolve-TextLimit $options.textLimit) $options.maxTreeNodes $options.maxTreeDepth
     $elements = @()
     $references = @{}
@@ -87,11 +122,12 @@ function Observe-SDK($target, $options) {
         $references[$id] = $record
     }
     $capture = if ($options.includeScreenshot -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'CAPTURE_NOT_REQUESTED'; message = 'Screenshot was not requested' } } } else { Get-SDKCapture $process }
-    return @{ window = @{ id = 'native'; title = $process.MainWindowTitle }; tree = @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }; screenshot = $capture; target = (Get-SDKTarget $process); bounds = $bounds; references = $references }
+    return @{ window = @{ id = 'native'; title = [OCUWin32]::WindowTextOf([IntPtr][long]$script:TargetHwnd) }; tree = @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }; screenshot = $capture; target = (Get-SDKTarget $process $hwnd); bounds = $bounds; references = $references }
 }
 function Invoke-SDKAction($operation) {
     $process = Resolve-SDKTarget $operation.target
-    $bounds = Get-WindowBounds $process (Get-MainElement $process)
+    $hwnd = [long]$script:TargetHwnd
+    $bounds = Get-WindowBounds $process (Get-MainElement $process $hwnd) $hwnd
     $script:sdkCode = 'STALE_SNAPSHOT'
     foreach ($key in @('x', 'y', 'width', 'height')) {
         if ($null -eq $bounds -or $bounds.$key -ne $operation.bounds.$key) { throw 'Window bounds changed since observation' }
@@ -107,12 +143,21 @@ function Invoke-SDKAction($operation) {
         foreach ($key in @('x', 'y', 'width', 'height')) {
             if ($current.frame.$key -ne $reference.frame.$key) { throw 'Element moved since observation' }
         }
-        if ($operation.action.type -notin @(Get-SDKActions $current)) { throw 'Element action changed since observation' }
+        if ($operation.action.type -notin @(Get-SDKActions $current)) {
+            if ($operation.action.type -notin @(Get-SDKActions $reference)) {
+                $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+                throw "Element does not support $($operation.action.type)"
+            }
+            $script:sdkCode = 'STALE_SNAPSHOT'
+            throw 'Element action changed since observation'
+        }
         if (-not $element.Current.IsEnabled) { $script:sdkCode = 'TARGET_UNAVAILABLE'; throw 'Element is not enabled' }
     }
     $action = $operation.action
     $script:sdkCode = 'INVALID_ARGUMENT'
-    $engine = @{ windowBounds = $bounds; element = $reference; allowFocusFallback = $false }
+    # Text fields of hosted apps expose no native edit handle; UIA ValuePattern is the only channel that
+    # reaches them. It stays behind OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK because it can activate the app.
+    $engine = @{ windowBounds = $bounds; windowHandle = $hwnd; element = $reference; allowFocusFallback = $true }
     switch ($action.type) {
         'click' {
             $engine.tool = 'click'; $engine.click_method = 'auto'; $engine.click_count = $action.count; $engine.mouse_button = $action.button
@@ -127,7 +172,7 @@ function Invoke-SDKAction($operation) {
             }
         }
         'typeText' { $engine.tool = 'type_text'; $engine.text = $action.text }
-        'pressKey' { $engine.tool = 'press_key'; $engine.key = $action.key; $null = Get-VirtualKey (($action.key -split '\+')[-1]) }
+        'pressKey' { $engine.tool = 'press_key'; $engine.key = $action.key; Test-KeySupported $action.key }
         'setValue' {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
             if ($null -eq $pattern -or $pattern.Current.IsReadOnly) { $script:sdkCode = 'UNSUPPORTED_CAPABILITY'; throw 'Element value is not writable' }
@@ -139,15 +184,16 @@ function Invoke-SDKAction($operation) {
         }
         default { throw 'Unknown SDK action' }
     }
-    $cancel = [System.Threading.EventWaitHandle]::OpenExisting($operation.cancelEvent)
+    $cancel = $null
+    if (-not [string]::IsNullOrEmpty($operation.cancelEvent)) { $cancel = [System.Threading.EventWaitHandle]::OpenExisting($operation.cancelEvent) }
     try {
-        if ($cancel.WaitOne(0)) { $script:sdkCode = 'CANCELLED'; throw 'Action cancelled before dispatch' }
-        $script:OperationCancelled = { $cancel.WaitOne(0) }.GetNewClosure()
+        if ($null -ne $cancel -and $cancel.WaitOne(0)) { $script:sdkCode = 'CANCELLED'; throw 'Action cancelled before dispatch' }
+        if ($null -ne $cancel) { $script:OperationCancelled = { $cancel.WaitOne(0) }.GetNewClosure() }
         $script:sdkCode = 'TARGET_UNAVAILABLE'
         $script:sdkEffect = 'possible'
         Invoke-Operation $process $engine $element
         return $true
-    } finally { $script:OperationCancelled = $null; $cancel.Dispose() }
+    } finally { $script:OperationCancelled = $null; if ($null -ne $cancel) { $cancel.Dispose() } }
 }
 try {
     # The owner attaches this worker to its private Job Object before releasing stdin.
@@ -160,7 +206,7 @@ try {
     . "$PSScriptRoot/sdk_apps.ps1"
     switch ($operation.method) {
         'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query }
-        'apps' { $result = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { try { Get-SDKTarget $_ } catch {} }) }
+        'apps' { $result = @(Get-SDKRunningTargets) }
         'observe' { $result = Observe-SDK $operation.target $operation.options }
         'act' { $result = Invoke-SDKAction $operation }
         default { $script:sdkCode = 'INVALID_ARGUMENT'; throw 'Unknown SDK bridge method' }

@@ -26,6 +26,7 @@ type windowsTarget struct {
 	Started  string `json:"started"`
 	HWND     int64  `json:"hwnd"`
 	Name     string `json:"name"`
+	Title    string `json:"title"`
 	Identity string `json:"identity"`
 }
 type windowsObservation struct {
@@ -65,7 +66,7 @@ func (d *windowsDesktop) Apps(ctx context.Context) ([]sdk.Target, error) {
 	}
 	targets := make([]sdk.Target, 0, len(apps))
 	for _, app := range apps {
-		targets = append(targets, sdk.Target{Key: fmt.Sprintf("%d:%s", app.PID, app.Started), Name: app.Name, Identity: app.Identity, Native: app})
+		targets = append(targets, sdk.Target{Key: fmt.Sprintf("%d:%s:%d", app.PID, app.Started, app.HWND), Name: app.Name, Identity: app.Identity, Native: app})
 	}
 	return targets, nil
 }

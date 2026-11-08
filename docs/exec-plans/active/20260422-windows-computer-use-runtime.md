@@ -80,7 +80,7 @@
 - [ ] 在交互式 Windows 桌面 session 补 Notepad / Edge 等真实 UI action smoke。
 - [ ] 增加 Windows fixture 和可重复 smoke runner。
 - [ ] 评估用 `PrintWindow` / Windows Graphics Capture 补一条不依赖窗口可见性的 background screenshot 路径。
-- [ ] 为必须依赖前台输入的 app/toolkit 场景补更明确的 capability/error，避免静默退到抢焦点行为。
+- [x] 为必须依赖前台输入的 app/toolkit 场景补更明确的 capability/error，避免静默退到抢焦点行为。
 - [x] 将 Windows artifact 接入 npm release packaging，作为既有 npm root/alias packages 的 bundled artifacts 分发。
 - [ ] 补 Windows signing / installer 方案。
 - [ ] 评估把 PowerShell bridge 替换为原生 Go COM/UIA 的收益和风险。
@@ -97,3 +97,6 @@
 - 2026-04-22：Notepad 实测反馈 `type_text` 的 UIA `ValuePattern.SetValue` 会把窗口带到前台；默认改为 child HWND `EM_REPLACESEL` 后台消息路径，旧 UIA fallback 需要 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1`。
 - 2026-04-22：Windows 交互式 scheduled task 验证显示新 `type_text` 能写入 Notepad 且不会把前台从 Codex 切到 Notepad；Notepad 文本控件 UIA class 为 `RichEditD2DPT`，有 child native handle，可接收 `EM_REPLACESEL`。
 - 2026-04-23：Windows release artifact 接入 npm package bundled artifacts，不新增系统 installer/signing；root `open-computer-use` package 通过 launcher 按 `win32-arm64` / `win32-x64` 自动选择 `.exe`。
+- 2026-11-09：输入改为投递到真实输入窗口（UWP `Windows.UI.Core.CoreWindow`、Chromium `Chrome_RenderWidgetHostHWND`），字符统一走 `WM_CHAR`，需要修饰键/导航语义的按键与指针操作在目标窗口已在前台时走 `SendInput`，后台无法投递时返回 `UNSUPPORTED_CAPABILITY`。
+- 2026-11-09：窗口身份改成 HWND：`EnumWindows` + 每窗口宿主 AUMID 解析，校验用 `IsWindow` / `GetWindowThreadProcessId`，不再依赖 `Process.MainWindowHandle`；`apps` 按窗口枚举，计算器与设置不再是同一个 app。
+- 2026-11-09：经典 Win32 应用的 posted 鼠标/滚轮投到 `WindowFromPoint` 子窗口、posted 键盘投到目标进程焦点窗口（`GetGUIThreadInfo`）；宿主内容后台坐标点击退化为 UIA 命中测试 + 元素 pattern。
