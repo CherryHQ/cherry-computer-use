@@ -267,6 +267,10 @@ func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, obse
 // need X11, the wlroots virtual keyboard or the Wayland remoteDesktop permission. Targets are checked before any input is sent.
 func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
 	native := observation.Native.(desktop.Observation)
+	// Chromium and Electron pages take text and keys through the page, which needs no global input.
+	if element == nil && deliverWebInput(ctx, int(native.App.PID), native.Window.Title, action) {
+		return nil
+	}
 	var node desktop.Node
 	if element != nil {
 		node = element.Native.(desktop.Node)

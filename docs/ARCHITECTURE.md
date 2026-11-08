@@ -7,7 +7,7 @@
 ## 当前目录结构
 
 - `packages/sdk` / `protocol`
-  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 与 CLI/MCP 共用原生 AT-SPI/X11 引擎，语义动作默认可用，其余动作需显式 `allowGlobalInput`，在 X11 以及 Wayland 的 Sway/Hyprland 上可用（其他 Wayland 合成器只有键盘）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux Wayland 输入与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。
+  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 与 CLI/MCP 共用原生 AT-SPI/X11 引擎，语义动作默认可用，其余动作需显式 `allowGlobalInput`，在 X11 以及 Wayland 的 Sway/Hyprland 上可用（其他 Wayland 合成器只有键盘）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux Wayland 输入与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md) 的 `webcdp` 子包处理 Chromium/Electron 页面输入（CDP：`Input.insertText` / `Input.dispatchKeyEvent`），平台 driver 只提供 `(pid, 窗口标题)`；macOS 仍需一份同契约实现。
   协议 v2 已实现任务内每应用控制上下文、状态查询与原生停止；观察/动作必须绑定应用会话。Cherry 控制归属、用户停止状态、Tray 与软件光标尚未接入；资源归属及验收顺序见 [runtime 设计](design-docs/computer-use-runtime.md)。
 - `experiments/LinuxNativeProbe/`
   Go 直接接入 AT-SPI D-Bus/X11 的隔离原型，已在无 Python 的 Linux 容器内完成 GTK 计数按钮操作与窗口截图；独立 probe 保留实验边界，同一容器另运行已接入的 Linux SDK 桌面测试；不证明 Wayland 支持。复现步骤见 [实验说明](../experiments/LinuxNativeProbe/README.md)。

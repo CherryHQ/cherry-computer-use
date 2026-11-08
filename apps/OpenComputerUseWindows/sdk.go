@@ -114,6 +114,10 @@ func (d *windowsDesktop) Act(ctx context.Context, _ sdk.Target, observation sdk.
 		return sdk.Error("CANCELLED", "Action cancelled before dispatch")
 	}
 	native := observation.Native.(windowsObservation)
+	// Web content in Chromium and Electron takes input through the page, not through window messages.
+	if element == nil && deliverWebInput(ctx, native.Target, action) {
+		return nil
+	}
 	var reference any
 	if element != nil {
 		reference = element.Native
