@@ -16,6 +16,6 @@
 | Windows runtime | C | 已新增独立 Go `.exe`，通过 Windows UI Automation + Win32 window message 暴露同样 9 个 tools、MCP server 和 `call --calls`；默认不再自动启动 app、执行 `SetFocus`，或让 `type_text` 走可能抢前台的 UIA text fallback，并已接入 npm bundled artifact 分发，但仍是功能性第一版。 | 补交互式桌面 smoke、Windows fixture、installer/signing，以及更原生的 Go UIA 实现或更稳定的 bridge。 |
 | Linux runtime | C | 已新增独立 Go binary，暴露同样 9 个 tools、MCP server 和 `call --calls`；观察、语义动作与 X11 全局输入已改为 SDK 共用的 Go 引擎，运行时不再依赖 Python；全局输入在隔离 X11 会话中验收并接入 CI；Ubuntu GNOME VM 已跑通 `list_apps`、MCP tools list 和 Text Editor 8-tool sequence，并已接入 npm bundled artifact 分发，但截图在 GNOME Wayland 下仍只能 best-effort，coordinate input 也不是通用后台模型。 | x64 与发行包实际启动验收、Wayland portal 截图与输入、非 GTK 应用验证。 |
 | 架构文档 | B | 顶层结构、fixture bridge、app 模式、Cherry 发布身份与签名 / 公证流程已落文档。 | 补正式 CI 发布验收和 host 打包集成。 |
-| 测试 | B | `swift test` + smoke suite 已覆盖 9 个 tools 的回归，并新增了针对“前台焦点是否被抢占”的手工对比样本沉淀。 | 增加更多普通 app 的录制回归，减少只依赖 fixture 和一次性手工检查。 |
+| 测试 | B | `swift test` + smoke suite 已覆盖 9 个 tools 的回归，并新增了针对“前台焦点是否被抢占”的手工对比样本沉淀；上游移植补充了可重复的独立 AppKit 点击、实时焦点、选区与写值读回回归，以及 Windows PowerShell 函数测试。 | 增加更多普通 app 的录制回归，减少只依赖 fixture 和一次性手工检查。 |
 | 可观测性 | C | 已有 `doctor`、`snapshot`、smoke 输出，以及一组仓库内留档的官方 `computer-use` / 本仓库实现对比样本。 | 补统一日志级别、失败上下文和 release artifact 里的诊断信息，把一次性样本收敛成可重复采集流程。 |
 | 安全 | B | 已明确本地-only、权限边界和 fixture test bridge 的作用域，并将内置 denylist 收缩到密码管理器。 | 增加 session approval 和更清楚的敏感 app policy，避免策略长期硬编码在仓库里。 |

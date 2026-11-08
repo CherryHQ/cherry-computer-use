@@ -361,6 +361,48 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testProxiedCallFilePathsOnlyRewriteFileOptionValues() {
+        let cwd = "/tmp/ocu path/中文"
+        for arguments in [
+            ["snapshot", "--args-file", "--text-limit", "50"],
+            ["call", "list_apps", "--args", "--calls-file", "--sleep", "0"],
+            ["call", "list_apps", "--args-file"],
+            [],
+        ] {
+            XCTAssertEqual(resolvingOpenComputerUseCallFilePaths(arguments, currentDirectory: cwd), arguments)
+        }
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "args 中文.json"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/args 中文.json"]
+        )
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "--calls-file"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/--calls-file"]
+        )
+    }
+
+    func testProxiedCallFilePathsResolveAgainstCallerDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #"[{"tool":"list_apps"}]"#.write(to: directory.appendingPathComponent("calls.json"), atomically: true, encoding: .utf8)
+
+        let arguments = resolvingOpenComputerUseCallFilePaths(
+            ["call", "--calls-file", "calls.json", "--sleep", "0"],
+            currentDirectory: directory.path
+        )
+        XCTAssertEqual(arguments, ["call", "--calls-file", directory.appendingPathComponent("calls.json").path, "--sleep", "0"])
+        guard case let .call(.sequence(_, callsFile, _)) = try parseOpenComputerUseCLI(arguments: arguments) else {
+            return XCTFail("expected a call sequence")
+        }
+        XCTAssertEqual(try readOpenComputerUseCallSequence(json: nil, file: callsFile).map(\.tool), ["list_apps"])
+
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "/tmp/args.json"], currentDirectory: directory.path),
+            ["call", "list_apps", "--args-file", "/tmp/args.json"]
+        )
+    }
+
     func testAppNameResolutionPrefersRegularAppsAndDisplayNames() {
         let ranked = [
             AppDiscovery.ResolutionCandidate(name: "Safari", executableName: nil, isRegularApp: true),
@@ -820,6 +862,41 @@ final class OpenComputerUseKitTests: XCTestCase {
                 hitFrame: CGRect(x: 32, y: 112, width: 320, height: 56)
             )
         )
+    }
+
+    func testCoordinateClickDescendantMustContainThePoint() {
+        // A blank spot in a 560x372 window: the window is the best record, so its descendants get scanned.
+        let blankSpot = CGPoint(x: 400, y: 250)
+        let window = CGRect(x: 0, y: 0, width: 560, height: 372)
+        let closeButton = CGRect(x: 8, y: 8, width: 16, height: 16)
+        let zeroSizeButton = CGRect(x: 400, y: 250, width: 0, height: 0)
+        let buttonUnderPoint = CGRect(x: 380, y: 236, width: 80, height: 28)
+
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: closeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: zeroSizeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertTrue(isDescendantClickCandidateAtTarget(candidateFrame: buttonUnderPoint, clickPoint: blankSpot, targetFrame: window))
+    }
+
+    func testDescendantClickRejectsDegenerateFrames() {
+        let target = CGRect(x: 0, y: 0, width: 500, height: 500)
+        for frame in [CGRect(x: 10, y: 10, width: 0, height: 20),
+                      CGRect(x: 10, y: 10, width: 20, height: 0), CGRect.infinite, CGRect.null] {
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: nil, targetFrame: target))
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: CGPoint(x: 10, y: 10), targetFrame: target))
+        }
+    }
+
+    func testElementClickDescendantMustOverlapTheElement() {
+        let card = CGRect(x: 40, y: 120, width: 300, height: 120)
+
+        XCTAssertTrue(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 52, y: 128, width: 120, height: 20), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 8, y: 8, width: 16, height: 16), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: nil, targetFrame: card))
     }
 
     func testContainingRowActionAcceptsTightClickableAncestor() {

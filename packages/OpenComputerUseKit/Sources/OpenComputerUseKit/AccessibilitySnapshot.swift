@@ -458,13 +458,14 @@ private struct WindowCapture {
                 let number = info[kCGWindowNumber as String] as? NSNumber,
                 let layer = info[kCGWindowLayer as String] as? Int,
                 let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+                let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
+                WindowCaptureGeometry.isValid(bounds),
+                let area = Int(exactly: (bounds.width * bounds.height).rounded(.towardZero))
             else {
                 return nil
             }
 
             let title = info[kCGWindowName as String] as? String
-            let area = Int(bounds.width * bounds.height)
             return WindowCaptureCandidate(
                 windowID: CGWindowID(number.uint32Value),
                 layer: layer,
@@ -493,15 +494,20 @@ private struct WindowCapture {
 
             let configuration = SCStreamConfiguration()
             let scaleFactor = bestEffortScaleFactor(for: bounds)
-            let captureSize = window.frame.isEmpty ? bounds.size : window.frame.size
-            configuration.width = max(1, Int(ceil(captureSize.width * scaleFactor)))
-            configuration.height = max(1, Int(ceil(captureSize.height * scaleFactor)))
+            guard let width = Int(exactly: ceil(bounds.width * scaleFactor)),
+                  let height = Int(exactly: ceil(bounds.height * scaleFactor)),
+                  width > 0, height > 0 else { return nil }
+            configuration.width = width
+            configuration.height = height
             configuration.showsCursor = false
             configuration.scalesToFit = false
             configuration.ignoreShadowsSingleWindow = true
 
             let filter = SCContentFilter(desktopIndependentWindow: window)
-            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            return WindowCaptureGeometry.matchesFullWindow(
+                pixelSize: CGSize(width: image.width, height: image.height), bounds: bounds
+            ) ? image : nil
         }
     }
 
@@ -1489,7 +1495,9 @@ private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -
         positionError == .success,
         sizeError == .success,
         let positionValue,
-        let sizeValue
+        let sizeValue,
+        CFGetTypeID(positionValue) == AXValueGetTypeID(),
+        CFGetTypeID(sizeValue) == AXValueGetTypeID()
     else {
         return nil
     }
@@ -1502,13 +1510,16 @@ private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -
         return nil
     }
 
-    let frame = CGRect(origin: position, size: size)
+    return validatedAXFrame(position: position, size: size, windowBounds: windowBounds)
+}
 
-    guard let windowBounds else {
-        return frame
-    }
-
-    return windowRelativeFrame(elementFrame: frame, windowBounds: windowBounds)
+func validatedAXFrame(position: CGPoint, size: CGSize, windowBounds: CGRect? = nil) -> CGRect? {
+    guard [position.x, position.y, size.width, size.height].allSatisfy(\.isFinite),
+          size.width >= 0, size.height >= 0 else { return nil }
+    let global = CGRect(origin: position, size: size)
+    let frame = windowBounds.map { windowRelativeFrame(elementFrame: global, windowBounds: $0) } ?? global
+    guard [frame.origin.x, frame.origin.y, frame.maxX, frame.maxY].allSatisfy(\.isFinite) else { return nil }
+    return frame
 }
 
 func shouldElideNode(
@@ -2163,6 +2174,12 @@ private func quoted(_ value: String) -> String {
 
 private extension CGRect {
     var renderedLocalFrame: String {
-        "x=\(Int(origin.x)), y=\(Int(origin.y)), w=\(Int(width)), h=\(Int(height))"
+        "x=\(renderedCoordinate(origin.x)), y=\(renderedCoordinate(origin.y)), "
+            + "w=\(renderedCoordinate(width)), h=\(renderedCoordinate(height))"
     }
+}
+
+func renderedCoordinate(_ value: CGFloat) -> String {
+    guard value.isFinite, abs(value) < CGFloat(Int32.max) else { return "?" }
+    return String(Int(value))
 }

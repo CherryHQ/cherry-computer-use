@@ -179,10 +179,11 @@ type psResponse struct {
 
 type service struct {
 	snapshots map[string]*appSnapshot
+	runBridge func(psRequest) (*psResponse, error)
 }
 
 func newService() *service {
-	return &service{snapshots: map[string]*appSnapshot{}}
+	return &service{snapshots: map[string]*appSnapshot{}, runBridge: runPowerShell}
 }
 
 func (s *service) callTool(name string, args map[string]any) toolCallResult {
@@ -243,14 +244,18 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 	case "press_key":
 		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"))
 	case "set_value":
-		return s.setValue(requiredString(args, "app"), requiredElementIndex(args), requiredString(args, "value"))
+		value, ok := args["value"].(string)
+		if !ok {
+			return textResult("set_value value must be a string", true)
+		}
+		return s.setValue(requiredString(args, "app"), requiredElementIndex(args), value)
 	default:
 		return textResult(fmt.Sprintf("unsupportedTool(%q)", name), true)
 	}
 }
 
 func (s *service) listApps() toolCallResult {
-	response, err := runPowerShell(psRequest{Tool: "list_apps"})
+	response, err := s.runBridge(psRequest{Tool: "list_apps"})
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
@@ -450,7 +455,7 @@ func (s *service) currentSnapshot(app string) *appSnapshot {
 }
 
 func (s *service) refreshSnapshot(app string, request psRequest) (*appSnapshot, toolCallResult) {
-	response, err := runPowerShell(request)
+	response, err := s.runBridge(request)
 	if err != nil {
 		return nil, textResult(err.Error(), true)
 	}

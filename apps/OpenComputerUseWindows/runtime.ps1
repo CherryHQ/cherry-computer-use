@@ -50,6 +50,12 @@ public static class OCUWin32 {
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr hwnd);
+
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
@@ -1031,23 +1037,44 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
     }
 }
 
-function Capture-WindowPngBase64($bounds) {
-    if ($null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0) {
+function Test-WindowCaptureBounds($bounds, [IntPtr]$hwnd) {
+    if ($null -eq $bounds -or $hwnd -eq [IntPtr]::Zero) { return $false }
+    foreach ($value in @($bounds.x, $bounds.y, $bounds.width, $bounds.height)) {
+        if ([double]::IsNaN([double]$value) -or [double]::IsInfinity([double]$value)) { return $false }
+    }
+    if ($bounds.width -lt 1 -or $bounds.height -lt 1 -or $bounds.width * $bounds.height -gt 16000000) { return $false }
+    if (-not [OCUWin32]::IsWindowVisible($hwnd) -or [OCUWin32]::IsIconic($hwnd)) { return $false }
+    $current = Get-WindowRectFrame $hwnd
+    return $null -ne $current -and $current.x -eq $bounds.x -and $current.y -eq $bounds.y -and
+        $current.width -eq $bounds.width -and $current.height -eq $bounds.height
+}
+
+function Capture-WindowPngBase64($bounds, [IntPtr]$hwnd) {
+    if (-not (Test-WindowCaptureBounds $bounds $hwnd)) {
         return $null
     }
+    $bitmap = $null
+    $graphics = $null
+    $stream = $null
     try {
         $bitmap = New-Object System.Drawing.Bitmap ([int][math]::Round($bounds.width)), ([int][math]::Round($bounds.height))
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen([int][math]::Round($bounds.x), [int][math]::Round($bounds.y), 0, 0, $bitmap.Size)
+        # Capture the requested HWND even when another app covers it.
+        $hdc = $graphics.GetHdc()
+        try {
+            if (-not [OCUWin32]::PrintWindow($hwnd, $hdc, 2)) { return $null }
+        } finally { $graphics.ReleaseHdc($hdc) }
+        if (-not (Test-WindowCaptureBounds $bounds $hwnd)) { return $null }
         $stream = New-Object System.IO.MemoryStream
         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
-        $graphics.Dispose()
-        $bitmap.Dispose()
         $bytes = $stream.ToArray()
-        $stream.Dispose()
         return [Convert]::ToBase64String($bytes)
     } catch {
         return $null
+    } finally {
+        if ($null -ne $graphics) { $graphics.Dispose() }
+        if ($null -ne $bitmap) { $bitmap.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
     }
 }
 
@@ -1086,8 +1113,9 @@ function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
 
 function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth) {
     $process = Resolve-App $query
-    $element = Get-MainElement $process
-    $bounds = Get-WindowBounds $process $element
+    $hwnd = [IntPtr][long]$process.MainWindowHandle
+    $element = Get-MainElement $process $hwnd
+    $bounds = Get-WindowBounds $process $element $hwnd
     $rendered = Render-Tree $element $bounds $TextLimit $MaxTreeNodes $MaxTreeDepth
     [pscustomobject]@{
         app = [pscustomobject]@{
@@ -1097,7 +1125,7 @@ function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [
         }
         windowTitle = Limit-Text $process.MainWindowTitle $TextLimit
         windowBounds = $bounds
-        screenshotPngBase64 = Capture-WindowPngBase64 $bounds
+        screenshotPngBase64 = Capture-WindowPngBase64 $bounds $hwnd
         treeLines = @($rendered.lines)
         focusedSummary = Get-FocusedSummary $process.Id $TextLimit
         selectedText = Get-SelectedText $process.Id $TextLimit
@@ -1167,6 +1195,21 @@ function Find-Element($process, $record) {
         }
     }
     return $null
+}
+
+function Invoke-VerifiedSetValue($pattern, [string]$value) {
+    if ($pattern.Current.IsReadOnly) { throw "Cannot set a value for an element that is not settable" }
+    $pattern.SetValue($value)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $matched = $false
+        try { $matched = [string]::Equals($pattern.Current.Value, $value, [StringComparison]::Ordinal) } catch { }
+        if ($matched) { return }
+        if ($clock.Elapsed.TotalSeconds -ge 0.6) {
+            throw "set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control."
+        }
+        Start-Sleep -Milliseconds 50
+    }
 }
 
 function Get-CurrentPatternOrNull($element, $pattern) {
@@ -1500,7 +1543,7 @@ function Invoke-Operation($process, $operation, $element) {
             if ($null -eq $valuePattern) {
                 throw "Cannot set a value for an element that is not settable"
             }
-            $valuePattern.SetValue($operation.value)
+            Invoke-VerifiedSetValue $valuePattern ([string]$operation.value)
         }
         default {
             throw "unsupportedTool(`"$($operation.tool)`")"

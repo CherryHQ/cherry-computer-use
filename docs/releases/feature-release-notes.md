@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-09 | 上游可靠性修复 | 避免空白处点击误触其他按钮、输入到旧焦点或忽略选区，以及写值未生效却报告成功。 | 选择性移植 macOS 点击范围、CLI/MCP 实时焦点与选区输入、异常坐标保护、请求临时对象释放、相对调用文件路径；macOS/Windows 写值读回，Windows CLI 目标窗口截图、Windows/Linux CLI 字面空白保留。保持 Cherry SDK/CDP、Linux Go 后端及发布身份。 |
 | 2026-11-09 | Chromium / Electron 页面输入（CDP，Windows / Linux / macOS） | Edge、Chrome 和 Electron 应用在启动时带过远程调试开关的情况下，Agent 可以直接把文字和按键投递进页面：`+ * =` 等符号、中文与 emoji 都能原样写入，且不需要把窗口切到前台。 | `packages/runtime-go/webcdp` 新增跨平台 CDP 通道：从命令行或 `DevToolsActivePort` 发现端点、按窗口标题选页面 target、`Input.insertText`（写后回读校验）与 `Input.dispatchKeyEvent`（命名键/修饰键）；WebSocket 用标准库实现，无新增依赖。Windows/Linux driver 与 macOS 的 Swift session 在 `typeText`/`pressKey` 上优先尝试，失败回退原路径；`OPEN_COMPUTER_USE_DISABLE_CDP=1` 可关闭。 |
 
 ## 2026-11

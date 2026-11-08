@@ -9,6 +9,7 @@ on:
       - "packages/cli/**"
       - ".changeset/**"
       - "scripts/npm/**"
+      - "scripts/tests/**"
       - "scripts/*release*.sh"
       - "assets/app-icons/**"
       - "plugins/**"
@@ -33,6 +34,7 @@ on:
       - "packages/cli/**"
       - ".changeset/**"
       - "scripts/npm/**"
+      - "scripts/tests/**"
       - "scripts/*release*.sh"
       - "assets/app-icons/**"
       - "plugins/**"
@@ -144,6 +146,12 @@ jobs:
           COMPUTER_USE_WINDOWS_LAUNCH_TEST=1 go test -run SDKColdLaunchExecutable -count=1 .
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
+      - if: runner.os == 'Windows'
+        name: Windows value verification and capture geometry
+        shell: pwsh
+        run: |
+          ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          ./scripts/tests/windows-capture-bounds.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
       - if: runner.os == 'Linux'
         name: Linux wlroots input and capture (isolated headless Sway)
         run: |

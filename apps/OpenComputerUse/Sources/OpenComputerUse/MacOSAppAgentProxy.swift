@@ -117,14 +117,16 @@ enum MacOSAppAgentProxy {
                 continue
             }
 
-            let response = try client.request([
-                "kind": "mcp",
-                "line": line,
-                "environment": proxiedEnvironment(),
-            ])
+            try autoreleasepool {
+                let response = try client.request([
+                    "kind": "mcp",
+                    "line": line,
+                    "environment": proxiedEnvironment(),
+                ])
 
-            if let responseLine = response["response"] as? String {
-                FileHandle.standardOutput.write(Data((responseLine + "\n").utf8))
+                if let responseLine = response["response"] as? String {
+                    FileHandle.standardOutput.write(Data((responseLine + "\n").utf8))
+                }
             }
         }
     }
@@ -132,7 +134,7 @@ enum MacOSAppAgentProxy {
     private static func sendCLIRequest(arguments: [String], client: AppAgentSocketClient) throws -> CLIProxyResponse {
         let response = try client.request([
             "kind": "cli",
-            "arguments": arguments,
+            "arguments": resolvingOpenComputerUseCallFilePaths(arguments),
             "environment": proxiedEnvironment(),
         ])
 
@@ -310,8 +312,10 @@ private final class AppAgentConnection: @unchecked Sendable {
         defer { fclose(file) }
 
         while let line = readAgentLine(file) {
-            let response = handle(requestLine: line)
-            writeAgentLine(response, to: file)
+            autoreleasepool {
+                let response = handle(requestLine: line)
+                writeAgentLine(response, to: file)
+            }
         }
     }
 

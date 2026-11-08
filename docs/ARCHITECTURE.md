@@ -58,7 +58,7 @@
 
 - 面向 MCP host 的外部 transport 仍是 `stdio`；macOS 终端 CLI 到 `.app` app agent 之间额外有一层本地 Unix domain socket 代理，用来保证真实 automation 运行在 app bundle 权限身份下。
 - 当 `OPEN_COMPUTER_USE_VISUAL_CURSOR` 未被显式关闭时，`mcp` 命令会切到一个最小 AppKit runtime：主线程保留 event loop 承载 overlay UI，stdio server 仍在后台线程串行读取与响应。
-- 请求 framing 采用一行一个 JSON-RPC message。
+- 请求 framing 采用一行一个 JSON-RPC message。stdio、app-agent 和 proxy 按请求设置 autorelease pool，避免截图和响应对象一直累积到连接断开。CLI 代理前按调用方工作目录解析 `--args-file` / `--calls-file`。
 - 当前支持的 method：
   - `initialize`
   - `notifications/initialized`
@@ -86,13 +86,13 @@
 - overlay 的渲染输入也从单一 `rotation` 扩展成 `rotation + cursorBodyOffset + fogOffset + fogScale`，让速度滞后能真正体现在画面上，而不是只存在于主循环内部状态；其中 `rotation` 现在按二进制里 `SoftwareCursorStyle.angle + CursorView._animatedAngleOffsetDegrees` 的分层去近似，不再把“跟随运动方向的主朝向”和“小幅 wiggle offset”压成同一个受限小角度。
 - 动作型 tools 对普通 app 采用“非侵入优先，物理指针路径显式 opt-in”策略：
   - `perform_secondary_action` 只执行目标元素已经暴露出来的 AX action；Safari 这类 AppKit custom action descriptor（例如 `Name:close tab ...`）会显示为短名称并准确映射回过滤后的原始 AX action，避免 raw/rendered action 错配；短名称与其他显示名称或任一其他原始 AX action（包括被过滤的动作，忽略大小写）冲突时保留完整 descriptor，保证输出 selector 不被原始动作精确匹配抢占；无效或歧义 action 返回官方风格的 `... is not a valid secondary action for ...`，fixture 的 `Raise` 路径也不再为了测试去准备全局物理指针输入
-  - `set_value` 会先用 `AXUIElementIsAttributeSettable(kAXValueAttribute)` 判断目标是否真的是可设置值元素，只有 settable 时才调用 `AXUIElementSetAttributeValue`；不可设置时返回官方风格的 non-settable 错误，不退到键盘输入、剪贴板或未公开的文本替换接口
+  - `set_value` 会先用 `AXUIElementIsAttributeSettable(kAXValueAttribute)` 判断目标是否真的是可设置值元素，只有 settable 时才调用 `AXUIElementSetAttributeValue`；不可设置时返回官方风格的 non-settable 错误，写入后直接读回 AXValue 最多 0.6 秒，按真实类型核对，未确认则返回可能已写入的错误；不退到键盘输入、剪贴板或未公开的文本替换接口
   - `click.click_method` 是开源版的可选扩展，支持 `auto`（默认）、`accessibility`、`app_post`、`sky_click` 和 `global`。未传参数时继续使用原有自动路由；显式模式不会静默 fallback 到其他实现。`accessibility` 只接受 `element_index`；其余 mouse 路径可以使用 `element_index` 的计算落点或原始 `x/y` 坐标。
-  - element-targeted `click` 的 `auto` 左键路径会先试原生列表的 `AXSelectedChildren` 选择，再试 `AXPress` / `AXConfirm` / `AXOpen` 这类真正语义化的激活动作；如果目标本身不可点，还会继续尝试其子孙 AX 元素（例如 Finder sidebar row 下面暴露 `AXOpen` 的 cell）和命中点附近的 AX hit-test 结果，最后进入现有 non-AX 分支：未开启全局指针环境变量时使用 `postToPid` 定向鼠标事件，开启时直接使用全局 HID 事件。`AXRaise` / `kAXMainAttribute` / `kAXFocusedAttribute` 这类 activation-only fallback 只允许窗口级元素使用，避免普通静态文本或容器把“获得焦点”误报成“点击已处理”；`click_count > 1` 也会优先重复可用的 AX action。
+  - element-targeted `click` 的 `auto` 左键路径会先试原生列表的 `AXSelectedChildren` 选择，再试 `AXPress` / `AXConfirm` / `AXOpen` 这类真正语义化的激活动作；如果目标本身不可点，还会继续尝试与目标 frame 相交的子孙 AX 元素；坐标点击的后代候选必须包含原点击点，窗口索引不扫描内部按钮。后代搜索可覆盖 Finder sidebar row 下面暴露 `AXOpen` 的 cell，并继续尝试命中点附近的 AX hit-test 结果，最后进入现有 non-AX 分支：未开启全局指针环境变量时使用 `postToPid` 定向鼠标事件，开启时直接使用全局 HID 事件。`AXRaise` / `kAXMainAttribute` / `kAXFocusedAttribute` 这类 activation-only fallback 只允许窗口级元素使用，避免普通静态文本或容器把“获得焦点”误报成“点击已处理”；`click_count > 1` 也会优先重复可用的 AX action。
   - 显式 `click_method=accessibility` 只执行上述 AX 语义动作；显式 `click_method=app_post` 绕过 AX 候选和后代扫描，直接通过 `CGEvent.postToPid` 向目标进程发送 `mouseMoved` / down / up；显式 `click_method=sky_click` 只在 macOS 接受左键单击/双击，它验证当前 snapshot 的 `CGWindowID` 仍为同一 PID 所有且 on-screen，仅通过 `SLPSPostEventRecordTo` 让目标应用短暂进入 synthetic-active 状态，绝不向真实前台应用发送 defocus record，再按 Chromium-compatible recipe 发送 target move、`(-1,-1)` primer 和真实 down/up。每个鼠标事件同时经动态解析的 `SLEventPostToPid` 与公开 `postToPid` 投递，并带 window-local location、PID/window 和 click-group 字段；renderer settle 后只撤销目标的 synthetic-active 状态。`sky_click` 的 action-result snapshot 刷新也禁止 activate / `AXRaise` 恢复，目标状态瞬时不可读时直接失败。它不改变 `auto`，任一步失败也不 fallback。显式 `click_method=global` 同样绕过 AX，但通过 `.cghidEventTap` 发送系统级指针事件。`global` 还必须设置 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`，否则在移动 visual cursor 或发送输入前拒绝请求。
   - 对 renderer 合成的 summary `text` 行，`click` 不再默认点击父容器中心；这类元素使用左侧安全锚点。对普通 row/container/text 的后代候选，也会过滤右侧紧凑 hover action（例如 Lark / Electron 会话列表里的“完成”勾），避免把主行点击误操作成 side action；Electron/Lark 这类 app 的 WebArea 合成文本会优先寻找紧邻的行级 `AXPress` 祖先并静默执行，避免用物理鼠标点行。浏览器 WebArea（例如 Chrome/GitHub）不走这条 Electron-scoped 行级祖先点击优化，仍保留通用 link/container 点击路径。命中点如果只反查到覆盖整页的 Electron/WebArea 级 AX 元素，不再继续扫描整个大容器的子孙候选，避免一次行点击被远处的可点击元素截走。
   - `AXUIElementCopyElementAtPosition` 做坐标命中，尽量把 coordinate click 反解成可操作 AX 元素
-  - `CGEvent.postToPid` 定向发送键盘事件，避免为了 `type_text` / `press_key` 抢前台；`type_text` 会把文本按 Unicode extended grapheme cluster 聚合成小批量 `keyboardSetUnicodeString` 事件，避免中文标点、emoji / 代理对和组合字符被逐个 UTF-16 code unit 拆开后在 Electron 富文本输入框里乱序或变形。如果当前 focused element 的 `AXValue` 可设置，`type_text` 会优先按可编辑内容追加并写回 `AXValue`，这覆盖 Feishu / Electron 富文本输入框不可靠接收后台键盘事件的场景，并会过滤已知占位提示，避免把 placeholder 拼进草稿；如果当前 focused element 不是可编辑文本目标，`type_text` 会报错要求先 click 文本输入区或使用 `set_value`，不再把无效果的后台键盘投递当成成功；`press_key` 的 xdotool parser 覆盖官方 binary key table 里常见的 `BackSpace`、`Page_Up`、`Prior` / `Next`、`F1...F12` 和 `KP_*` alias
+  - `CGEvent.postToPid` 定向发送键盘事件，避免为了 `type_text` / `press_key` 抢前台；`type_text` 会把文本按 Unicode extended grapheme cluster 聚合成小批量 `keyboardSetUnicodeString` 事件，避免中文标点、emoji / 代理对和组合字符被逐个 UTF-16 code unit 拆开后在 Electron 富文本输入框里乱序或变形。CLI/MCP 的 `type_text` 在执行时读取当前 AX 焦点，优先写 `AXSelectedText`，否则在可读写选区的控件中按 UTF-16 范围替换 `AXValue` 并恢复插入点；保持 Unicode 与字面空白，写入失败不通过键盘重复发送。只有尚未写入且当前焦点仍是同一可编辑元素时才允许定向键盘回退。SDK 的 CDP/原生键盘输入路径保持独立；`press_key` 的 xdotool parser 覆盖官方 binary key table 里常见的 `BackSpace`、`Page_Up`、`Prior` / `Next`、`F1...F12` 和 `KP_*` alias
   - `scroll.pages` 对齐官方 `1.0.755` 的 `number` schema，支持小数页数；整数页且目标暴露 `AXScroll*ByPage` 时优先走 AX action，否则用 `CGEvent.postToPid` 向目标进程定向发送 scroll event
   - `drag` 仍是 coordinate-only API，但默认不再使用全局 `.cghidEventTap` mouse event；默认改为 `CGEvent.postToPid` 定向发送 mouse move / down / dragged / up 事件，避免移动用户真实硬件光标；这些 coordinate tool 的 `x/y` 先按 screenshot pixel 坐标解释，再依据截图像素尺寸与目标 window bounds 的比例映射回 window point / Quartz global 坐标，避免 Retina 窗口上把 2x 像素误当成 1x point 导致点击落到错误位置
   - `click` / `scroll` / `drag` 在环境变量未开启的默认配置下不会走全局 `.cghidEventTap`，因此不会移动或抢占用户真实鼠标；`OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` 是全局指针能力的进程级安全门，显式 `click_method=global` 仍必须通过这层授权。默认路径不再为了 fallback 调用 `NSRunningApplication.activate`。`drag` 的结果会在 snapshot 文本之后、截图之前附带一条 `Drag delivered via ...` 文本项，说明本次走的是 `app_post` 定向投递还是全局指针路径；默认路径下同时说明 `postToPid` 事件不经过 window server，因此无法驱动窗口移动、文本拖选、Finder 拖放这类 window server 拖拽会话。`drag` 的 tool description 也同步说明了这一限制和对应环境变量。显式开启全局路径后，拖拽使用默认 event source 向 HID tap 投递，按距离插值并为每步写入位移 delta；macOS 26+ 的 down / dragged / up 还会共享一个手势事件编号，使 window server 能识别窗口移动、文本拖选和 Finder 拖放所需的真实拖拽会话
@@ -121,6 +121,7 @@
 - Go runtime 通过 `go:embed` 带上 `runtime.ps1`，执行 tool call 时临时落盘并调用 Windows PowerShell。PowerShell bridge 使用 `System.Windows.Automation` 做 app/window/element discovery、tree rendering、UIA pattern action、ValuePattern set value 和 ScrollPattern scroll；当目标 app 不暴露对应 pattern 时，fallback 到 `PostMessage` / `SendMessage` 形式的 Win32 window message。
 - 输入按“真实输入窗口”投递，而不是按进程主窗口：`ApplicationFrameHost` 只承载 UWP 的框架窗口（`ApplicationFrameWindow`），输入队列在子窗口 `Windows.UI.Core.CoreWindow`；Chromium/Electron 的输入在 `Chrome_RenderWidgetHostHWND`。`Get-InputWindowHandle` 负责这层解析，`type_text` 的字符路径因此也能用于计算器这类没有文本控件的应用。经典 Win32 窗口保持原有的 posted 消息路径（顶层窗口）。宿主内容的坐标点击优先用真实指针（前台 `SendInput`），后台则在目标自己的树里做遮挡无关的命中测试并触发元素 pattern（`Send-SemanticClick`）；无法投递的按键与指针语义返回 `UNSUPPORTED_CAPABILITY`，不再返回成功却无效果。
 - 窗口身份是 HWND，而不是 `Process.MainWindowHandle`：共享宿主（`ApplicationFrameHost`）的一个 PID 下挂着多个应用的窗口，`MainWindowHandle` 只返回其中一个且会随激活跳变。bridge 用 `EnumWindows` 枚举真实顶层窗口，UWP 按每个窗口的宿主 AUMID 匹配目标；校验用 `IsWindow(hwnd)` + `GetWindowThreadProcessId(hwnd) == pid`，`apps` 也按窗口枚举，因此计算器与设置是两个独立的 app。
+- Windows CLI/MCP 截图与 SDK 一样使用目标 HWND 的 PrintWindow；CLI 在采集前后核对窗口几何并拒绝无效、隐藏或最小化窗口，不再截取可能属于遮挡应用的桌面像素。macOS/Windows 的 `set_value` 写入一次后直接读回最多 0.6 秒，未确认则报错；Windows/Linux CLI 的 `set_value` 保留原始空白和空字符串。
 - Windows runtime 默认只连接已经运行的 app，不会在 `get_app_state` 找不到进程时自动 `Start-Process`，也不会默认允许 `SetFocus` secondary action；这两条前台抢占路径分别需要 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH=1` 和 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS=1` 显式打开。`type_text` 默认优先对可写文本控件的 child HWND 发送 `EM_SETSEL` / `EM_REPLACESEL`，不再默认走可能触发前台激活的 UIA `ValuePattern.SetValue` fallback；需要旧行为时必须设置 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1`。UIA pattern 和 Win32 message fallback 本身仍是 best-effort：很多控件可以在后台响应，但 Windows 没有一套对所有 GUI toolkit 都等价于 macOS AX 的后台键鼠输入模型。
 - 这 9 个 tool 的协议面与 macOS 主线保持一致：`list_apps`、`get_app_state`、`click`、`perform_secondary_action`、`scroll`、`drag`、`type_text`、`press_key`、`set_value`。其中 element-targeted action 会优先复用上一轮 `get_app_state` 的 runtime id / automation metadata，coordinate action 使用 screenshot/window-relative 坐标。
 - Windows `click_method=accessibility` 映射到 UI Automation pattern，`app_post` 映射到 HWND `PostMessage`；macOS-only 的 `sky_click` 和没有实现的 `global` 都会在 snapshot lookup 前明确返回 unsupported。`auto` 仍保持 UIA 优先、window message fallback 的现有行为。
@@ -146,12 +147,13 @@
 - 开源版当前不复刻官方闭源实现里的 caller signing、私有 IPC、完整 overlay choreography 和 plugin 自安装逻辑。
 - 因为官方 `SkyComputerUseClient` 带有宿主侧 launch constraints，普通 stdio MCP client 在本机上可能被系统直接杀掉；如果要探测官方 bundled `computer-use`，`scripts/computer-use-cli` 的 app-server 模式现在只适合做工具清单和协议面观察。官方 `1.0.755` 的真实 tool call 还会经过 service-side sender authorization / active IPC client 追踪，外部 raw helper 即使走已签名 Codex binary，也可能返回 `Sender process is not authenticated`；需要真实使用官方工具时应走正常 Codex agent/tool 调用链，开源版则继续提供可直连的 `open-computer-use` MCP server。
 - 当前权限引导已经具备可运行 app、深链、拖拽辅助，以及一版更接近官方的 accessory panel 入场动画和返回 affordance；点击链路也已经补上独立 visual cursor、官方 asset fallback 和相对目标 window 的排序逻辑，并且在 overlay 可见期间会持续重申“排在目标 window 之上”，避免用户手动激活目标 app 后 cursor 被目标窗口重新盖住；但整体还没有完全复刻官方那套嵌入式 choreography / host 集成 / session approval 体验。
-- screenshot 当前通过 `ScreenCaptureKit` 捕获目标窗口，并以 MCP `image` content block 的 base64 PNG 返回，不再把普通 app 截图落盘到仓库或临时目录；编码前会按最大尺寸和目标字节数自适应缩小，避免复杂页面的大 PNG 触发 host 侧 MCP result 降级，同时 coordinate tools 继续按实际返回的 screenshot pixel 尺寸映射坐标；单次 ScreenCaptureKit capture 会设置超时，超时后省略 image block 而不是卡住整个 `get_app_state`。
+- screenshot 当前通过 `ScreenCaptureKit` 捕获目标窗口，并以 MCP `image` content block 的 base64 PNG 返回，不再把普通 app 截图落盘到仓库或临时目录；编码前会按最大尺寸和目标字节数自适应缩小，避免复杂页面的大 PNG 触发 host 侧 MCP result 降级，同时 coordinate tools 继续按实际返回的 screenshot pixel 尺寸映射坐标；单次 ScreenCaptureKit capture 会设置超时，超时后省略 image block 而不是卡住整个 `get_app_state`。采集尺寸与输入映射统一使用 CG window bounds，拒绝不匹配的图像比例；AX/窗口的非有限、负尺寸或溢出几何不参与坐标运算，文本渲染用 `?` 表示不可用坐标。
 - 会话状态现在是进程内内存态，保存每个 app 最近一次 snapshot 和 element index 映射。
 
 ## 主要验证路径
 
 - 单元测试：`swift test`
+- 独立 AppKit 输入回归：`OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS=1 OPEN_COMPUTER_USE_VISUAL_CURSOR=0 swift test --filter UpstreamNativeInputTests`（需辅助功能权限，不需要录屏权限；只操作测试进程的窗口）。
 - standalone cursor 构建：`swift build --product StandaloneCursor`
 - cursor lab 构建：`swift build --product CursorMotion`
 - 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`（标准 9-tool smoke + visual cursor idle smoke；脚本默认以 headless 模式启动内部 fixture，避免在用户桌面弹出测试窗口）
@@ -170,3 +172,7 @@
   - `open-computer-use snapshot <app>`
   - `open-computer-use call list_apps`
   - `open-computer-use call --calls '[{"tool":"get_app_state","args":{"app":"TextEdit"}}]'`
+
+## 上游同步边界
+
+当前采用必要修复的选择性移植，未完整合并 upstream；来源、判断及待适配功能见 [上游同步评估](references/upstream-reconciliation-20261109.md)。
