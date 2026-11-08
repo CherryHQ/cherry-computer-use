@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
+	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go/webcdp"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktop"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/desktopentry"
 	"github.com/iFurySt/open-codex-computer-use/apps/opencomputeruselinux/internal/display"
@@ -16,8 +18,10 @@ import (
 
 // linuxDesktop adapts the shared engine to SDK sessions; runtime-go owns identities and snapshots.
 type linuxDesktop struct {
-	engine   *desktop.Engine
-	launches launches
+	engine       *desktop.Engine
+	launches     launches
+	cdpLock      sync.Mutex
+	cdpEndpoints map[string]*webcdp.Endpoint
 }
 
 func newLinuxDesktop() *linuxDesktop {
@@ -185,6 +189,10 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 		readLimit = limit
 	}
 	native, err := d.engine.Observe(ctx, app, desktop.TreeOptions{MaxNodes: options.MaxTreeNodes, MaxDepth: options.MaxTreeDepth, TextReadLimit: readLimit})
+	if err == nil {
+		// The page channel is a property of the window, so it is resolved here rather than guessed from input.
+		d.resolveWebInput(target.Key, int(app.PID), native.Window.Title)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return sdkruntime.Observation{}, sdkruntime.Error("CANCELLED", "Observation cancelled")
@@ -265,11 +273,22 @@ func (d *linuxDesktop) Click(ctx context.Context, target sdkruntime.Target, obse
 // Act prefers semantic actions. Pointer and keyboard variants need
 // allowGlobalInput; pointer input needs X11 or the wlroots virtual pointer, keys
 // need X11, the wlroots virtual keyboard or the Wayland remoteDesktop permission. Targets are checked before any input is sent.
-func (d *linuxDesktop) Act(ctx context.Context, _ sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
+func (d *linuxDesktop) Act(ctx context.Context, sdkTarget sdkruntime.Target, observation sdkruntime.Observation, element *sdkruntime.Element, action sdkruntime.Action) error {
 	native := observation.Native.(desktop.Observation)
 	// Chromium and Electron pages take text and keys through the page, which needs no global input.
-	if element == nil && deliverWebInput(ctx, int(native.App.PID), native.Window.Title, action) {
-		return nil
+	// The page channel was resolved while observing, so nothing is inferred from attempted typing.
+	if element == nil && (action.Type == "typeText" || action.Type == "pressKey") {
+		if endpoint := d.cdpEndpoint(sdkTarget.Key); endpoint != nil {
+			err := deliverWebInput(ctx, endpoint, action)
+			switch {
+			case err == nil:
+				return nil
+			case errors.Is(err, webcdp.ErrNotDelivered):
+				return sdkruntime.Error("TARGET_UNAVAILABLE", "The page ignored the text; it may have blocked or replaced the input")
+			default:
+				d.forgetCdpEndpoint(sdkTarget.Key)
+			}
+		}
 	}
 	var node desktop.Node
 	if element != nil {

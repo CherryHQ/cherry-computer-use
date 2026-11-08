@@ -4,10 +4,13 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"sync"
 
 	sdk "github.com/CherryHQ/cherry-computer-use/packages/runtime-go"
+	"github.com/CherryHQ/cherry-computer-use/packages/runtime-go/webcdp"
 )
 
 //go:embed sdk.ps1
@@ -20,7 +23,11 @@ type sdkBridge interface {
 	Run(context.Context, any) (json.RawMessage, error)
 	Close(context.Context) error
 }
-type windowsDesktop struct{ bridge sdkBridge }
+type windowsDesktop struct {
+	bridge       sdkBridge
+	cdpLock      sync.Mutex
+	cdpEndpoints map[string]*webcdp.Endpoint
+}
 type windowsTarget struct {
 	PID      int    `json:"pid"`
 	Started  string `json:"started"`
@@ -104,19 +111,33 @@ func (d *windowsDesktop) Observe(ctx context.Context, target sdk.Target, options
 		result.Tree.Elements[i].Native = result.References[result.Tree.Elements[i].ID]
 	}
 	result.Observation.Native = windowsObservation{Target: result.Target, Bounds: result.Bounds}
+	// The page channel is a property of the window, so it is resolved here rather than guessed from input.
+	d.resolveWebInput(target, result.Target.Title)
 	return result.Observation, nil
 }
 func (d *windowsDesktop) Click(ctx context.Context, target sdk.Target, observation sdk.Observation, element sdk.Element) error {
 	return d.Act(ctx, target, observation, &element, sdk.Action{Type: "click", Button: "left", Count: 1})
 }
-func (d *windowsDesktop) Act(ctx context.Context, _ sdk.Target, observation sdk.Observation, element *sdk.Element, action sdk.Action) error {
+func (d *windowsDesktop) Act(ctx context.Context, target sdk.Target, observation sdk.Observation, element *sdk.Element, action sdk.Action) error {
 	if ctx.Err() != nil {
 		return sdk.Error("CANCELLED", "Action cancelled before dispatch")
 	}
 	native := observation.Native.(windowsObservation)
 	// Web content in Chromium and Electron takes input through the page, not through window messages.
-	if element == nil && deliverWebInput(ctx, native.Target, action) {
-		return nil
+	// The endpoint was resolved while observing, so this path never sends input to find out.
+	if element == nil && (action.Type == "typeText" || action.Type == "pressKey") {
+		if endpoint := d.cdpEndpoint(target.Key); endpoint != nil {
+			err := deliverWebInput(ctx, endpoint, action)
+			switch {
+			case err == nil:
+				return nil
+			case errors.Is(err, webcdp.ErrNotDelivered):
+				return &sdk.DomainError{Code: "TARGET_UNAVAILABLE", Message: "The page ignored the text; it may have blocked or replaced the input", Effect: "possible"}
+			default:
+				// Nothing reached the page: drop the stale endpoint and use the window-message path.
+				d.forgetCdpEndpoint(target.Key)
+			}
+		}
 	}
 	var reference any
 	if element != nil {

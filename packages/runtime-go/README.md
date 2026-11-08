@@ -16,8 +16,10 @@ native references outside wire data. Permission requests remain unsupported.
 DevTools Protocol. It is platform neutral by design: the platform driver supplies the process ID and
 window title, the package finds the endpoint (`--remote-debugging-port` or `DevToolsActivePort` inside
 `--user-data-dir`), selects the matching page target and sends `Input.insertText` /
-`Input.dispatchKeyEvent`. Text is read back before it counts as delivered, and every failure returns
-`ErrUnavailable` or an error so the driver falls back to its platform path. The WebSocket client is a
+`Input.dispatchKeyEvent`. The page channel is resolved once per observation (`Resolve`) and cached by the driver, so actions
+never send input to find out whether input works. Text is read back to confirm delivery:
+`ErrUnavailable` means nothing was sent (safe to fall back), `ErrNotDelivered` means the page ignored
+it and the caller must not retry through another channel. The WebSocket client is a
 small RFC 6455 implementation, so this module keeps zero third-party dependencies.
 `OPEN_COMPUTER_USE_DISABLE_CDP=1` turns the channel off. Windows and Linux drivers use it for
 `typeText`/`pressKey` without an element target; the macOS Swift runtime mirrors the same contract

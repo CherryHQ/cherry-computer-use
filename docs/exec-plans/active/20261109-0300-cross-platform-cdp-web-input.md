@@ -30,15 +30,19 @@ macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`），没�
 
 ## v1 行为
 
-- 只在 `typeText` / `pressKey`（没有 element 目标）时尝试，且仅在应用**已经暴露** CDP 时生效：
-  `--remote-debugging-port=<port>`，否则从 `--user-data-dir` 读 `DevToolsActivePort`。
+- **通道在 observe 时解析，不在输入时试探**：`observe` 期间对目标窗口解析一次
+  （`--remote-debugging-port=<port>`，否则 `--user-data-dir` 下的 `DevToolsActivePort` → `/json/list`
+  按标题选页面），结果缓存在 app session / target 上。`typeText` / `pressKey` 只使用已解析的结果：
+  有就发到页面，没有就直接走平台路径。不再"先打一段字看有没有反应"。
+- 解析结果的失效是显式的：传输层失败（页面关闭、target 消失）→ 丢弃该缓存并回退平台路径；
+  页面收到调用但值没变 → 返回 `ErrNotDelivered`，**不允许换通道重发**（否则会写两遍）。
 - `typeText`：由运行时在页面里自己聚焦可编辑元素（`activeElement` 优先，否则第一个可见
   `input`/`textarea`/`contenteditable`）→ `Input.insertText` → 回读 `activeElement.value`，
   没有增长就判定失败回退。中文/emoji 与 `+ * =` 都直接通过。
 - `pressKey`：`Input.dispatchKeyEvent`，命名键映射到 `key/code/windowsVirtualKeyCode`，
   修饰键转 CDP 位掩码（Alt=1 / Ctrl=2 / Meta=4 / Shift=8）。
-- 任何失败（无端点、无匹配页面、无焦点元素、回读不符）都返回 `ErrUnavailable`/普通错误，
-  driver 继续走原有平台路径，不改变非 Chromium 应用的行为。
+- 失败语义分成两类：`ErrUnavailable`（没端点/没匹配页面/没聚焦到可编辑元素，什么都没发出去，
+  可以安全回退）与 `ErrNotDelivered`（发出去但页面没接受，不能重发，向调用方报 `effect: possible`）。
 - `OPEN_COMPUTER_USE_DISABLE_CDP=1` 全局关闭该通道。
 - 运行时**不会**带调试开关重启用户应用：Chrome/Edge 136+ 拒绝默认 profile 上的调试开关，
   带 `--user-data-dir` 重启会丢登录态，必须有显式授权再做。
@@ -52,13 +56,16 @@ macOS 运行时是独立 Swift session（`packages/OpenComputerUseKit`），没�
 3. 多窗口 / OOPIF：`Target.getTargets`、`Target.setAutoAttach`、`Browser.getWindowForTarget`。
 4. 可重复 smoke：CI 里启动带调试开关的 Chromium + 固定页面，跑
    `typeText`/`pressKey`/断言页面值；本 PR 只有手工验证记录。
-5. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
+5. 把解析结果暴露到 observation/capabilities（例如 `cdp: true`），让模型提前知道走哪条通道。
+6. `set_value` 是否可以借 CDP 做到"按元素写值"（现在仍走各平台 Value/EditableText）。
 
 ## 决策记录
 
 - 2026-11-09：CDP 实现放共享 Go 包，不放平台 bridge；平台只提供 `(pid, 窗口标题)`。
 - 2026-11-09：只在应用已经暴露 CDP 时启用，不替用户决定重启（会丢现场）。
-- 2026-11-09：`typeText` 写后回读页面值，写不进去就回退，不返回假成功。
+- 2026-11-09：`typeText` 写后回读页面值确认投递，但**不再用"写不进去"来决定是否换通道**：
+  投递失败分 `ErrUnavailable`（未发出，可回退）与 `ErrNotDelivered`（已发出，禁止重发）。
+- 2026-11-09：通道在 observe 时解析一次并缓存，动作路径不做探测；失效时丢弃缓存再回退。
 - 2026-11-09：WebSocket 用标准库手写，`packages/runtime-go` 保持零第三方依赖；
   Swift 侧用 `URLSessionWebSocketTask`，不引入第三方包。
 - 2026-11-09：macOS 用 Swift 镜像同一契约（不把 Go 包塞进 .app bundle，保持签名与权限身份不变）。

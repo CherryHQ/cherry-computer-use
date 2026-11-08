@@ -19,8 +19,12 @@ import (
 )
 
 // ErrUnavailable reports that the application exposes no DevTools endpoint, so the caller should use
-// the platform input path instead.
+// the platform input path instead. Nothing was delivered, so falling back is safe.
 var ErrUnavailable = errors.New("webcdp: application exposes no DevTools endpoint")
+
+// ErrNotDelivered reports that the page accepted the call but the text did not appear. Callers must not
+// retry through another channel: a partial write would be applied twice.
+var ErrNotDelivered = errors.New("webcdp: page did not accept the text")
 
 // Target is one DevTools page target.
 type Target struct {
@@ -188,24 +192,46 @@ func SelectTarget(targets []Target, windowTitle string) *Target {
 	return &pages[0]
 }
 
-// Input delivers text and key input to one application.
-type Input struct {
-	PID         int
-	WindowTitle string
+// Endpoint is a page target that was resolved while observing an application. Callers resolve it once
+// per observation instead of probing whether input works.
+type Endpoint struct {
+	Port   int
+	Target Target
 }
 
-func (in Input) open(ctx context.Context) (*Session, error) {
-	port, err := Discover(in.PID)
+// Resolve finds the DevTools endpoint and the page target of an application window.
+func Resolve(ctx context.Context, pid int, windowTitle string) (*Endpoint, error) {
+	port, err := Discover(pid)
 	if err != nil {
 		return nil, err
 	}
 	targets, err := PageTargets(ctx, port)
 	if err != nil {
-		return nil, err
+		return nil, ErrUnavailable
 	}
-	target := SelectTarget(targets, in.WindowTitle)
+	target := SelectTarget(targets, windowTitle)
 	if target == nil {
 		return nil, ErrUnavailable
 	}
-	return Dial(ctx, target.WebSocketURL)
+	return &Endpoint{Port: port, Target: *target}, nil
+}
+
+// Input delivers text and key input to one application. Endpoint is normally resolved during
+// observation; when it is nil the input path falls back to discovering it first.
+type Input struct {
+	PID         int
+	WindowTitle string
+	Endpoint    *Endpoint
+}
+
+func (in Input) open(ctx context.Context) (*Session, error) {
+	endpoint := in.Endpoint
+	if endpoint == nil {
+		resolved, err := Resolve(ctx, in.PID, in.WindowTitle)
+		if err != nil {
+			return nil, err
+		}
+		endpoint = resolved
+	}
+	return Dial(ctx, endpoint.Target.WebSocketURL)
 }

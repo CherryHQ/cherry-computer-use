@@ -32,11 +32,15 @@
   （含 16/64 位长度）、ping→pong、握手成功/失败、命令行与 `DevToolsActivePort` 解析、
   target 选择、键位描述符。
 
+- **[不靠输入探测]**: 通道改为在 `observe` 时解析一次并缓存在 app session（Windows/Linux: `webcdp.Resolve`
+  + 目标 key；macOS: `AppControl.webCDP`），`typeText`/`pressKey` 只用已解析结果。失败分两类：
+  `ErrUnavailable`（未发出，安全回退）与 `ErrNotDelivered`（页面收到但没接受，禁止换通道重发）。
+
 ### 🧠 Design Intent (Why)
 CDP 与操作系统无关，把它写在 Windows 的 PowerShell 里意味着 macOS/Linux 必须各自再实现一遍，
 而且把"网页输入"绑在某个平台的 bridge 上。共享包只依赖 `(pid, 窗口标题)` 两个平台输入，
-各 driver 负责提供，后续 macOS 也可以按同一契约实现或复用该包。写入后回读页面值仍然是硬要求：
-不确认就不报成功。
+各 driver 负责提供，后续 macOS 也可以按同一契约实现或复用该包。写入后回读页面值仍然是硬要求：不确认就不报成功；但**确认只用来报告，不用来决定换通道**，
+否则"输入被页面清空/替换"这类正常行为会触发二次输入。通道本身在 observe 时确定，动作路径零探测。
 
 ### 📁 Files Modified
 - `packages/runtime-go/webcdp/`（新增 6 个实现文件 + 1 个测试文件）

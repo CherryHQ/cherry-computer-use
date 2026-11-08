@@ -12,6 +12,20 @@ enum WebCDPInput {
         let webSocketURL: String
     }
 
+    /// A page target resolved while observing a window, so input never has to discover it.
+    struct Endpoint: Equatable {
+        let webSocketURL: String
+        let title: String
+    }
+
+    enum Outcome {
+        case delivered
+        /// No DevTools endpoint for this window: safe to use Accessibility.
+        case unavailable
+        /// The page accepted the call but nothing changed. Retrying elsewhere would apply it twice.
+        case notDelivered
+    }
+
     struct KeyDescriptor: Equatable {
         let key: String
         let code: String
@@ -33,9 +47,15 @@ enum WebCDPInput {
 
     // MARK: - Input
 
-    static func insertText(_ text: String, pid: pid_t, windowTitle: String?) -> Bool {
-        guard isEnabled, !text.isEmpty else { return false }
-        guard let target = resolveTarget(pid: pid, windowTitle: windowTitle) else { return false }
+    /// Resolves the page channel for a window. Called while observing, never while typing.
+    static func resolveEndpoint(pid: pid_t, windowTitle: String?) -> Endpoint? {
+        guard isEnabled, let port = port(forPID: pid) else { return nil }
+        guard let target = selectTarget(pageTargets(port: port), windowTitle: windowTitle) else { return nil }
+        return Endpoint(webSocketURL: target.webSocketURL, title: target.title)
+    }
+
+    static func insertText(_ text: String, endpoint: Endpoint) -> Outcome {
+        guard isEnabled, !text.isEmpty else { return .unavailable }
         let focusParams = objectJSON([
             "expression": focusExpression,
             "returnByValue": true,
@@ -49,45 +69,39 @@ enum WebCDPInput {
         ])
         do {
             let reply = try runSync { () -> (focus: Data, value: Data) in
-                let session = try await openSession(target.webSocketURL)
+                let session = try await openSession(endpoint.webSocketURL)
                 defer { session.task.cancel(with: .normalClosure, reason: nil) }
                 let focus = try await session.call(method: "Runtime.evaluate", paramsJSON: focusParams)
                 _ = try await session.call(method: "Input.insertText", paramsJSON: insertParams)
                 let value = try await session.call(method: "Runtime.evaluate", paramsJSON: valueParams)
                 return (focus, value)
             }
-            guard let before = decodeFocus(reply.focus), before.focused else { return false }
-            guard let after = decodeString(reply.value) else { return false }
-            return after.count > before.value.count
+            guard let before = decodeFocus(reply.focus), before.focused else { return .unavailable }
+            guard let after = decodeString(reply.value) else { return .unavailable }
+            return after.count > before.value.count ? .delivered : .notDelivered
         } catch {
-            return false
+            return .unavailable
         }
     }
 
-    static func pressKey(_ key: String, pid: pid_t, windowTitle: String?) -> Bool {
-        guard isEnabled, let descriptor = descriptor(forKey: key) else { return false }
-        guard let target = resolveTarget(pid: pid, windowTitle: windowTitle) else { return false }
+    static func pressKey(_ key: String, endpoint: Endpoint) -> Outcome {
+        guard isEnabled, let descriptor = descriptor(forKey: key) else { return .unavailable }
         let down = keyEventJSON(descriptor, type: "keyDown")
         let up = keyEventJSON(descriptor, type: "keyUp")
         do {
             try runSync { () -> Void in
-                let session = try await openSession(target.webSocketURL)
+                let session = try await openSession(endpoint.webSocketURL)
                 defer { session.task.cancel(with: .normalClosure, reason: nil) }
                 _ = try await session.call(method: "Input.dispatchKeyEvent", paramsJSON: down)
                 _ = try await session.call(method: "Input.dispatchKeyEvent", paramsJSON: up)
             }
-            return true
+            return .delivered
         } catch {
-            return false
+            return .unavailable
         }
     }
 
     // MARK: - Discovery
-
-    static func resolveTarget(pid: pid_t, windowTitle: String?) -> Target? {
-        guard let port = port(forPID: pid) else { return nil }
-        return selectTarget(pageTargets(port: port), windowTitle: windowTitle)
-    }
 
     static func port(forPID pid: pid_t) -> Int? {
         guard let line = commandLine(pid: pid) else { return nil }
