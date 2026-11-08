@@ -1382,6 +1382,249 @@ function Invoke-TypeText($process, [string]$text, [bool]$AllowFocusFallback = $t
     return $false
 }
 
+# --- Chrome DevTools Protocol (Chromium / Electron web content) -------------------------------
+# Web content inside Chromium and Electron does not take posted window messages, and UIA only models the
+# accessibility tree. When the application already exposes CDP (it was started with
+# --remote-debugging-port or wrote DevToolsActivePort), text and key input is delivered through the page
+# instead: exact characters, no foreground requirement, no IME proxy. Everything else stays on UIA.
+# Opt out with OPEN_COMPUTER_USE_WINDOWS_CDP=0.
+
+function Test-CdpDisabled {
+    $value = [Environment]::GetEnvironmentVariable('OPEN_COMPUTER_USE_WINDOWS_CDP')
+    if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+    return @('0', 'false', 'no', 'off') -contains $value.Trim().ToLowerInvariant()
+}
+
+function Get-ProcessCommandLine([int]$processId) {
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
+        return [string]$process.CommandLine
+    } catch {
+        return ''
+    }
+}
+
+function Get-CdpPort([int]$processId) {
+    $commandLine = Get-ProcessCommandLine $processId
+    if ($commandLine -match '--remote-debugging-port=(\d+)') {
+        return [int]$Matches[1]
+    }
+    if ($commandLine -match '--remote-debugging-pipe') {
+        return 0
+    }
+    $userDataDir = ''
+    if ($commandLine -match '--user-data-dir="([^"]+)"') {
+        $userDataDir = $Matches[1]
+    } elseif ($commandLine -match '--user-data-dir=(\S+)') {
+        $userDataDir = $Matches[1]
+    }
+    if (-not [string]::IsNullOrWhiteSpace($userDataDir)) {
+        # Electron and Chromium record the active debugging endpoint in the profile directory.
+        $activePort = Join-Path $userDataDir 'DevToolsActivePort'
+        if (Test-Path -LiteralPath $activePort) {
+            $first = Get-Content -LiteralPath $activePort -TotalCount 1
+            if ("$first" -match '^\d+$') {
+                return [int]$first
+            }
+        }
+    }
+    return 0
+}
+
+function Get-CdpPageTargets([int]$port) {
+    try {
+        return @(Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/list" -TimeoutSec 3 -ErrorAction Stop)
+    } catch {
+        return @()
+    }
+}
+
+function Resolve-CdpTarget([IntPtr]$hwnd, $process, [string]$windowTitle) {
+    if (Test-CdpDisabled) { return $null }
+    # Cheap gate first: only Chromium-family windows can expose CDP, so UIA-only apps never pay for WMI.
+    if ([OCUWin32]::ClassNameOf($hwnd) -notlike 'Chrome_WidgetWin*') { return $null }
+    $port = Get-CdpPort ([int]$process.Id)
+    if ($port -le 0) { return $null }
+    $targets = @(Get-CdpPageTargets $port | Where-Object { $_.type -eq 'page' -and -not [string]::IsNullOrWhiteSpace($_.webSocketDebuggerUrl) })
+    if ($targets.Count -eq 0) { return $null }
+    $selected = $null
+    if (-not [string]::IsNullOrWhiteSpace($windowTitle)) {
+        $selected = $targets | Where-Object { $_.title -ceq $windowTitle } | Select-Object -First 1
+        if ($null -eq $selected) {
+            $selected = $targets | Where-Object {
+                (-not [string]::IsNullOrWhiteSpace($_.title)) -and
+                ($windowTitle.StartsWith($_.title) -or $_.title.StartsWith($windowTitle))
+            } | Select-Object -First 1
+        }
+    }
+    if ($null -eq $selected) { $selected = $targets[0] }
+    return @{ port = $port; target = $selected; count = $targets.Count }
+}
+
+function Open-CdpSession([string]$webSocketUrl) {
+    $socket = New-Object System.Net.WebSockets.ClientWebSocket
+    $socket.Options.KeepAliveInterval = [TimeSpan]::FromSeconds(30)
+    $connect = $socket.ConnectAsync([Uri]$webSocketUrl, [Threading.CancellationToken]::None)
+    if (-not $connect.Wait(5000)) {
+        $socket.Dispose()
+        throw 'CDP connection timed out'
+    }
+    return $socket
+}
+
+function Invoke-CdpMethod($socket, [string]$method, $params) {
+    $script:cdpMessageId = [int]$script:cdpMessageId + 1
+    $id = $script:cdpMessageId
+    if ($null -eq $params) { $params = @{} }
+    $payload = @{ id = $id; method = $method; params = $params } | ConvertTo-Json -Depth 12 -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+    $send = $socket.SendAsync([ArraySegment[byte]]::new($bytes), 'Text', $true, [Threading.CancellationToken]::None)
+    if (-not $send.Wait(5000)) { throw "CDP $method send timed out" }
+    $buffer = New-Object byte[] 262144
+    while ($true) {
+        $stream = New-Object System.IO.MemoryStream
+        do {
+            $receive = $socket.ReceiveAsync([ArraySegment[byte]]::new($buffer), [Threading.CancellationToken]::None)
+            if (-not $receive.Wait(10000)) { throw "CDP $method receive timed out" }
+            $stream.Write($buffer, 0, $receive.Result.Count)
+        } while (-not $receive.Result.EndOfMessage)
+        $message = [Text.Encoding]::UTF8.GetString($stream.ToArray()) | ConvertFrom-Json
+        if ($message.id -eq $id) {
+            if ($null -ne $message.error) { throw ('CDP ' + $method + ': ' + $message.error.message) }
+            return $message.result
+        }
+    }
+}
+
+function Invoke-CdpScript($socket, [string]$expression) {
+    $result = Invoke-CdpMethod $socket 'Runtime.evaluate' @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
+    if ($null -ne $result.exceptionDetails) { return $null }
+    return $result.result.value
+}
+
+# Focuses an editable element so character input has a destination. Returns its current value.
+function Initialize-CdpTextTarget($socket) {
+    $expression = @'
+(function () {
+  function editable(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    return /^(INPUT|TEXTAREA)$/.test(el.tagName) && !el.disabled && !el.readOnly;
+  }
+  var active = document.activeElement;
+  if (editable(active)) return { focused: true, value: active.value == null ? '' : String(active.value) };
+  var selector = 'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true]';
+  var candidates = Array.prototype.slice.call(document.querySelectorAll(selector));
+  for (var i = 0; i < candidates.length; i++) {
+    var el = candidates[i];
+    var rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    el.focus();
+    return { focused: true, value: el.value == null ? '' : String(el.value) };
+  }
+  return { focused: false };
+})()
+'@
+    return Invoke-CdpScript $socket $expression
+}
+
+function Send-CdpText([IntPtr]$hwnd, $process, [string]$windowTitle, [string]$text) {
+    $cdp = Resolve-CdpTarget $hwnd $process $windowTitle
+    if ($null -eq $cdp) { return $false }
+    $socket = $null
+    try {
+        $socket = Open-CdpSession $cdp.target.webSocketDebuggerUrl
+        $state = Initialize-CdpTextTarget $socket
+        if ($null -eq $state -or -not $state.focused) { return $false }
+        Invoke-CdpMethod $socket 'Input.insertText' @{ text = $text } | Out-Null
+        Start-Sleep -Milliseconds 80
+        $after = Invoke-CdpScript $socket 'document.activeElement ? String(document.activeElement.value == null ? document.activeElement.textContent : document.activeElement.value) : null'
+        if ($null -eq $after) { return $false }
+        $before = if ($null -eq $state.value) { '' } else { [string]$state.value }
+        return $after.Length -gt $before.Length
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $socket) { $socket.Dispose() }
+    }
+}
+
+# Keyboard semantics that character input cannot express.
+function Get-CdpKeyDescriptor([string]$key) {
+    $map = @{
+        'return' = @{ key = 'Enter'; code = 'Enter'; vk = 13; text = "`r" }
+        'enter' = @{ key = 'Enter'; code = 'Enter'; vk = 13; text = "`r" }
+        'tab' = @{ key = 'Tab'; code = 'Tab'; vk = 9 }
+        'escape' = @{ key = 'Escape'; code = 'Escape'; vk = 27 }
+        'esc' = @{ key = 'Escape'; code = 'Escape'; vk = 27 }
+        'backspace' = @{ key = 'Backspace'; code = 'Backspace'; vk = 8 }
+        'delete' = @{ key = 'Delete'; code = 'Delete'; vk = 46 }
+        'space' = @{ key = ' '; code = 'Space'; vk = 32; text = ' ' }
+        'left' = @{ key = 'ArrowLeft'; code = 'ArrowLeft'; vk = 37 }
+        'up' = @{ key = 'ArrowUp'; code = 'ArrowUp'; vk = 38 }
+        'right' = @{ key = 'ArrowRight'; code = 'ArrowRight'; vk = 39 }
+        'down' = @{ key = 'ArrowDown'; code = 'ArrowDown'; vk = 40 }
+        'home' = @{ key = 'Home'; code = 'Home'; vk = 36 }
+        'end' = @{ key = 'End'; code = 'End'; vk = 35 }
+        'page_up' = @{ key = 'PageUp'; code = 'PageUp'; vk = 33 }
+        'prior' = @{ key = 'PageUp'; code = 'PageUp'; vk = 33 }
+        'page_down' = @{ key = 'PageDown'; code = 'PageDown'; vk = 34 }
+        'next' = @{ key = 'PageDown'; code = 'PageDown'; vk = 34 }
+        'insert' = @{ key = 'Insert'; code = 'Insert'; vk = 45 }
+    }
+    $chord = Split-KeyChord $key
+    $main = $chord.main
+    $descriptor = $map[$main.ToLowerInvariant()]
+    if ($null -eq $descriptor) {
+        if ($main.Length -eq 1) {
+            $upper = $main.ToUpperInvariant()
+            $descriptor = @{ key = $main; code = ('Key' + $upper); vk = [int][char]$upper; text = $main }
+        } elseif ($main -match '^f([1-9]|1[0-2])$') {
+            $descriptor = @{ key = ('F' + $Matches[1]); code = ('F' + $Matches[1]); vk = (0x70 + [int]$Matches[1] - 1) }
+        } else {
+            return $null
+        }
+    }
+    $descriptor.modifiers = 0
+    if ($chord.alt) { $descriptor.modifiers += 1 }
+    if ($chord.control) { $descriptor.modifiers += 2 }
+    if ($chord.super) { $descriptor.modifiers += 4 }
+    if ($chord.shift) { $descriptor.modifiers += 8 }
+    return $descriptor
+}
+
+function Send-CdpKey([IntPtr]$hwnd, $process, [string]$windowTitle, [string]$key) {
+    $descriptor = Get-CdpKeyDescriptor $key
+    if ($null -eq $descriptor) { return $false }
+    $cdp = Resolve-CdpTarget $hwnd $process $windowTitle
+    if ($null -eq $cdp) { return $false }
+    $socket = $null
+    try {
+        $socket = Open-CdpSession $cdp.target.webSocketDebuggerUrl
+        $down = @{
+            type = 'keyDown'; key = $descriptor.key; code = $descriptor.code
+            windowsVirtualKeyCode = $descriptor.vk; nativeVirtualKeyCode = $descriptor.vk
+            modifiers = $descriptor.modifiers
+        }
+        if ($descriptor.ContainsKey('text')) {
+            $down.text = $descriptor.text
+            $down.unmodifiedText = $descriptor.text
+        }
+        Invoke-CdpMethod $socket 'Input.dispatchKeyEvent' $down | Out-Null
+        Invoke-CdpMethod $socket 'Input.dispatchKeyEvent' @{
+            type = 'keyUp'; key = $descriptor.key; code = $descriptor.code
+            windowsVirtualKeyCode = $descriptor.vk; nativeVirtualKeyCode = $descriptor.vk
+            modifiers = $descriptor.modifiers
+        } | Out-Null
+        Start-Sleep -Milliseconds 60
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $socket) { $socket.Dispose() }
+    }
+}
+
 function Invoke-Operation($process, $operation, $element) {
     $hwnd = if ($null -ne $operation.windowHandle -and [long]$operation.windowHandle -ne 0) { [IntPtr][long]$operation.windowHandle } else { [IntPtr][long]$process.MainWindowHandle }
     $windowBounds = $operation.windowBounds
@@ -1464,12 +1707,18 @@ function Invoke-Operation($process, $operation, $element) {
             Send-Drag $hwnd ([int][math]::Round($windowBounds.x + [double]$operation.from_x)) ([int][math]::Round($windowBounds.y + [double]$operation.from_y)) ([int][math]::Round($windowBounds.x + [double]$operation.to_x)) ([int][math]::Round($windowBounds.y + [double]$operation.to_y))
         }
         "type_text" {
-            if (-not (Invoke-TypeText $process $operation.text ($operation.allowFocusFallback -ne $false))) {
-                Send-Text $hwnd $operation.text
+            # Chromium/Electron pages only accept real page input; CDP delivers exact characters in the
+            # background. The UIA paths below stay as the fallback for everything else.
+            if (-not (Send-CdpText $hwnd $process ([OCUWin32]::WindowTextOf($hwnd)) $operation.text)) {
+                if (-not (Invoke-TypeText $process $operation.text ($operation.allowFocusFallback -ne $false))) {
+                    Send-Text $hwnd $operation.text
+                }
             }
         }
         "press_key" {
-            Send-Key $hwnd $operation.key
+            if (-not (Send-CdpKey $hwnd $process ([OCUWin32]::WindowTextOf($hwnd)) $operation.key)) {
+                Send-Key $hwnd $operation.key
+            }
         }
         "set_value" {
             if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }
