@@ -69,6 +69,26 @@ Or add it to your own client manually:
 }
 ```
 
+### App icons in MCP clients
+
+On macOS, successful `get_app_state` and action results include the resolved target
+in `_meta["com.cherrystudio.computer-use/app"]`:
+
+```json
+{
+  "name": "Finder",
+  "bundleIdentifier": "com.apple.finder",
+  "icon": { "mimeType": "image/png", "data": "<base64 PNG>" }
+}
+```
+
+The optional icon is a 64×64 PNG from the target application. Clients can show it
+beside the tool call without adding it to model-visible `content` or confusing it
+with the window screenshot. `list_apps` and failed calls have no target metadata;
+clients should keep their default presentation when metadata or an icon is absent.
+This metadata is currently specific to the macOS MCP/CLI path; the SDK protocol and
+Windows/Linux runtimes are unchanged.
+
 ### Skill
 
 Install the skill directly:

@@ -26,10 +26,12 @@ public struct ToolResultContentItem: @unchecked Sendable {
 public struct ToolCallResult: @unchecked Sendable {
     public let content: [ToolResultContentItem]
     public let isError: Bool
+    public let app: ToolResultApp?
 
-    public init(content: [ToolResultContentItem], isError: Bool = false) {
+    public init(content: [ToolResultContentItem], isError: Bool = false, app: ToolResultApp? = nil) {
         self.content = content
         self.isError = isError
+        self.app = app
     }
 
     public var primaryText: String? {
@@ -37,10 +39,14 @@ public struct ToolCallResult: @unchecked Sendable {
     }
 
     public var asDictionary: [String: Any] {
-        [
+        var result: [String: Any] = [
             "content": content.map(\.dictionary),
             "isError": isError,
         ]
+        if let app {
+            result["_meta"] = ["com.cherrystudio.computer-use/app": app.dictionary]
+        }
+        return result
     }
 
     public static func text(_ text: String, isError: Bool = false) -> ToolCallResult {
