@@ -4,7 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
-| 2026-11-10 | macOS MCP 目标应用图标 | 支持该元数据的客户端可在工具调用旁显示实际操作的应用图标。 | 快照与动作结果通过 MCP `_meta` 携带目标应用名称、bundle identifier 和可选 64×64 PNG；拖拽保留元数据，模型可见内容不变。 |
+| 2026-11-10 | 客户端应用图标查询 | 客户端可按需显示应用图标，无需在工具结果中重复传输图标。 | SDK 新增独立只读 `getAppIcon({ identity })`；macOS 返回 64×64 PNG，Windows/Linux 返回 unavailable，不启动应用或创建控制会话。 |
 | 2026-11-09 | Chromium / Electron 页面输入（CDP，Windows / Linux / macOS） | Edge、Chrome 和 Electron 应用在启动时带过远程调试开关的情况下，Agent 可以直接把文字和按键投递进页面：`+ * =` 等符号、中文与 emoji 都能原样写入，且不需要把窗口切到前台。 | `packages/runtime-go/webcdp` 新增跨平台 CDP 通道：从命令行或 `DevToolsActivePort` 发现端点、按窗口标题选页面 target、`Input.insertText`（写后回读校验）与 `Input.dispatchKeyEvent`（命名键/修饰键）；WebSocket 用标准库实现，无新增依赖。Windows/Linux driver 与 macOS 的 Swift session 在 `typeText`/`pressKey` 上优先尝试，失败回退原路径；`OPEN_COMPUTER_USE_DISABLE_CDP=1` 可关闭。 |
 
 ## 2026-11

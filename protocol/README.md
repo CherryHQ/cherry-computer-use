@@ -132,3 +132,12 @@ or GPU screenshot correctness.
 `resolveApp({ query, launch: false })` only resolves running targets. Hosts use this when reacquiring a persistent handle so a read cannot silently relaunch an application closed by the user. Explicit binding defaults to allowing launch on supported platforms.
 
 `getAppState({ appSessionId, includeScreenshot: false })` collects AX state without calling the native screenshot backend on macOS, Windows or Linux. Omitted/true preserves capture. A skipped screenshot reports `CAPTURE_NOT_REQUESTED`, not a permission failure. Coordinate input requires a screenshot-enabled observation; semantic input and keyboard targeting remain available. This option requires the matching unreleased SDK/native build.
+
+
+## Host presentation queries
+
+`getAppIcon({ identity })` is a read-only SDK request outside app control sessions.
+`AppIconResult` is either `available` with a 64×64 PNG (base64 bounded to 65,536
+characters), or `unavailable`. macOS resolves the installed bundle by identity
+without launching it. Windows/Linux validate the request and report unavailable.
+It does not change MCP tool results, app descriptors, snapshots or action receipts.

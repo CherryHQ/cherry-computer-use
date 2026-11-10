@@ -184,3 +184,22 @@ func TestAppIDResolvesInFreshRuntime(t *testing.T) {
 		t.Fatalf("wanted %v, got %v", first, resolved)
 	}
 }
+
+func TestAppIconQueryIsPresentationOnly(t *testing.T) {
+	d := NewDesktop(&desktopFixture{})
+	result, err := desktopCall(t, d, "getAppIcon", map[string]any{"identity": "com.example.counter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["status"] != "unavailable" {
+		t.Fatalf("unexpected icon: %v", result)
+	}
+	if len(d.sessions) != 0 || len(d.apps) != 0 {
+		t.Fatal("icon query acquired desktop state")
+	}
+	for _, input := range []map[string]any{{}, {"identity": ""}, {"identity": "counter", "launch": true}} {
+		if _, err := desktopCall(t, d, "getAppIcon", input); err == nil {
+			t.Fatalf("accepted invalid icon request: %v", input)
+		}
+	}
+}

@@ -218,3 +218,7 @@ rpc.onRequest('shutdown', () => {
 })
 inputStream.on('end', () => process.exit(0))
 rpc.listen()
+
+rpc.onRequest('getAppIcon', (input) => input.identity === 'missing'
+  ? { status: 'unavailable' }
+  : { status: 'available', icon: { mimeType: 'image/png', dataBase64: input.identity === 'oversized' ? 'YQ=='.repeat(20000) : 'aWNvbg==' } })

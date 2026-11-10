@@ -216,7 +216,7 @@ func appendingDragDeliveryNote(to result: ToolCallResult, path: DragDeliveryPath
     var content = result.content
     let insertIndex = content.firstIndex { $0.dictionary["type"] as? String == "image" } ?? content.endIndex
     content.insert(.text(dragDeliveryNote(for: path)), at: insertIndex)
-    return ToolCallResult(content: content, isError: result.isError, app: result.app)
+    return ToolCallResult(content: content, isError: result.isError)
 }
 
 func screenshotPixelScale(
@@ -1975,6 +1975,6 @@ public final class ComputerUseService {
         if let screenshotPNGData = snapshot.screenshotPNGData {
             content.append(.pngImage(screenshotPNGData))
         }
-        return ToolCallResult(content: content, app: ToolResultApp(app: snapshot.app))
+        return ToolCallResult(content: content)
     }
 }

@@ -242,6 +242,14 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		return nil, Error("CANCELLED", "Request cancelled before execution")
 	}
 	switch method {
+	case "getAppIcon":
+		var input struct {
+			Identity string `json:"identity"`
+		}
+		if decodeObject(params, &input) != nil || input.Identity == "" || len([]rune(input.Identity)) > 512 {
+			return nil, Error("INVALID_ARGUMENT", "Expected an application identity")
+		}
+		return map[string]any{"status": "unavailable"}, nil
 	case "listApps":
 		if decodeObject(params, &struct{}{}) != nil {
 			return nil, Error("INVALID_ARGUMENT", "Expected empty parameters")

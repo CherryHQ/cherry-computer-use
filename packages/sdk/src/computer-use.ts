@@ -91,6 +91,10 @@ export async function connectClient(
         'possible'
       )
     },
+    getAppIcon: async (params, options) => {
+      input(params, validators.validateAppIconInput)
+      return connection.request('getAppIcon', params, validators.validateAppIconResult, options)
+    },
     listApps: (options) =>
       connection.request('listApps', {}, validators.validateAppList, options),
     resolveAppIdentity: async (params, options) => {

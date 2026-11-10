@@ -132,6 +132,17 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
         guard !controlLock.withLock({ uncertain }) else { throw SDKDomainError("CLOSED", "An earlier action has an uncertain outcome; start a new session") }
         try check(cancellation)
         switch method {
+        case "getAppIcon":
+            guard Set(params.keys) == ["identity"], let identity = params["identity"] as? String,
+                  !identity.isEmpty, identity.count <= 512 else {
+                throw SDKDomainError("INVALID_ARGUMENT", "Expected an application identity")
+            }
+            guard !AppSafetyPolicy.isBlocked(bundleIdentifier: identity),
+                  let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identity),
+                  let png = AppIcon.iconPNG(NSWorkspace.shared.icon(forFile: url.path)) else {
+                return ["status": "unavailable"]
+            }
+            return ["status": "available", "icon": ["mimeType": "image/png", "dataBase64": png.base64EncodedString()]]
         case "listApps":
             guard params.isEmpty else { throw SDKDomainError("INVALID_ARGUMENT", "Expected empty parameters") }
             apps = apps.filter { !$0.value.runningApplication.isTerminated }

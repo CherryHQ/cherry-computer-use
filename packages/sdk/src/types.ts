@@ -39,6 +39,8 @@ export interface ComputerUseClient {
     input: Wire.PermissionRequest,
     options?: CallOptions
   ): Promise<Wire.PermissionStatus>
+  /** Read presentation data without opening, launching or controlling an app. */
+  getAppIcon(input: Wire.AppIconInput, options?: CallOptions): Promise<Wire.AppIconResult>
   listApps(options?: CallOptions): Promise<Wire.AppInfo[]>
   resolveAppIdentity(input: Wire.AppIdentityInput, options?: CallOptions): Promise<Wire.AppIdentity>
   resolveApp(input: Wire.ResolveAppInput, options?: CallOptions): Promise<Wire.AppInfo>
