@@ -100,6 +100,11 @@ jobs:
           swift test --filter 'SDKSessionTests|PermissionOnboardingTests'
           OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc ./scripts/build-open-computer-use-app.sh debug
       - if: runner.os == 'Linux'
+        name: Linux application icon libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-0t64 librsvg2-common
+      - if: runner.os == 'Linux'
         working-directory: apps/OpenComputerUseLinux
         run: |
           unformatted=$(gofmt -l .)

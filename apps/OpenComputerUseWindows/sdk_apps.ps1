@@ -43,6 +43,81 @@ public static class SDKApplicationIdentity {
 }
 '@
 
+function Get-SDKAppIcon([string]$identity) {
+    try {
+        if ($identity.StartsWith('win32:exe:')) {
+            $path = $identity.Substring(10)
+            $resolved = Resolve-SDKAppIdentity $path
+            if ($resolved.id -cne $identity) { return '' }
+            $parsingName = $resolved.query
+        } elseif ($identity.StartsWith('win32:aumid:')) {
+            $resolved = Resolve-SDKAppIdentity $identity.Substring(12)
+            if ($resolved.id -cne $identity) { return '' }
+            $parsingName = 'shell:AppsFolder\' + $resolved.query
+        } else { return '' }
+        Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
+public static class SDKApplicationIcon {
+    [StructLayout(LayoutKind.Sequential)] struct Size { public int Width, Height; }
+    [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ImageFactory {
+        [PreserveSig] int GetImage(Size size, uint flags, out IntPtr bitmap);
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHCreateItemFromParsingName(string name, IntPtr context, ref Guid iid, out ImageFactory item);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
+    [StructLayout(LayoutKind.Sequential)] struct BitmapInfo {
+        public uint Size; public int Width, Height; public ushort Planes, BitCount;
+        public uint Compression, SizeImage; public int XPelsPerMeter, YPelsPerMeter;
+        public uint ClrUsed, ClrImportant;
+    }
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern int GetDIBits(IntPtr dc, IntPtr bitmap, uint start, uint lines, IntPtr bits, ref BitmapInfo info, uint usage);
+    static Bitmap ReadBitmap(IntPtr handle) {
+        using (var dimensions = Image.FromHbitmap(handle)) {
+            var bitmap = new Bitmap(dimensions.Width, dimensions.Height, PixelFormat.Format32bppArgb);
+            var info = new BitmapInfo { Size = 40, Width = bitmap.Width, Height = -bitmap.Height, Planes = 1, BitCount = 32 };
+            IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+            var bits = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            int rows;
+            try { rows = GetDIBits(dc, handle, 0, (uint)bitmap.Height, bits.Scan0, ref info, 0); }
+            finally { bitmap.UnlockBits(bits); DeleteDC(dc); }
+            if (rows != bitmap.Height) { bitmap.Dispose(); throw new IOException("Cannot read application icon"); }
+            return bitmap;
+        }
+    }
+    public static string Read(string name) {
+        Guid iid = typeof(ImageFactory).GUID;
+        ImageFactory factory;
+        SHCreateItemFromParsingName(name, IntPtr.Zero, ref iid, out factory);
+        try {
+            IntPtr handle;
+            int result = factory.GetImage(new Size { Width = 64, Height = 64 }, 4, out handle);
+            if (result < 0 || handle == IntPtr.Zero) return "";
+            try {
+                using (var source = ReadBitmap(handle))
+                using (var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppArgb))
+                using (var graphics = Graphics.FromImage(bitmap))
+                using (var stream = new MemoryStream()) {
+                    graphics.DrawImage(source, 0, 0, 64, 64);
+                    bitmap.Save(stream, ImageFormat.Png);
+                    if (stream.Length > 49152) return "";
+                    return Convert.ToBase64String(stream.ToArray());
+                }
+            } finally { DeleteObject(handle); }
+        } finally { Marshal.ReleaseComObject(factory); }
+    }
+}
+'@
+        return [SDKApplicationIcon]::Read($parsingName)
+    } catch { return '' }
+}
+
 function Resolve-SDKAppIdentity([string]$query) {
     $script:sdkCode = 'TARGET_UNAVAILABLE'
     $query = $query.Trim()

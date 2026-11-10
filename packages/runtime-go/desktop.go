@@ -249,7 +249,7 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		if decodeObject(params, &input) != nil || input.Identity == "" || len([]rune(input.Identity)) > 512 {
 			return nil, Error("INVALID_ARGUMENT", "Expected an application identity")
 		}
-		return map[string]any{"status": "unavailable"}, nil
+		return d.appIcon(ctx, input.Identity)
 	case "listApps":
 		if decodeObject(params, &struct{}{}) != nil {
 			return nil, Error("INVALID_ARGUMENT", "Expected empty parameters")

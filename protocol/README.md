@@ -139,5 +139,7 @@ or GPU screenshot correctness.
 `getAppIcon({ identity })` is a read-only SDK request outside app control sessions.
 `AppIconResult` is either `available` with a 64×64 PNG (base64 bounded to 65,536
 characters), or `unavailable`. macOS resolves the installed bundle by identity
-without launching it. Windows/Linux validate the request and report unavailable.
+without launching it. Windows reads executable or AppsFolder icons through the Shell;
+Linux reads the desktop entry Icon through GTK 3/GdkPixbuf, including theme icons
+and SVG. Missing libraries or icons report unavailable.
 It does not change MCP tool results, app descriptors, snapshots or action receipts.

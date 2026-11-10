@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,6 +83,14 @@ func (d *windowsDesktop) ResolveAppIdentity(ctx context.Context, query string) (
 	var identity sdk.AppIdentity
 	err := d.run(ctx, map[string]any{"method": "resolveIdentity", "query": query}, &identity)
 	return identity, err
+}
+
+func (d *windowsDesktop) AppIcon(ctx context.Context, identity string) ([]byte, error) {
+	var encoded string
+	if err := d.run(ctx, map[string]any{"method": "appIcon", "identity": identity}, &encoded); err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(encoded)
 }
 
 func (d *windowsDesktop) LaunchApp(ctx context.Context, identity sdk.AppIdentity) error {

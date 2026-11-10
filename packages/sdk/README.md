@@ -218,10 +218,14 @@ change the legacy CLI/MCP launch policy or authorize global input.
 ## Application icons for host UI
 
 `client.getAppIcon({ identity })` reads presentation data independently of app control.
-Pass the stable `AppInfo.identity`, not an app-session ID or a display name. On macOS,
+Pass the stable `AppInfo.identity`, not an app-session ID or a display name. On macOS, Windows and Linux,
 the native runtime reads the installed application's icon and returns
 `{ status: 'available', icon: { mimeType: 'image/png', dataBase64 } }` with a 64×64 PNG.
-An absent icon, blocked identity, or Windows/Linux runtime returns `{ status: 'unavailable' }`.
+An absent icon, blocked identity, or missing native image library returns `{ status: 'unavailable' }`.
 The query never launches or activates the target, opens an app control session, or
 adds icon bytes to `AppInfo`, snapshots, action results or MCP tool results. Hosts
 should query lazily and cache by identity; this API is not intended as a model tool.
+
+Windows uses the executable/AppsFolder Shell icon. Linux loads system GTK 3 and
+GdkPixbuf dynamically (including installed SVG loaders), without Python or a build-time
+GTK dependency; a headless process uses the hicolor fallback theme.
