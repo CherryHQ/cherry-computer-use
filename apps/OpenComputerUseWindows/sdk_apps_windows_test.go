@@ -35,15 +35,35 @@ func TestSDKExecutableIdentityAndMismatchBeforeLaunch(t *testing.T) {
 }
 
 func TestSDKPackagedAppIdentity(t *testing.T) {
-	d := &windowsDesktop{}
-	t.Cleanup(func() { _ = d.Close(context.Background()) })
-	identity, err := d.ResolveAppIdentity(context.Background(), "Calculator")
-	if err != nil {
-		t.Skipf("Calculator is not installed: %v", err)
+	runSDKAppsScript(t, `
+function Get-SDKAppsFolder {
+    $folder = New-Object PSObject
+    $folder | Add-Member ScriptMethod Items {
+        $item = [pscustomobject]@{ Name = 'Localized Calculator'; Path = 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' }
+        $item | Add-Member ScriptMethod ExtendedProperty { param($key) $null }
+        $item
+    }
+    $folder
+}
+$expected = 'win32:aumid:microsoft.windowscalculator_8wekyb3d8bbwe!app'
+$byName = Resolve-SDKAppIdentity 'Calculator'
+$byID = Resolve-SDKAppIdentity $byName.query
+if ($byName.id -cne $expected -or $byID.id -cne $expected -or $byID.query -cne $byName.query) {
+    throw "Packaged aliases disagree: $($byName.id), $($byID.id)"
+}
+`)
+}
+
+func runSDKAppsScript(t *testing.T, script string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "identity.ps1")
+	source := "$ErrorActionPreference = 'Stop'\n" + sdkAppsScript + script
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
 	}
-	byID, err := d.ResolveAppIdentity(context.Background(), identity.Query)
-	if err != nil || identity.ID != byID.ID || !strings.HasPrefix(identity.ID, "win32:aumid:") {
-		t.Fatalf("packaged aliases disagree: %+v %v", byID, err)
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("application identity script: %v\n%s", err, output)
 	}
 }
 

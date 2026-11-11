@@ -152,9 +152,7 @@ func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) []b
 }
 
 func TestSDKShellTargetDoesNotAbortIdentityResolution(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "identity.ps1")
-	source := `$ErrorActionPreference = 'Stop'
-` + sdkAppsScript + `
+	runSDKAppsScript(t, `
 function Get-SDKAppsFolder {
     $folder = New-Object PSObject
     $folder | Add-Member ScriptMethod Items {
@@ -175,12 +173,5 @@ try {
     throw
 }
 throw 'Presentation identity became launchable'
-`
-	if err := os.WriteFile(script, []byte(source), 0600); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-File", script)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("Shell identity regression: %v\n%s", err, output)
-	}
+`)
 }
