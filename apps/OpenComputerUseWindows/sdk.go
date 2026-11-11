@@ -85,6 +85,12 @@ func (d *windowsDesktop) ResolveAppIdentity(ctx context.Context, query string) (
 	return identity, err
 }
 
+func (d *windowsDesktop) ResolvePresentationIdentity(ctx context.Context, query string) (sdk.AppIdentity, error) {
+	var identity sdk.AppIdentity
+	err := d.run(ctx, map[string]any{"method": "resolveIdentity", "query": query, "allowShellItems": true}, &identity)
+	return identity, err
+}
+
 func (d *windowsDesktop) AppIcon(ctx context.Context, identity string) ([]byte, error) {
 	var encoded string
 	if err := d.run(ctx, map[string]any{"method": "appIcon", "identity": identity}, &encoded); err != nil {

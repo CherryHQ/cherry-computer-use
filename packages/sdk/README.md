@@ -169,8 +169,7 @@ The runtime checks `expectedIdentity` before launch; a changed identity fails
 without launching. Running `AppInfo` and app sessions include the same optional
 `identity`; their opaque `id` is still only a runtime control reference.
 
-`launch: false` retains its running-only semantics. Windows/Linux do not launch
-applications and reject installed identity resolution with `UNSUPPORTED_CAPABILITY`.
+`launch: false` limits resolution to running applications.
 Host stop decisions remain host-owned and must be checked before effects.
 
 On macOS, text elements advertise `setValue` only when their AX value is writable.
@@ -218,7 +217,7 @@ change the legacy CLI/MCP launch policy or authorize global input.
 ## Application icons for host UI
 
 `client.getAppIcon({ identity })` reads presentation data independently of app control.
-Pass the stable `AppInfo.identity`, not an app-session ID or a display name. On macOS, Windows and Linux,
+Pass the stable `AppInfo.identity` or the `id` from `resolveAppIdentity({ query })`. On macOS, Windows and Linux,
 the native runtime reads the installed application's icon and returns
 `{ status: 'available', icon: { mimeType: 'image/png', dataBase64 } }` with a 64×64 PNG.
 An absent icon, blocked identity, or missing native image library returns `{ status: 'unavailable' }`.
@@ -226,6 +225,10 @@ The query never launches or activates the target, opens an app control session, 
 adds icon bytes to `AppInfo`, snapshots, action results or MCP tool results. Hosts
 should query lazily and cache by identity; this API is not intended as a model tool.
 
-Windows uses the executable/AppsFolder Shell icon. Linux loads system GTK 3 and
+Windows reads executable and packaged app icons through the Shell, including packaged
+apps hidden from the Start menu. `resolveAppIdentity` can also return a
+`win32:shell:` identity for an AppsFolder entry such as Control Panel or a shortcut
+whose executable is missing. Use that identity for presentation queries.
+Linux loads system GTK 3 and
 GdkPixbuf dynamically (including installed SVG loaders), without Python or a build-time
 GTK dependency; a headless process uses the hicolor fallback theme.

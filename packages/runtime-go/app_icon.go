@@ -12,6 +12,11 @@ type AppIconDriver interface {
 	AppIcon(context.Context, string) ([]byte, error)
 }
 
+// PresentationIdentityDriver also resolves entries available only for presentation.
+type PresentationIdentityDriver interface {
+	ResolvePresentationIdentity(context.Context, string) (AppIdentity, error)
+}
+
 func (d *Desktop) appIcon(ctx context.Context, identity string) (any, error) {
 	unavailable := map[string]any{"status": "unavailable"}
 	driver, ok := d.driver.(AppIconDriver)

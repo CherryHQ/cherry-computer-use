@@ -206,7 +206,7 @@ try {
     . "$PSScriptRoot/sdk_apps.ps1"
     switch ($operation.method) {
         'appIcon' { $result = Get-SDKAppIcon $operation.identity }
-        'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query }
+        'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query -AllowShellItems:([bool]$operation.allowShellItems) }
         'apps' { $result = @(Get-SDKRunningTargets) }
         'observe' { $result = Observe-SDK $operation.target $operation.options }
         'act' { $result = Invoke-SDKAction $operation }

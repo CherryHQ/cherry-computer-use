@@ -43,6 +43,11 @@ public static class SDKApplicationIdentity {
 }
 '@
 
+function Get-SDKAppsFolder {
+    $shell = New-Object -ComObject Shell.Application
+    return $shell.NameSpace('shell:AppsFolder')
+}
+
 function Get-SDKAppIcon([string]$identity) {
     try {
         if ($identity.StartsWith('win32:exe:')) {
@@ -50,10 +55,22 @@ function Get-SDKAppIcon([string]$identity) {
             $resolved = Resolve-SDKAppIdentity $path
             if ($resolved.id -cne $identity) { return '' }
             $parsingName = $resolved.query
+        } elseif ($identity -cmatch '^win32:aumid:([a-z0-9.-]+_[a-z0-9]+![a-z0-9.-]+)\z') {
+            # Shell can bind registered package apps that its Start menu view hides.
+            $parsingName = 'shell:AppsFolder\' + $Matches[1]
         } elseif ($identity.StartsWith('win32:aumid:')) {
             $resolved = Resolve-SDKAppIdentity $identity.Substring(12)
             if ($resolved.id -cne $identity) { return '' }
             $parsingName = 'shell:AppsFolder\' + $resolved.query
+        } elseif ($identity.StartsWith('win32:shell:')) {
+            $appID = $identity.Substring(12)
+            $folder = Get-SDKAppsFolder
+            foreach ($item in $folder.Items()) {
+                if ([string]$item.Path -cne $appID) { continue }
+                $parsingName = 'shell:AppsFolder\' + $item.Path
+                break
+            }
+            if (-not $parsingName) { return '' }
         } else { return '' }
         Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System;
@@ -118,17 +135,22 @@ public static class SDKApplicationIcon {
     } catch { return '' }
 }
 
-function Resolve-SDKAppIdentity([string]$query) {
+function Resolve-SDKAppIdentity([string]$query, [switch]$AllowShellItems) {
     $script:sdkCode = 'TARGET_UNAVAILABLE'
     $query = $query.Trim()
     if ([IO.Path]::IsPathRooted($query)) {
-        $path = [SDKApplicationIdentity]::CanonicalPath($query)
-        if ([IO.Path]::GetExtension($path) -ine '.exe') { throw 'Expected an application executable (.exe)' }
-        return @{ id = 'win32:exe:' + $path.ToLowerInvariant(); name = [IO.Path]::GetFileNameWithoutExtension($path); query = $path }
+        try {
+            $path = [SDKApplicationIdentity]::CanonicalPath($query)
+            if ([IO.Path]::GetExtension($path) -ine '.exe') { throw 'Expected an application executable (.exe)' }
+            return @{ id = 'win32:exe:' + $path.ToLowerInvariant(); name = [IO.Path]::GetFileNameWithoutExtension($path); query = $path }
+        } catch {
+            if (-not $AllowShellItems) { throw }
+        }
     }
-    $shell = New-Object -ComObject Shell.Application
+    $folder = Get-SDKAppsFolder
     $candidates = @{}
-    foreach ($item in $shell.NameSpace('shell:AppsFolder').Items()) {
+    $shellCandidates = @{}
+    foreach ($item in $folder.Items()) {
         $appID = [string]$item.Path
         $target = [string]$item.ExtendedProperty('System.Link.TargetParsingPath')
         $aliases = @($item.Name, $appID)
@@ -137,11 +159,24 @@ function Resolve-SDKAppIdentity([string]$query) {
         if (-not ($aliases -icontains $query)) { continue }
         if ($appID -match '^[^\\/:]+![^\\/:]+$') {
             $identity = @{ id = 'win32:aumid:' + $appID.ToLowerInvariant(); name = $item.Name; query = $appID }
-        } elseif ($target -and [IO.Path]::GetExtension($target) -ieq '.exe') {
-            try { $path = [SDKApplicationIdentity]::CanonicalPath($target) } catch { continue }
-            $identity = @{ id = 'win32:exe:' + $path.ToLowerInvariant(); name = $item.Name; query = $path }
-        } else { continue }
-        $candidates[$identity.id] = $identity
+            $candidates[$identity.id] = $identity
+            continue
+        }
+        if ($target -and [IO.Path]::GetExtension($target) -ieq '.exe') {
+            try {
+                $path = [SDKApplicationIdentity]::CanonicalPath($target)
+                $identity = @{ id = 'win32:exe:' + $path.ToLowerInvariant(); name = $item.Name; query = $path }
+                $candidates[$identity.id] = $identity
+                continue
+            } catch {
+                if (-not $AllowShellItems) { continue }
+            }
+        }
+        if ($AllowShellItems -and $appID -and $appID.Length -le 500) {
+            $identity = @{ id = 'win32:shell:' + $appID; name = $item.Name; query = $appID }
+            if ($appID -ieq $query) { return $identity }
+            $shellCandidates[$identity.id] = $identity
+        }
     }
     if ($candidates.Count -eq 0) {
         $commands = @(Get-Command -Name $query -CommandType Application -ErrorAction SilentlyContinue | Where-Object { [IO.Path]::GetExtension($_.Source) -ieq '.exe' -and ($_.Name -ieq $query -or $_.Name -ieq ($query + '.exe')) })
@@ -151,6 +186,7 @@ function Resolve-SDKAppIdentity([string]$query) {
             $candidates[$identity.id] = $identity
         }
     }
+    if ($candidates.Count -eq 0 -and $shellCandidates.Count -eq 1) { return @($shellCandidates.Values)[0] }
     if ($candidates.Count -ne 1) { throw 'Application could not be uniquely resolved; use an AppsFolder ID or executable path' }
     return @($candidates.Values)[0]
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"image/png"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -24,18 +25,68 @@ func TestSDKAppIcons(t *testing.T) {
 				}
 				t.Fatal(err)
 			}
-			data, err := d.AppIcon(context.Background(), identity.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			icon, err := png.DecodeConfig(bytes.NewReader(data))
-			if err != nil || icon.Width != 64 || icon.Height != 64 || len(data) > 49152 {
-				t.Fatalf("invalid app icon: %+v %v", icon, err)
-			}
+			requireWindowsAppIcon(t, d, identity.ID)
 		})
 	}
-	data, err := d.AppIcon(context.Background(), "win32:aumid:not.installed!app")
-	if err != nil || len(data) != 0 {
-		t.Fatalf("missing app: %v %v", data, err)
+
+	t.Run("AppsFolder-only entry", func(t *testing.T) {
+		ctx := context.Background()
+		const query = "Microsoft.Windows.ControlPanel"
+		identity, err := d.ResolvePresentationIdentity(ctx, query)
+		if err != nil || identity.ID != "win32:shell:"+query || identity.Query != query {
+			t.Fatalf("resolve Control Panel: %+v %v", identity, err)
+		}
+		requireWindowsAppIcon(t, d, identity.ID)
+		if _, err := d.ResolveAppIdentity(ctx, query); err == nil {
+			t.Fatal("Control Panel resolved as a launch target")
+		}
+	})
+
+	t.Run("TextInputHost", func(t *testing.T) {
+		apps, err := d.Apps(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range apps {
+			if strings.EqualFold(app.Name, "TextInputHost") && strings.HasPrefix(app.Identity, "win32:aumid:") {
+				requireWindowsAppIcon(t, d, app.Identity)
+				return
+			}
+		}
+		t.Skip("TextInputHost has no discoverable window with a packaged identity")
+	})
+
+	for _, identity := range []string{
+		"win32:aumid:nonexistent_abcdefghijklm!app",
+		"win32:shell:Microsoft.Windows.DoesNotExist",
+	} {
+		data, err := d.AppIcon(context.Background(), identity)
+		if err != nil || len(data) != 0 {
+			t.Fatalf("missing icon for %s: %d bytes, %v", identity, len(data), err)
+		}
 	}
+}
+
+func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) {
+	t.Helper()
+	data, err := d.AppIcon(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	icon, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode icon for %s: %v", identity, err)
+	}
+	bounds := icon.Bounds()
+	if bounds.Dx() != 64 || bounds.Dy() != 64 || len(data) > 49152 {
+		t.Fatalf("invalid icon for %s: %v, %d bytes", identity, bounds, len(data))
+	}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if _, _, _, alpha := icon.At(x, y).RGBA(); alpha != 0 {
+				return
+			}
+		}
+	}
+	t.Fatalf("icon for %s is fully transparent", identity)
 }
