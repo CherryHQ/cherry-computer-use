@@ -33,3 +33,22 @@ rerun the complete icon coverage test.
   test passed. The symlink test requires a privilege unavailable on the test host.
 - SDK type checks passed. The SDK suite reported 46 passed and two platform skips.
 - The Windows ARM64 build and documentation check passed.
+
+### Follow-up: Shell parsing and Linux running applications
+
+- Guard filesystem-only alias and extension extraction against invalid path
+  characters in Shell virtual targets, so an unrelated AppsFolder entry cannot
+  abort Control Panel identity resolution. Added an isolated virtual-target
+  regression alongside the existing native Control Panel icon test.
+- Running Linux apps that cannot match a desktop entry use a canonical executable
+  presentation identity. Read EWMH window icons on X11/Xwayland and fall back to
+  the lowercase executable's installed theme icon without launching the app.
+- Added malformed ARGB, alpha preservation, icon-size selection, missing-process,
+  canonical-identity and executable theme-icon coverage.
+- Linux desktop retest: 7 of 8 running apps have identities (previously 4), and
+  5 return icons (previously 4), including Codex. The remaining VMware process
+  has no readable executable; GNOME Shell and gjs expose no matching icon.
+  Installed desktop entries remain at 83 of 97 icons, with zero app sessions.
+- PowerShell 7 on Linux verified isolated Shell resolution and launch rejection;
+  Windows PowerShell/.NET Framework and native Control Panel acceptance require
+  the Windows CI run. Linux PowerShell does not reproduce Framework path errors.

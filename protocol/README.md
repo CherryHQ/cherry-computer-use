@@ -145,3 +145,10 @@ icons through the Shell. `resolveAppIdentity` can return a presentation-only
 Linux reads the desktop entry Icon through GTK 3/GdkPixbuf, including theme icons
 and SVG. Missing libraries or icons report unavailable.
 It does not change MCP tool results, app descriptors, snapshots or action receipts.
+
+Linux running applications without a matching desktop entry expose a canonical
+`linux:exe:` identity for presentation. Icon queries first read the executable's
+X11/Xwayland window icon, then try its lowercase executable name in the installed
+GTK icon theme. These identities do not resolve an installed launch target.
+Native Wayland applications need a matching desktop entry or theme icon; unreadable
+executables and applications with no icon remain unavailable.

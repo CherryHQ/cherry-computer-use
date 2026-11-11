@@ -104,3 +104,52 @@ func TestSDKAppIconTheme(t *testing.T) {
 		t.Fatalf("theme lookup failed: %v", err)
 	}
 }
+
+func TestExecutablePresentationIdentityIsCanonical(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "application")
+	if err := os.WriteFile(executable, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	process := filepath.Join(root, "42")
+	if err := os.Mkdir(process, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(executable, filepath.Join(process, "exe")); err != nil {
+		t.Fatal(err)
+	}
+	if got := executableIdentity(root, 42); got != "linux:exe:"+executable {
+		t.Fatalf("lost executable identity: %q", got)
+	}
+	if got := executableIdentity(root, 43); got != "" {
+		t.Fatalf("invented missing process identity: %q", got)
+	}
+	for _, identity := range []string{"linux:exe:relative", "linux:exe:" + filepath.Join(root, "missing")} {
+		data, err := (&linuxDesktop{}).AppIcon(context.Background(), identity)
+		if err != nil || len(data) != 0 {
+			t.Fatalf("invalid executable identity returned icon: %v %v", data, err)
+		}
+	}
+}
+
+func TestExecutableThemeIconWithoutDesktopEntry(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux icon libraries required")
+	}
+	name := os.Getenv("OPEN_COMPUTER_USE_ICON_THEME_TEST")
+	if name == "" {
+		t.Skip("set OPEN_COMPUTER_USE_ICON_THEME_TEST to an installed icon name")
+	}
+	executable := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(executable, []byte("must not run"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := (&linuxDesktop{}).AppIcon(context.Background(), "linux:exe:"+executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	icon, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil || icon.Width != 64 || icon.Height != 64 {
+		t.Fatalf("executable icon unavailable: %v", err)
+	}
+}

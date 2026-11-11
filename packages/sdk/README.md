@@ -232,3 +232,10 @@ whose executable is missing. Use that identity for presentation queries.
 Linux loads system GTK 3 and
 GdkPixbuf dynamically (including installed SVG loaders), without Python or a build-time
 GTK dependency; a headless process uses the hicolor fallback theme.
+
+Linux running applications without a matching desktop entry expose a canonical
+`linux:exe:` identity for presentation. Icon queries first read the executable's
+X11/Xwayland window icon, then try its lowercase executable name in the installed
+GTK icon theme. These identities do not resolve an installed launch target.
+Native Wayland applications need a matching desktop entry or theme icon; unreadable
+executables and applications with no icon remain unavailable.

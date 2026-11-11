@@ -154,7 +154,13 @@ function Resolve-SDKAppIdentity([string]$query, [switch]$AllowShellItems) {
         $appID = [string]$item.Path
         $target = [string]$item.ExtendedProperty('System.Link.TargetParsingPath')
         $aliases = @($item.Name, $appID)
-        if ($target) { $aliases += @($target, [IO.Path]::GetFileName($target), [IO.Path]::GetFileNameWithoutExtension($target)) }
+        if ($target) {
+            $aliases += $target
+            # Shell parsing names can contain characters forbidden in file paths.
+            if ($target.IndexOfAny([IO.Path]::GetInvalidPathChars()) -lt 0) {
+                $aliases += @([IO.Path]::GetFileName($target), [IO.Path]::GetFileNameWithoutExtension($target))
+            }
+        }
         if ($appID -match '^Microsoft\.Windows([^_!]+)_[^!]+!') { $aliases += $Matches[1] }
         if (-not ($aliases -icontains $query)) { continue }
         if ($appID -match '^[^\\/:]+![^\\/:]+$') {
@@ -162,7 +168,7 @@ function Resolve-SDKAppIdentity([string]$query, [switch]$AllowShellItems) {
             $candidates[$identity.id] = $identity
             continue
         }
-        if ($target -and [IO.Path]::GetExtension($target) -ieq '.exe') {
+        if ($target -and $target.IndexOfAny([IO.Path]::GetInvalidPathChars()) -lt 0 -and [IO.Path]::GetExtension($target) -ieq '.exe') {
             try {
                 $path = [SDKApplicationIdentity]::CanonicalPath($target)
                 $identity = @{ id = 'win32:exe:' + $path.ToLowerInvariant(); name = $item.Name; query = $path }

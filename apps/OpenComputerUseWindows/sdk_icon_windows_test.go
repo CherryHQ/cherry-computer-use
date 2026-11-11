@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"image/png"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,4 +91,38 @@ func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) {
 		}
 	}
 	t.Fatalf("icon for %s is fully transparent", identity)
+}
+
+func TestSDKShellTargetDoesNotAbortIdentityResolution(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "identity.ps1")
+	source := `$ErrorActionPreference = 'Stop'
+` + sdkAppsScript + `
+function Get-SDKAppsFolder {
+    $folder = New-Object PSObject
+    $folder | Add-Member ScriptMethod Items {
+        $broken = [pscustomobject]@{ Name = 'Virtual target'; Path = 'Virtual.Target' }
+        $broken | Add-Member ScriptMethod ExtendedProperty { param($key) 'shell:virtual' + [char]0 }
+        $control = [pscustomobject]@{ Name = 'Control Panel'; Path = 'Microsoft.Windows.ControlPanel' }
+        $control | Add-Member ScriptMethod ExtendedProperty { param($key) 'shell:control' + [char]0 }
+        @($broken, $control)
+    }
+    $folder
+}
+$identity = Resolve-SDKAppIdentity 'Microsoft.Windows.ControlPanel' -AllowShellItems
+if ($identity.id -cne 'win32:shell:Microsoft.Windows.ControlPanel') { throw 'Control Panel was not resolved' }
+try {
+    $null = Resolve-SDKAppIdentity 'Microsoft.Windows.ControlPanel'
+} catch {
+    if ($_.Exception.Message -like '*uniquely resolved*') { exit 0 }
+    throw
+}
+throw 'Presentation identity became launchable'
+`
+	if err := os.WriteFile(script, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-File", script)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Shell identity regression: %v\n%s", err, output)
+	}
 }
