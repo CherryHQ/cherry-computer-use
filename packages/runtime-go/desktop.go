@@ -242,6 +242,14 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		return nil, Error("CANCELLED", "Request cancelled before execution")
 	}
 	switch method {
+	case "getAppIcon":
+		var input struct {
+			Identity string `json:"identity"`
+		}
+		if decodeObject(params, &input) != nil || input.Identity == "" || len([]rune(input.Identity)) > 512 {
+			return nil, Error("INVALID_ARGUMENT", "Expected an application identity")
+		}
+		return d.appIcon(ctx, input.Identity)
 	case "listApps":
 		if decodeObject(params, &struct{}{}) != nil {
 			return nil, Error("INVALID_ARGUMENT", "Expected empty parameters")
@@ -301,11 +309,15 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		if decodeObject(params, &input) != nil || !validAppQuery(input.Query) {
 			return nil, Error("INVALID_ARGUMENT", "Expected an application name, ID or path")
 		}
+		query := strings.TrimSpace(input.Query)
+		if driver, ok := d.driver.(PresentationIdentityDriver); ok {
+			return driver.ResolvePresentationIdentity(ctx, query)
+		}
 		launcher, ok := d.driver.(ApplicationDriver)
 		if !ok {
 			return nil, Error("UNSUPPORTED_CAPABILITY", "Installed application identity resolution is unavailable on this platform")
 		}
-		return launcher.ResolveAppIdentity(ctx, strings.TrimSpace(input.Query))
+		return launcher.ResolveAppIdentity(ctx, query)
 	case "resolveApp":
 		var input resolveAppInput
 		if decodeObject(params, &input) != nil || !validAppQuery(input.Query) ||

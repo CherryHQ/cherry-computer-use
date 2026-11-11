@@ -132,3 +132,25 @@ or GPU screenshot correctness.
 `resolveApp({ query, launch: false })` only resolves running targets. Hosts use this when reacquiring a persistent handle so a read cannot silently relaunch an application closed by the user. Explicit binding defaults to allowing launch on supported platforms.
 
 `getAppState({ appSessionId, includeScreenshot: false })` collects AX state without calling the native screenshot backend on macOS, Windows or Linux. Omitted/true preserves capture. A skipped screenshot reports `CAPTURE_NOT_REQUESTED`, not a permission failure. Coordinate input requires a screenshot-enabled observation; semantic input and keyboard targeting remain available. This option requires the matching unreleased SDK/native build.
+
+
+## Host presentation queries
+
+`getAppIcon({ identity })` is a read-only SDK request outside app control sessions.
+`AppIconResult` is either `available` with a 64×64 PNG (base64 bounded to 65,536
+characters), or `unavailable`. macOS resolves the installed bundle by identity
+without launching it. Windows reads executable, AppsFolder, and hidden packaged app
+icons through the Shell. Hosted Windows apps can use the app identity from the
+window's Shell property store. An executable without an icon resource can use its
+registered shortcut or Windows UI resource. `resolveAppIdentity` can return a presentation-only
+`win32:shell:` identity for an AppsFolder entry. `resolveApp` uses launchable identities.
+Linux reads the desktop entry Icon through GTK 3/GdkPixbuf, including theme icons
+and SVG. Missing libraries or icons report unavailable.
+It does not change MCP tool results, app descriptors, snapshots or action receipts.
+
+Linux running applications without a matching desktop entry expose a canonical
+`linux:exe:` identity for presentation. Icon queries first read the executable's
+X11/Xwayland window icon, then try its lowercase executable name in the installed
+GTK icon theme. These identities do not resolve an installed launch target.
+Native Wayland applications need a matching desktop entry or theme icon; unreadable
+executables and applications with no icon remain unavailable.

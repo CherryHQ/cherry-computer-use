@@ -8,12 +8,10 @@ $script:sdkEffect = 'none'
 function Get-SDKTarget($process, [long]$windowHandle = 0) {
     if ($windowHandle -eq 0 -and $null -ne $script:TargetHwnd) { $windowHandle = [long]$script:TargetHwnd }
     if ($windowHandle -eq 0) { $windowHandle = [long](Resolve-AppWindowHandle $process $null) }
-    $identityPID = Get-WindowHostedProcessId ([IntPtr][long]$windowHandle) ([int]$process.Id)
-    if ($identityPID -le 0) { $identityPID = [int]$process.Id }
     $title = [OCUWin32]::WindowTextOf([IntPtr][long]$windowHandle)
     # ApplicationFrameHost is a shared host with no useful name of its own; the hosted app is the app.
     $name = if ($process.ProcessName -eq 'ApplicationFrameHost' -and -not [string]::IsNullOrWhiteSpace($title)) { $title } else { $process.ProcessName }
-    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$windowHandle; name = $name; title = $title; identity = [SDKApplicationIdentity]::ForProcess($identityPID) }
+    [pscustomobject]@{ pid = [int]$process.Id; started = $process.StartTime.ToUniversalTime().Ticks.ToString(); hwnd = [long]$windowHandle; name = $name; title = $title; identity = (Get-WindowAppIdentity ([IntPtr][long]$windowHandle) ([int]$process.Id)) }
 }
 function Resolve-SDKTarget($target) {
     $process = Get-Process -Id ([int]$target.pid) -ErrorAction Stop
@@ -103,7 +101,19 @@ function Get-SDKRunningTargets {
             }
         }
     }
-    return $targets
+    # A detached CoreWindow can appear alongside the frame for the same app.
+    # Keep the window owned by the app and use the frame's display name.
+    $duplicateFrames = @{}
+    foreach ($group in ($targets | Where-Object { $_.identity -like 'win32:aumid:*' } | Group-Object identity)) {
+        if ($group.Count -ne 2) { continue }
+        $frame = $group.Group | Where-Object { [OCUWin32]::ClassNameOf([IntPtr][long]$_.hwnd) -eq 'ApplicationFrameWindow' }
+        $core = $group.Group | Where-Object { [OCUWin32]::ClassNameOf([IntPtr][long]$_.hwnd) -eq 'Windows.UI.Core.CoreWindow' }
+        if ($frame -and $core -and $frame.title -ceq $core.title) {
+            $core.name = $frame.name
+            $duplicateFrames[$frame.hwnd] = $true
+        }
+    }
+    return @($targets | Where-Object { -not $duplicateFrames.ContainsKey($_.hwnd) })
 }
 function Observe-SDK($target, $options) {
     $process = Resolve-SDKTarget $target
@@ -205,7 +215,8 @@ try {
     . "$PSScriptRoot/runtime.ps1" -DefinitionsOnly
     . "$PSScriptRoot/sdk_apps.ps1"
     switch ($operation.method) {
-        'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query }
+        'appIcon' { $result = Get-SDKAppIcon $operation.identity }
+        'resolveIdentity' { $result = Resolve-SDKAppIdentity $operation.query -AllowShellItems:([bool]$operation.allowShellItems) }
         'apps' { $result = @(Get-SDKRunningTargets) }
         'observe' { $result = Observe-SDK $operation.target $operation.options }
         'act' { $result = Invoke-SDKAction $operation }
