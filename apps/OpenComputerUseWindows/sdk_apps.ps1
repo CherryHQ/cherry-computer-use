@@ -10,6 +10,38 @@ public static class SDKApplicationIdentity {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder path, ref uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern uint GetFinalPathNameByHandle(IntPtr file, StringBuilder path, uint size, uint flags);
+    [StructLayout(LayoutKind.Sequential)] struct PropertyKey { public Guid Format; public uint ID; }
+    [StructLayout(LayoutKind.Sequential)] struct CountedPointer { public uint Count; public IntPtr Pointer; }
+    [StructLayout(LayoutKind.Explicit)] struct PropertyValue {
+        [FieldOffset(0)] public ushort Type;
+        [FieldOffset(8)] public IntPtr Pointer;
+        [FieldOffset(8)] public CountedPointer Array;
+    }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface PropertyStore {
+        void GetCount(out uint count);
+        void GetAt(uint index, out PropertyKey key);
+        void GetValue(ref PropertyKey key, out PropertyValue value);
+    }
+    [DllImport("shell32.dll", PreserveSig = false)]
+    static extern void SHGetPropertyStoreForWindow(IntPtr hwnd, ref Guid iid, out PropertyStore store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropertyValue value);
+
+    public static string ForWindow(IntPtr hwnd) {
+        Guid iid = typeof(PropertyStore).GUID;
+        try {
+            PropertyStore store;
+            SHGetPropertyStoreForWindow(hwnd, ref iid, out store);
+            try {
+                // PKEY_AppUserModel_ID
+                var key = new PropertyKey { Format = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), ID = 5 };
+                PropertyValue value;
+                store.GetValue(ref key, out value);
+                try { return value.Type == 31 ? Marshal.PtrToStringUni(value.Pointer) : null; }
+                finally { PropVariantClear(ref value); }
+            } finally { Marshal.ReleaseComObject(store); }
+        } catch (COMException) { return null; }
+    }
 
     public static string CanonicalPath(string path) {
         IntPtr file = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0, IntPtr.Zero);
@@ -48,13 +80,33 @@ function Get-SDKAppsFolder {
     return $shell.NameSpace('shell:AppsFolder')
 }
 
+function Get-SDKExecutableFallbackIcon([string]$path) {
+    $system = [Environment]::SystemDirectory
+    $wow = [Environment]::GetFolderPath('SystemX86')
+    if ($path -ieq "$system\appverif.exe" -or $path -ieq "$wow\appverif.exe") {
+        # Both Application Verifier launchers use the native UI module.
+        $icon = [SDKApplicationIcon]::ReadResource("$system\appverifUI.dll")
+        if ($icon) { return $icon }
+    }
+    $folder = Get-SDKAppsFolder
+    $shortcuts = @($folder.Items() | Where-Object {
+        [string]$_.ExtendedProperty('System.Link.TargetParsingPath') -ieq $path
+    })
+    if ($shortcuts.Count -eq 1) {
+        return [SDKApplicationIcon]::Read('shell:AppsFolder\' + $shortcuts[0].Path)
+    }
+    return ''
+}
+
 function Get-SDKAppIcon([string]$identity) {
     try {
+        $executable = $false
         if ($identity.StartsWith('win32:exe:')) {
             $path = $identity.Substring(10)
             $resolved = Resolve-SDKAppIdentity $path
             if ($resolved.id -cne $identity) { return '' }
             $parsingName = $resolved.query
+            $executable = $true
         } elseif ($identity -cmatch '^win32:aumid:([a-z0-9.-]+_[a-z0-9]+![a-z0-9.-]+)\z') {
             # Shell can bind registered package apps that its Start menu view hides.
             $parsingName = 'shell:AppsFolder\' + $Matches[1]
@@ -87,6 +139,11 @@ public static class SDKApplicationIcon {
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
     static extern void SHCreateItemFromParsingName(string name, IntPtr context, ref Guid iid, out ImageFactory item);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern uint ExtractIconEx(string path, int index, IntPtr large, IntPtr small, uint count);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern int SHDefExtractIcon(string path, int index, uint flags, out IntPtr large, IntPtr small, uint size);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr value);
     [StructLayout(LayoutKind.Sequential)] struct BitmapInfo {
         public uint Size; public int Width, Height; public ushort Planes, BitCount;
         public uint Compression, SizeImage; public int XPelsPerMeter, YPelsPerMeter;
@@ -108,6 +165,26 @@ public static class SDKApplicationIcon {
             return bitmap;
         }
     }
+    static string Encode(Bitmap source) {
+        using (var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppArgb))
+        using (var graphics = Graphics.FromImage(bitmap))
+        using (var stream = new MemoryStream()) {
+            graphics.DrawImage(source, 0, 0, 64, 64);
+            bitmap.Save(stream, ImageFormat.Png);
+            return stream.Length <= 49152 ? Convert.ToBase64String(stream.ToArray()) : "";
+        }
+    }
+    public static bool HasNoIconResources(string path) {
+        return ExtractIconEx(path, -1, IntPtr.Zero, IntPtr.Zero, 0) == 0;
+    }
+    public static string ReadResource(string path) {
+        IntPtr handle;
+        if (SHDefExtractIcon(path, 0, 0, out handle, IntPtr.Zero, 64) != 0 || handle == IntPtr.Zero) return "";
+        try {
+            using (var icon = Icon.FromHandle(handle))
+            using (var source = icon.ToBitmap()) return Encode(source);
+        } finally { DestroyIcon(handle); }
+    }
     public static string Read(string name) {
         Guid iid = typeof(ImageFactory).GUID;
         ImageFactory factory;
@@ -117,20 +194,18 @@ public static class SDKApplicationIcon {
             int result = factory.GetImage(new Size { Width = 64, Height = 64 }, 4, out handle);
             if (result < 0 || handle == IntPtr.Zero) return "";
             try {
-                using (var source = ReadBitmap(handle))
-                using (var bitmap = new Bitmap(64, 64, PixelFormat.Format32bppArgb))
-                using (var graphics = Graphics.FromImage(bitmap))
-                using (var stream = new MemoryStream()) {
-                    graphics.DrawImage(source, 0, 0, 64, 64);
-                    bitmap.Save(stream, ImageFormat.Png);
-                    if (stream.Length > 49152) return "";
-                    return Convert.ToBase64String(stream.ToArray());
-                }
+                using (var source = ReadBitmap(handle)) return Encode(source);
             } finally { DeleteObject(handle); }
         } finally { Marshal.ReleaseComObject(factory); }
     }
 }
 '@
+        if ($executable -and [SDKApplicationIcon]::HasNoIconResources($parsingName)) {
+            try {
+                $fallback = Get-SDKExecutableFallbackIcon $parsingName
+                if ($fallback) { return $fallback }
+            } catch {}
+        }
         return [SDKApplicationIcon]::Read($parsingName)
     } catch { return '' }
 }

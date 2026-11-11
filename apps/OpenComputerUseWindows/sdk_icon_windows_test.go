@@ -58,6 +58,63 @@ func TestSDKAppIcons(t *testing.T) {
 		t.Skip("TextInputHost has no discoverable window with a packaged identity")
 	})
 
+	t.Run("Running Settings", func(t *testing.T) {
+		ctx := context.Background()
+		settings, err := d.ResolveAppIdentity(ctx, "Settings")
+		if err != nil {
+			t.Skipf("Settings is unavailable: %v", err)
+		}
+		apps, err := d.Apps(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range apps {
+			if app.Name != settings.Name {
+				continue
+			}
+			if app.Identity != settings.ID {
+				t.Fatalf("running Settings identity %q, want %q", app.Identity, settings.ID)
+			}
+			requireWindowsAppIcon(t, d, app.Identity)
+			return
+		}
+		t.Skip("Settings has no discoverable window")
+	})
+
+	t.Run("Executable icon fallbacks", func(t *testing.T) {
+		ctx := context.Background()
+		genericPath := filepath.Join(t.TempDir(), "appverif.exe")
+		if err := os.WriteFile(genericPath, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		genericIdentity, err := d.ResolveAppIdentity(ctx, genericPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generic := requireWindowsAppIcon(t, d, genericIdentity.ID)
+		for _, query := range []string{
+			"sapisvr",
+			filepath.Join(os.Getenv("SystemRoot"), "System32", "appverif.exe"),
+			filepath.Join(os.Getenv("SystemRoot"), "SysWOW64", "appverif.exe"),
+		} {
+			t.Run(query, func(t *testing.T) {
+				identity, err := d.ResolveAppIdentity(ctx, query)
+				if err != nil {
+					t.Skipf("application unavailable: %v", err)
+				}
+				if query != "sapisvr" {
+					resource := filepath.Join(os.Getenv("SystemRoot"), "System32", "appverifUI.dll")
+					if _, err := os.Stat(resource); err != nil {
+						t.Skipf("Application Verifier UI resource unavailable: %v", err)
+					}
+				}
+				if icon := requireWindowsAppIcon(t, d, identity.ID); bytes.Equal(icon, generic) {
+					t.Fatal("expected an application icon, got the default executable icon")
+				}
+			})
+		}
+	})
+
 	for _, identity := range []string{
 		"win32:aumid:nonexistent_abcdefghijklm!app",
 		"win32:shell:Microsoft.Windows.DoesNotExist",
@@ -69,7 +126,7 @@ func TestSDKAppIcons(t *testing.T) {
 	}
 }
 
-func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) {
+func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) []byte {
 	t.Helper()
 	data, err := d.AppIcon(context.Background(), identity)
 	if err != nil {
@@ -86,11 +143,12 @@ func requireWindowsAppIcon(t *testing.T, d *windowsDesktop, identity string) {
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			if _, _, _, alpha := icon.At(x, y).RGBA(); alpha != 0 {
-				return
+				return data
 			}
 		}
 	}
 	t.Fatalf("icon for %s is fully transparent", identity)
+	return nil
 }
 
 func TestSDKShellTargetDoesNotAbortIdentityResolution(t *testing.T) {

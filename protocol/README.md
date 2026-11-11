@@ -140,7 +140,9 @@ or GPU screenshot correctness.
 `AppIconResult` is either `available` with a 64×64 PNG (base64 bounded to 65,536
 characters), or `unavailable`. macOS resolves the installed bundle by identity
 without launching it. Windows reads executable, AppsFolder, and hidden packaged app
-icons through the Shell. `resolveAppIdentity` can return a presentation-only
+icons through the Shell. Hosted Windows apps can use the app identity from the
+window's Shell property store. An executable without an icon resource can use its
+registered shortcut or Windows UI resource. `resolveAppIdentity` can return a presentation-only
 `win32:shell:` identity for an AppsFolder entry. `resolveApp` uses launchable identities.
 Linux reads the desktop entry Icon through GTK 3/GdkPixbuf, including theme icons
 and SVG. Missing libraries or icons report unavailable.

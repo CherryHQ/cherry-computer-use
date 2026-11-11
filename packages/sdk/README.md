@@ -226,7 +226,9 @@ adds icon bytes to `AppInfo`, snapshots, action results or MCP tool results. Hos
 should query lazily and cache by identity; this API is not intended as a model tool.
 
 Windows reads executable and packaged app icons through the Shell, including packaged
-apps hidden from the Start menu. `resolveAppIdentity` can also return a
+apps hidden from the Start menu. Hosted windows such as Settings use their own
+packaged app identity. When an executable lacks an icon resource, the runtime
+can use its registered shortcut icon or a Windows UI resource. `resolveAppIdentity` can also return a
 `win32:shell:` identity for an AppsFolder entry such as Control Panel or a shortcut
 whose executable is missing. Use that identity for presentation queries.
 Linux loads system GTK 3 and
