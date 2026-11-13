@@ -156,6 +156,10 @@ jobs:
             kill $fixture; exit $code'
           $session sh apps/OpenComputerUseLinux/testdata/app-launch-session.sh
       - if: runner.os == 'Windows'
+        name: Windows PowerShell SDK bridge observation
+        shell: powershell
+        run: ./scripts/tests/windows-sdk-observation.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - if: runner.os == 'Windows'
         working-directory: apps/OpenComputerUseWindows
         run: |
           COMPUTER_USE_WINDOWS_LAUNCH_TEST=1 go test -run SDKColdLaunchExecutable -count=1 .

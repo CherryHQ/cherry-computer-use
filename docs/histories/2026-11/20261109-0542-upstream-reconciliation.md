@@ -154,3 +154,13 @@
 - Windows Go 回归、Linux/共享 Go race 测试、Windows amd64/arm64 编译及全部八组 PowerShell 函数回归通过。后者使用 macOS 上的 pwsh 和模拟 Win32，不能作为 Windows 混合 DPI/真实控件实机验收。
 
 实现与边界见[Windows 输入补齐计划](../../exec-plans/completed/20261113-windows-upstream-input-gaps.md)。
+
+### 2026-11-14：修复 Windows SDK CI 启动失败
+
+用户要求修复 PR #37 的 CI。核对 head `0e7581f` 的失败日志，Windows 原生冷启动在执行 `sdk.ps1` 前即因 `Observe-SDK` 的缺失括号解析失败；此前函数回归只解析了 `runtime.ps1`，未覆盖 SDK 适配脚本。Linux 各任务已通过，两个 macOS 任务为取消状态且没有步骤或日志，未将它们归为代码失败。
+
+- 修复省略控件树响应分支的括号，并拆成多行以清楚区分哈希表与条件分支。
+- 新增三个内嵌 bridge 脚本的完整解析检查，以及生产 `Observe-SDK` 默认、仅树和仅截图模式回归；验证采集调用、返回状态、窗口元数据、元素引用及截断标记。
+- CI 在 Windows 原生启动前使用 Windows PowerShell 执行新回归，原 pwsh 引擎测试入口也包含它；没有移除或放宽既有桌面测试。
+- 新回归对旧提交复现与 CI 相同的 parser error；修复后全部九组 PowerShell 回归、Windows Go 测试与 amd64/arm64 编译通过。PowerShell 本地结果使用 macOS pwsh 和受控依赖，Windows PowerShell 与真实桌面结果由新 CI 验证。
+- 文档/仓库卫生和 diff 检查通过，workflow lint 与修改前相同，保留十条既有诊断、无新增诊断。

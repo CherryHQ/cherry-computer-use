@@ -132,7 +132,11 @@ function Observe-SDK($target, $options) {
         $references[$id] = $record
     }
     $capture = if ($options.includeScreenshot -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'CAPTURE_NOT_REQUESTED'; message = 'Screenshot was not requested' } } } else { Get-SDKCapture $process }
-    $tree = if ($options.includeAX -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'OBSERVATION_NOT_REQUESTED'; message = 'Accessibility tree was not requested' } } else { @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) } }
+    $tree = if ($options.includeAX -eq $false) {
+        @{ status = 'unavailable'; reason = @{ code = 'OBSERVATION_NOT_REQUESTED'; message = 'Accessibility tree was not requested' } }
+    } else {
+        @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }
+    }
     return @{ window = @{ id = 'native'; title = [OCUWin32]::WindowTextOf([IntPtr][long]$script:TargetHwnd) }; tree = $tree; screenshot = $capture; target = (Get-SDKTarget $process $hwnd); bounds = $bounds; references = $references }
 }
 function Invoke-SDKAction($operation) {

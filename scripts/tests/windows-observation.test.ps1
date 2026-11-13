@@ -1,6 +1,9 @@
 param([Parameter(Mandatory = $true)][string]$RuntimePath)
 $ErrorActionPreference = "Stop"
 
+& (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'windows-sdk-observation.test.ps1') -RuntimePath $RuntimePath
+if ($LASTEXITCODE -ne 0) { throw 'SDK observation regression failed' }
+
 # Execute the production observation functions with instrumented UIA/capture
 # dependencies. This can run under pwsh on Linux; it is not a Windows UI test.
 $tokens = $null
