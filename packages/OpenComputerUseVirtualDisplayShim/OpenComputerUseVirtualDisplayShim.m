@@ -3,6 +3,10 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
+#if !__has_feature(objc_arc)
+#error "Virtual display ownership requires ARC"
+#endif
+
 // Method surfaces of the private classes, declared as protocols so messaging
 // is typed for ARC without creating link-time class references.
 @protocol OCUVirtualDisplayMode <NSObject>
@@ -43,7 +47,9 @@ uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t h
             [descriptor setValue:[NSValue valueWithSize:NSMakeSize(width * 0.26, height * 0.26)] forKey:@"sizeInMillimeters"];
             [descriptor setValue:@(0x0CAC) forKey:@"productID"];
             [descriptor setValue:@(0x0CAC) forKey:@"vendorID"];
-            [descriptor setValue:@(1) forKey:@"serialNum"];
+            // Each task gets a distinct identity. Reusing serial 1 lets macOS
+            // move windows remembered from a crashed or concurrent task here.
+            [descriptor setValue:@(arc4random_uniform(UINT32_MAX - 1) + 1) forKey:@"serialNum"];
             [descriptor setValue:dispatch_get_main_queue() forKey:@"queue"];
 
             id<OCUVirtualDisplay> display = [[displayClass alloc] initWithDescriptor:descriptor];

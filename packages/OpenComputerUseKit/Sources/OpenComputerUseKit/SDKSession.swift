@@ -223,7 +223,7 @@ public final class SDKSession: @unchecked Sendable {
         }
         execution.async {
             do {
-                guard self.controlRequests.wait(timeout: .now() + 1) == .success else {
+                guard self.controlRequests.wait(timeout: .now() + (self.desktop?.cleanupTimeout ?? 1)) == .success else {
                     throw SDKProtocolError("Application cleanup did not settle")
                 }
                 try self.desktop?.close()

@@ -74,6 +74,8 @@ final class Controller {
     let field = NSTextField(frame: NSRect(x: 20, y: 40, width: 460, height: 30))
     let sheetField = NSTextField(frame: NSRect(x: 20, y: 45, width: 320, height: 30))
     var sheet: NSPanel?
+    var otherWindow: NSWindow?
+    let otherField = NSTextField(frame: NSRect(x: 20, y: 40, width: 300, height: 30))
     let stateURL = URL(fileURLWithPath: CommandLine.arguments[1])
     let commandURL = URL(fileURLWithPath: CommandLine.arguments[2])
     var serial = 0
@@ -100,6 +102,7 @@ final class Controller {
            let cmd = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let next = cmd["serial"] as? Int, next != serial {
             if cmd["reset"] as? Bool == true {
+                otherWindow?.close(); otherWindow = nil
                 if let sheet { window.endSheet(sheet); sheet.orderOut(nil); self.sheet = nil }
                 view.valueWritable = true; view.selectedWritable = true; view.rejectSelectedWrite = false; view.rejectValueWrite = false; view.rejectCaretWrite = false; view.moveFocusOnProbe = false
                 view.string = "hello world"; field.stringValue = "untouched"; sheetField.stringValue = "save.txt"
@@ -115,6 +118,13 @@ final class Controller {
             if let flag = cmd["moveFocusOnProbe"] as? Bool { view.moveFocusOnProbe = flag }
             app.hideFocus = cmd["target"] as? String == "none"
             target = cmd["target"] as? String ?? "view"
+            if target == "savePanel" && sheet == nil {
+                let panel = NSSavePanel()
+                panel.directoryURL = stateURL.deletingLastPathComponent()
+                panel.nameFieldStringValue = "recovery.txt"
+                panel.beginSheetModal(for: window) { _ in }
+                sheet = panel
+            }
             if target == "sheet" && sheet == nil {
                 let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 130),
                     styleMask: [.titled], backing: .buffered, defer: false)
@@ -123,12 +133,22 @@ final class Controller {
                 window.beginSheet(panel)
                 sheet = panel
             }
-            let owner = target == "sheet" ? sheet! : window
-            let input: NSView = target == "field" ? field : target == "sheet" ? sheetField : view
+            if target == "other" && otherWindow == nil {
+                let other = NSWindow(contentRect: NSRect(x: 220, y: 220, width: 380, height: 180),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                other.isReleasedWhenClosed = false
+                other.title = "Other document"
+                otherField.setAccessibilityLabel("Other document input")
+                other.contentView!.addSubview(otherField)
+                otherWindow = other
+            }
+            let owner = target == "other" ? otherWindow! : target == "sheet" ? sheet! : window
+            let input: NSView = target == "other" ? otherField : target == "field" ? field : target == "sheet" ? sheetField : view
             if let text = cmd["text"] as? String {
                 if input === view { view.string = text } else { (input as! NSTextField).stringValue = text }
             }
-            owner.makeFirstResponder(input)
+            if target != "savePanel" { owner.makeFirstResponder(input) }
+            if target == "other" { owner.makeKeyAndOrderFront(nil) }
             if let range = cmd["selection"] as? [Int], range.count == 2 {
                 let selection = NSRange(location: range[0], length: range[1])
                 if input === view { view.setSelectedRange(selection) }
@@ -139,6 +159,8 @@ final class Controller {
         let range = view.selectedRange()
         let data = try! JSONSerialization.data(withJSONObject: [
             "serial": serial, "view": view.string, "field": field.stringValue, "sheet": sheetField.stringValue,
+            "windowID": window.windowNumber, "sheetWindowID": sheet?.windowNumber ?? 0,
+            "otherWindowID": otherWindow?.windowNumber ?? 0,
             "selection": [range.location, range.length], "target": target,
             "valueWrites": view.valueWrites, "selectedWrites": view.selectedWrites])
         try? data.write(to: stateURL, options: .atomic)

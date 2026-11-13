@@ -37,17 +37,15 @@ func agentDisplayPlacement(windowSize: CGSize, displayBounds: CGRect, inset: CGF
     )
 }
 
-/// Where the agent display goes once macOS has added it, or nil to leave the
-/// arrangement alone. macOS puts a new display beside the main one and can push
-/// the user's other displays aside, leaving the invisible display between two
-/// of theirs where the pointer crosses it. When any of theirs moved, they go
-/// back to `displaysBefore` and the agent display goes past the right edge of
-/// the rightmost of them. A single display never moves.
-func agentDisplayOrigin(displaysBefore: [CGRect], displaysNow: [CGRect]) -> CGPoint? {
-    guard displaysBefore != displaysNow, let rightmost = displaysBefore.max(by: { $0.maxX < $1.maxX }) else {
+/// Quartz disallows gaps between displays. Touch the outer bottom-right corner
+/// of the physical layout to minimize pointer crossings, without
+/// placing the invisible screen between the user's displays.
+func agentDisplayOrigin(displaysBefore: [CGRect], displaysNow: [CGRect], agentBounds: CGRect) -> CGPoint? {
+    guard let rightmost = displaysBefore.max(by: { ($0.maxX, $0.maxY) < ($1.maxX, $1.maxY) }) else {
         return nil
     }
-    return CGPoint(x: rightmost.maxX, y: rightmost.minY)
+    let origin = CGPoint(x: rightmost.maxX, y: rightmost.maxY)
+    return displaysBefore == displaysNow && agentBounds.origin == origin ? nil : origin
 }
 
 /// Windows macOS moved onto a new agent display: on one of the user's displays
@@ -75,10 +73,9 @@ func windowsMovedOntoAgentDisplay(_ displayBounds: CGRect, userDisplays: [CGRect
 /// The agent's own display: a virtual display (the mechanism behind Screen
 /// Sharing's headless sessions) that the user never sees. A window parked on it
 /// is genuinely on screen for WindowServer, so its app renders it, exposes its
-/// full accessibility tree and accepts input, while the user's Space, foreground
-/// app and pointer are untouched. Parking moves the window's frame (AX
-/// position, no activation); the original position is restored on `restore`
-/// and at process exit, and the display is removed once nothing is parked.
+/// accessibility tree and accepts input. Parking uses AX position without
+/// activation; a separate recovery child retains the original position across
+/// owner exit. Display topology still changes temporarily during this operation.
 final class AgentDisplay: @unchecked Sendable {
     static let shared = AgentDisplay()
 
@@ -93,12 +90,9 @@ final class AgentDisplay: @unchecked Sendable {
 
     struct ParkedWindow {
         let pid: pid_t
-        let element: AXUIElement
-        let originalPosition: CGPoint
     }
 
     private let lock = NSLock()
-    private var handle: UnsafeMutableRawPointer?
     private(set) var displayID: CGDirectDisplayID = 0
     private(set) var displaySpaceIDs: Set<UInt64> = []
     private var parked: [CGWindowID: ParkedWindow] = [:]
@@ -126,34 +120,45 @@ final class AgentDisplay: @unchecked Sendable {
 
     /// Move `window` onto the agent display. Returns the display bounds.
     @discardableResult
-    func park(windowID: CGWindowID, pid: pid_t, window: AXUIElement, enabled: Bool? = nil) throws -> CGRect {
+    func park(windowID: CGWindowID, pid: pid_t, window: AXUIElement, enabled: Bool? = nil, cancellation: SDKCancellation? = nil) throws -> CGRect {
         lock.lock()
         defer { lock.unlock() }
-
-        let bounds = try ensureDisplay(enabled: enabled)
-        defer { destroyDisplayIfIdle() }
+        try (enabled.map { VirtualDisplayConfig(enabled: $0) } ?? .current).requireEnabled()
+        if cancellation?.isCancelled == true { throw SDKDomainError("CANCELLED", "Window placement cancelled") }
         if parked[windowID] != nil {
-            return bounds
+            _ = try BackgroundWindowRecovery.shared.rememberPosition(windowID: windowID, pid: pid)
+            return try ensureDisplay(enabled: enabled)
         }
-
-        guard let position = axPoint(window, kAXPositionAttribute as String) else {
-            throw ComputerUseError.stateUnavailable("window_placement 'agent_display' could not read the window position")
-        }
+        // Register before display creation: WindowServer can move remembered
+        // windows as soon as the display appears, before our explicit AX move.
+        _ = try BackgroundWindowRecovery.shared.rememberPosition(windowID: windowID, pid: pid)
         let size = axSize(window) ?? CGSize(width: 800, height: 600)
-        let target = agentDisplayPlacement(windowSize: size, displayBounds: bounds)
         let start = TimingLog.now()
-        parked[windowID] = ParkedWindow(pid: pid, element: window, originalPosition: position)
+        parked[windowID] = ParkedWindow(pid: pid)
         installExitHookIfNeeded()
-        try setAXPosition(window, target)
-        try waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds)
-        TimingLog.log("agent_display.park", since: start)
-        return bounds
+        do {
+            let bounds = try ensureDisplay(enabled: enabled)
+            if cancellation?.isCancelled == true { throw SDKDomainError("CANCELLED", "Window placement cancelled") }
+            try setAXPosition(window, agentDisplayPlacement(windowSize: size, displayBounds: bounds))
+            try waitForWindow(windowID, toLandOn: displaySpaceIDs, or: bounds, cancellation: cancellation)
+            TimingLog.log("agent_display.park", since: start)
+            return bounds
+        } catch {
+            do {
+                try BackgroundWindowRecovery.shared.restorePosition(windowID: windowID)
+                if parked.count == 1 { try destroyDisplay() }
+                parked.removeValue(forKey: windowID)
+            } catch {
+                throw SDKDomainError("CLEANUP_FAILED", "Window placement failed and its original position could not be restored", effect: "possible")
+            }
+            throw error
+        }
     }
 
     /// Wait until the window's frame sits inside the display and, when the
     /// Space SPI is available, WindowServer also reports it on one of the
     /// display's Spaces. Space membership alone precedes the frame update.
-    private func waitForWindow(_ windowID: CGWindowID, toLandOn spaceIDs: Set<UInt64>, or bounds: CGRect) throws {
+    private func waitForWindow(_ windowID: CGWindowID, toLandOn spaceIDs: Set<UInt64>, or bounds: CGRect, cancellation: SDKCancellation?) throws {
         let spi = SkyLightSPI.shared
         let isOnDisplay = {
             guard let frame = Self.windowFrame(windowID),
@@ -164,12 +169,13 @@ final class AgentDisplay: @unchecked Sendable {
             }
             return true
         }
-        if waitUntil(timeout: Self.moveSettle, isOnDisplay) == nil {
-            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
-            guard isOnDisplay() else {
-                throw ComputerUseError.stateUnavailable("The window did not confirm placement on the agent display; its original position is retained for restoration")
-            }
-        }
+        let deadline = ProcessInfo.processInfo.systemUptime + Self.moveSettle + Self.moveFallbackSettle
+        repeat {
+            if cancellation?.isCancelled == true { throw SDKDomainError("CANCELLED", "Window placement cancelled", effect: "possible") }
+            if isOnDisplay() { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        throw ComputerUseError.stateUnavailable("The window did not confirm placement on the agent display")
     }
 
     private static func windowFrame(_ windowID: CGWindowID) -> CGRect? {
@@ -184,51 +190,22 @@ final class AgentDisplay: @unchecked Sendable {
     }
 
     static func isRestored(frame: CGRect, to originalPosition: CGPoint, tolerance: CGFloat = 1) -> Bool {
-        abs(frame.minX - originalPosition.x) < tolerance
-            && abs(frame.minY - originalPosition.y) < tolerance
+        abs(frame.minX - originalPosition.x) <= tolerance
+            && abs(frame.minY - originalPosition.y) <= tolerance
     }
 
     /// Put a parked window back where it was.
     func restore(windowID: CGWindowID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = parked[windowID] else {
+        guard parked[windowID] != nil else {
             return
         }
         let start = TimingLog.now()
-        do {
-            try setAXPosition(entry.element, entry.originalPosition)
-        } catch {
-            // A closed target no longer needs restoration. Forget it so the
-            // virtual display can still be removed. Keep live failures for a
-            // later retry instead of losing the original position.
-            if Self.windowFrame(windowID) == nil {
-                parked.removeValue(forKey: windowID)
-                destroyDisplayIfIdle()
-                return
-            }
-            throw error
-        }
-        let back = waitUntil(timeout: Self.moveSettle) {
-            guard let frame = Self.windowFrame(windowID) else { return false }
-            return Self.isRestored(frame: frame, to: entry.originalPosition)
-        }
-        if back == nil {
-            Thread.sleep(forTimeInterval: Self.moveFallbackSettle)
-            guard let frame = Self.windowFrame(windowID) else {
-                parked.removeValue(forKey: windowID)
-                destroyDisplayIfIdle()
-                return
-            }
-            guard Self.isRestored(frame: frame, to: entry.originalPosition) else {
-                throw ComputerUseError.stateUnavailable(
-                    "window_placement 'restore' could not confirm that the window returned to its original position"
-                )
-            }
-        }
+        try BackgroundWindowRecovery.shared.restorePosition(windowID: windowID)
+        if parked.count == 1 { try destroyDisplay() }
         parked.removeValue(forKey: windowID)
         TimingLog.log("agent_display.restore", since: start)
-        destroyDisplayIfIdle()
     }
 
     func restoreAll() {
@@ -273,12 +250,7 @@ final class AgentDisplay: @unchecked Sendable {
         let displaysBefore = Self.activeDisplays().map { (id: $0, bounds: CGDisplayBounds($0)) }
         let windowsBefore = Self.appWindows()
         let start = TimingLog.now()
-        var newHandle: UnsafeMutableRawPointer?
-        let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
-        guard id != 0, let newHandle else {
-            throw ComputerUseError.message("window_placement 'agent_display' could not create the agent display")
-        }
-        handle = newHandle
+        let id = try BackgroundWindowRecovery.shared.createDisplay()
         displayID = id
         TimingLog.log("agent_display.create", since: start)
 
@@ -292,14 +264,15 @@ final class AgentDisplay: @unchecked Sendable {
             return !newSpaces.isEmpty
         }
         if ready == nil, displayBounds?.isEmpty != false {
-            destroyDisplay()
             throw ComputerUseError.message("window_placement 'agent_display' timed out waiting for the agent display")
         }
         if newSpaces.isEmpty {
             Thread.sleep(forTimeInterval: Self.displayFallbackSettle)
         }
         displaySpaceIDs = newSpaces
-        placeBesideUserDisplays(id, displaysBefore: displaysBefore)
+        guard displaysBefore.allSatisfy({ CGDisplayBounds($0.id) == $0.bounds }) else {
+            throw ComputerUseError.stateUnavailable("Existing display arrangement changed while creating the agent display")
+        }
         returnRememberedWindows(windowsBefore, userDisplays: displaysBefore.map(\.bounds))
         TimingLog.log("agent_display.ready", since: start)
         return displayBounds ?? .zero
@@ -309,26 +282,38 @@ final class AgentDisplay: @unchecked Sendable {
     /// aside for the agent display, and the agent display past the rightmost
     /// (see `agentDisplayOrigin`). A display mirroring another is left alone:
     /// setting its origin would take it out of the mirror set.
-    private func placeBesideUserDisplays(_ id: CGDirectDisplayID, displaysBefore: [(id: CGDirectDisplayID, bounds: CGRect)]) {
+    static func placeBesideUserDisplays(_ id: CGDirectDisplayID, displaysBefore: [(id: CGDirectDisplayID, bounds: CGRect)]) throws {
         let theirs = displaysBefore.filter { CGDisplayMirrorsDisplay($0.id) == kCGNullDirectDisplay }
-        guard let origin = agentDisplayOrigin(displaysBefore: theirs.map(\.bounds), displaysNow: theirs.map { CGDisplayBounds($0.id) }) else {
+        guard !theirs.isEmpty else { throw ComputerUseError.stateUnavailable("No physical display is available for window restoration") }
+        guard let origin = agentDisplayOrigin(displaysBefore: theirs.map(\.bounds), displaysNow: theirs.map { CGDisplayBounds($0.id) }, agentBounds: CGDisplayBounds(id)) else {
             return
         }
         var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return }
-        for display in theirs {
-            CGConfigureDisplayOrigin(config, display.id, Int32(display.bounds.minX), Int32(display.bounds.minY))
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else {
+            throw ComputerUseError.stateUnavailable("Could not preserve the physical display arrangement")
         }
-        CGConfigureDisplayOrigin(config, id, Int32(origin.x), Int32(origin.y))
-        // Best effort: on failure the arrangement stays as macOS made it. The
-        // configuration is invalid on return either way.
-        _ = CGCompleteDisplayConfiguration(config, .forSession)
+        for display in theirs {
+            guard CGConfigureDisplayOrigin(config, display.id, Int32(display.bounds.minX), Int32(display.bounds.minY)) == .success else {
+                CGCancelDisplayConfiguration(config)
+                throw ComputerUseError.stateUnavailable("The physical display arrangement changed during placement")
+            }
+        }
+        guard CGConfigureDisplayOrigin(config, id, Int32(origin.x), Int32(origin.y)) == .success else {
+            CGCancelDisplayConfiguration(config)
+            throw ComputerUseError.stateUnavailable("Could not isolate the virtual display from physical displays")
+        }
+        guard CGCompleteDisplayConfiguration(config, .forSession) == .success,
+              waitUntil(timeout: Self.displaySettle, {
+                  CGDisplayBounds(id).origin == origin && theirs.allSatisfy { CGDisplayBounds($0.id) == $0.bounds }
+              }) != nil else {
+            let actual = CGDisplayBounds(id).origin
+            let preserved = theirs.allSatisfy { CGDisplayBounds($0.id) == $0.bounds }
+            throw ComputerUseError.stateUnavailable("Display arrangement was not confirmed (requested \(origin), actual \(actual), existing displays preserved: \(preserved)); virtual display removed")
+        }
     }
 
-    /// macOS remembers windows on a display it has seen before, and the agent
-    /// display has the same identity every time: a window still on an earlier
-    /// one when it went away (the process was killed before restoring) is moved
-    /// onto every new one, off the user's screen. Each goes back where it was.
+    /// Defend against WindowServer moving unrelated windows during display
+    /// creation, even though each agent display now has a fresh identity.
     private func returnRememberedWindows(_ before: [CGWindowID: (pid: pid_t, frame: CGRect)], userDisplays: [CGRect]) {
         guard let bounds = displayBounds else { return }
         let moved = windowsMovedOntoAgentDisplay(
@@ -347,7 +332,7 @@ final class AgentDisplay: @unchecked Sendable {
         }
     }
 
-    private static func activeDisplays() -> [CGDirectDisplayID] {
+    static func activeDisplays() -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
@@ -371,17 +356,10 @@ final class AgentDisplay: @unchecked Sendable {
         return windows
     }
 
-    private func destroyDisplayIfIdle() {
-        if parked.isEmpty {
-            destroyDisplay()
-        }
-    }
-
-    private func destroyDisplay() {
-        if let handle {
-            ocu_virtual_display_destroy(handle)
-        }
-        handle = nil
+    private func destroyDisplay() throws {
+        // The child owns the private object. Process exit also clears display
+        // state that WindowServer can retain after a plain object release.
+        try BackgroundWindowRecovery.shared.destroyDisplay()
         displayID = 0
         displaySpaceIDs = []
     }
@@ -395,14 +373,6 @@ final class AgentDisplay: @unchecked Sendable {
     }
 
     // MARK: - AX helpers
-
-    private func axPoint(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success, let value else { return nil }
-        var point = CGPoint.zero
-        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
-        return point
-    }
 
     private func axSize(_ element: AXUIElement) -> CGSize? {
         var value: CFTypeRef?

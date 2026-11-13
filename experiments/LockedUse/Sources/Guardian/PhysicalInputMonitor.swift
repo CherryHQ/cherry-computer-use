@@ -36,7 +36,12 @@ final class PhysicalInputMonitor {
     private let backend: any PhysicalInputBackend
     private let activity: @MainActor () -> Void
     private let failure: @MainActor () -> Void
-    var healthy: Bool { state == .healthy }
+    private(set) var observedDeviceCount = 0
+    private(set) var seizedDeviceCount = 0
+    var healthy: Bool {
+        if state == .healthy && !backend.inputMonitoringAllowed { invalidate() }
+        return state == .healthy
+    }
 
     init(backend: any PhysicalInputBackend = NativePhysicalInputBackend(),
          activity: @escaping @MainActor () -> Void, failure: @escaping @MainActor () -> Void) {
@@ -47,13 +52,19 @@ final class PhysicalInputMonitor {
         guard state == .stopped else { throw GuardianError.message("Hardware input monitor already started") }
         guard backend.inputMonitoringAllowed else { throw GuardianError.message("Input Monitoring missing") }
         state = .starting
+        observedDeviceCount = 0
+        seizedDeviceCount = 0
         let generation = UUID()
         self.generation = generation
         do {
             let devices = try backend.start(input: { [weak self] result in
                 guard let self, self.generation == generation else { return }
                 if result != kIOReturnSuccess { self.invalidate() }
-                else if self.healthy { self.activity() }
+                else if self.state == .starting {
+                    // Input during arming is a takeover too. Do not acknowledge
+                    // readiness and then unlock after dropping that event.
+                    self.invalidate()
+                } else if self.state == .healthy { self.activity() }
             }, topologyChanged: { [weak self] in
                 guard let self, self.generation == generation else { return }
                 self.invalidate()
@@ -68,7 +79,9 @@ final class PhysicalInputMonitor {
                 if result == kIOReturnSuccess {
                     observed.formUnion(device.kinds)
                     opened.append(device.id)
-                } else if result != kIOReturnExclusiveAccess {
+                } else if result == kIOReturnExclusiveAccess {
+                    seizedDeviceCount += 1
+                } else {
                     throw GuardianError.message("Hardware input device could not be opened")
                 }
             }
@@ -80,6 +93,7 @@ final class PhysicalInputMonitor {
             }
             for id in opened { backend.observe(id) }
             guard state == .starting else { throw GuardianError.message("Hardware input changed during startup") }
+            observedDeviceCount = opened.count
             state = .healthy
         } catch {
             stop()

@@ -29,7 +29,9 @@ enum MacOSSDKRuntime {
                     connectedToOwner = true
                     let transport = try SDKTransport(input: socket, output: socket)
                     try transport.write(SDKMessage(["sessionId": sessionID, "pid": getpid()]))
-                    try SDKSession(sessionID: sessionID, version: resolvedOpenComputerUseVersion(), transport: transport, permissionRequest: SDKPermissionOnboarding.request, desktop: MacOSSDKDesktop(protection: SDKLockedUseProtection(clientSocket: socket.fileDescriptor))).run()
+                    try SDKSession(sessionID: sessionID, version: resolvedOpenComputerUseVersion(), transport: transport,
+                        permissionRequest: SDKPermissionOnboarding.request, cleanup: BackgroundWindowRecoveryRuntime.finish,
+                        desktop: MacOSSDKDesktop(protection: SDKLockedUseProtection(clientSocket: socket.fileDescriptor))).run()
                 } catch {
                     code = EXIT_FAILURE
                     FileHandle.standardError.write(Data("SDK agent failed: \(error)\n".utf8))

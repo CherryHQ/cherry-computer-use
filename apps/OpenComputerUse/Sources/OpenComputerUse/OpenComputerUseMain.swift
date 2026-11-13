@@ -26,6 +26,7 @@ enum OpenComputerUseMain {
     private static func run() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
 
+        if try BackgroundWindowRecoveryRuntime.run(arguments: arguments) { return }
         if try MacOSSDKRuntime.run(arguments: arguments) { return }
 
         if MacOSAppAgentProxy.isAgentInvocation(arguments: arguments) {

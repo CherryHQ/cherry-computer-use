@@ -2,11 +2,39 @@ import XCTest
 import os
 import IOKit.pwr_mgt
 @testable import OpenComputerUse
-import OpenComputerUseKit
+@testable import OpenComputerUseKit
 
 /// Display readiness is injected everywhere, so these tests exercise the full decision
 /// logic (retry counts, call order, bounded waits) without touching powerd or CoreGraphics.
 final class LockedUseDisplayPreflightTests: XCTestCase {
+    func testCancellationDuringWakeReleasesTheActivityAssertion() {
+        var cancelled = false
+        var released: [IOPMAssertionID] = []
+        let preflight = LockedUseDisplayPreflight(activeDisplayCount: { 0 },
+            declareUserActivity: { $0 = 123 }, releaseUserActivity: { released.append($0) },
+            sleep: { _ in cancelled = true })
+        XCTAssertEqual(preflight.wakeForAcquisition(isCancelled: { cancelled }), "cancelled")
+        XCTAssertEqual(released, [123])
+        XCTAssertEqual(lockedUseAwaitReleasedGuards(status: { XCTFail("Cancelled preparation must not contact Broker"); return nil },
+            isCancelled: { true }), "cancelled")
+    }
+
+    func testCancellationDuringDisplayPreparationNeverBeginsLease() {
+        var releases = 0
+        let cancellation = SDKCancellation()
+        let client = LockedUseConnection(clientSocket: -1, prepareDisplay: { token in
+            token?.cancel()
+            return LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+        }, connectForAcquisition: { _ in
+            XCTFail("Cancelled preparation must not request unlock")
+            throw SDKDomainError("TEST_FAILURE", "Unexpected Broker connection")
+        })
+        XCTAssertThrowsError(try client.acquire(session: .init(state: .locked, userID: 501, auditSessionID: 42), cancellation: cancellation)) {
+            XCTAssertEqual(($0 as? SDKDomainError)?.code, "CANCELLED")
+        }
+        XCTAssertEqual(releases, 1)
+    }
+
     private func makePreflight(activeCounts: [Int], clockStep: TimeInterval = 1)
         -> (LockedUseDisplayPreflight, calls: () -> Int, wakeCalls: () -> Int) {
         var counts = activeCounts
@@ -182,7 +210,7 @@ final class LockedUseDisplayPreflightTests: XCTestCase {
         enum Failure: Error { case connection }
         var releases = 0
         let client = LockedUseConnection(clientSocket: -1,
-            prepareDisplay: { LockedUseDisplayHold(releaseAssertion: { releases += 1 }) },
+            prepareDisplay: { _ in LockedUseDisplayHold(releaseAssertion: { releases += 1 }) },
             connectForAcquisition: { _ in
                 XCTAssertEqual(releases, 0)
                 throw Failure.connection
@@ -196,7 +224,7 @@ final class LockedUseDisplayPreflightTests: XCTestCase {
         var releases = 0
         var client: LockedUseConnection!
         client = LockedUseConnection(clientSocket: -1,
-            prepareDisplay: {
+            prepareDisplay: { _ in
                 client.end(disconnecting: true)
                 return LockedUseDisplayHold(releaseAssertion: { releases += 1 })
             }, connectForAcquisition: { _ in

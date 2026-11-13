@@ -9,7 +9,7 @@ final class LockedUseConnection: @unchecked Sendable {
     private let mutex = NSLock()
     private let logger = Logger(subsystem: "com.cherryai.cherrystudio.computer-use.locked-use", category: "AgentRecovery")
     private let clientSocket: Int32
-    private let prepareDisplay: () -> LockedUseDisplayHold?
+    private let prepareDisplay: (SDKCancellation?) -> LockedUseDisplayHold?
     private let connectForAcquisition: (Int32) throws -> LockedUseIPCClient
     private var broker: LockedUseIPCClient?
     private var lease: UUID?
@@ -33,7 +33,7 @@ final class LockedUseConnection: @unchecked Sendable {
 
     init(
         clientSocket: Int32,
-        prepareDisplay: @escaping () -> LockedUseDisplayHold? = LockedUseConnection.prepareDisplay,
+        prepareDisplay: @escaping (SDKCancellation?) -> LockedUseDisplayHold? = LockedUseConnection.prepareDisplay,
         connectForAcquisition: @escaping (Int32) throws -> LockedUseIPCClient = {
             try LockedUseIPCClient(endpoint: .agent,
                 brokerRequirement: LockedUseSigningIdentity.brokerRequirement(), clientSocket: $0)
@@ -71,12 +71,12 @@ final class LockedUseConnection: @unchecked Sendable {
         return try body()
     }
 
-    private static func prepareDisplay() -> LockedUseDisplayHold? {
+    private static func prepareDisplay(cancellation: SDKCancellation?) -> LockedUseDisplayHold? {
         let logger = Logger(subsystem: "com.cherryai.cherrystudio.computer-use.locked-use", category: "DisplayPreflight")
         let hold = LockedUseDisplayHold(logger: logger)
-        _ = LockedUseDisplayPreflight(logger: logger).wakeForAcquisition()
+        _ = LockedUseDisplayPreflight(logger: logger).wakeForAcquisition(isCancelled: { cancellation?.isCancelled == true })
         let observer = LockedUseDisplayReleaseObserver()
-        _ = lockedUseAwaitReleasedGuards(status: observer.status)
+        _ = lockedUseAwaitReleasedGuards(status: observer.status, isCancelled: { cancellation?.isCancelled == true })
         return hold
     }
 
@@ -86,7 +86,7 @@ final class LockedUseConnection: @unchecked Sendable {
         // Dark-display insurance before the broker's startup deadline starts counting:
         // wake a sleeping display and keep it awake through the whole episode. See
         // LockedUseDisplayPreflight for the failure modes this prevents.
-        let pendingHold = prepareDisplay()
+        let pendingHold = prepareDisplay(cancellation)
         var admitted = false
         // Covers connection/handshake/request errors as well as denied replies.
         defer { if !admitted { pendingHold?.release() } }

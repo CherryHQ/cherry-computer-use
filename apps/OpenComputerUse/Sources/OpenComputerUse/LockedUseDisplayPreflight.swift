@@ -43,7 +43,8 @@ struct LockedUseDisplayPreflight {
     /// Wakes a dark display and waits (bounded) for it to report active.
     /// Returns the terminal reason, purely for logging.
     @discardableResult
-    func wakeForAcquisition() -> String {
+    func wakeForAcquisition(isCancelled: () -> Bool = { false }) -> String {
+        if isCancelled() { return "cancelled" }
         if activeDisplayCount() > 0 { return "alreadyAwake" }
         // The API can replace this ID on a retry. Reuse its latest value and
         // release it even when the display never becomes active.
@@ -52,6 +53,7 @@ struct LockedUseDisplayPreflight {
         var attempts = 0
         let deadline = now() + Self.wakeTimeout
         while now() < deadline {
+            if isCancelled() { return "cancelled" }
             attempts += 1
             declareUserActivity(&activity)
             sleep(Self.pollInterval)
@@ -153,12 +155,14 @@ final class LockedUseDisplayReleaseObserver {
 /// deadlines (including the first reply's cold-authentication budget).
 func lockedUseAwaitReleasedGuards(
     status: () -> (phase: LockedUseStateMachine.Phase?, guardsReleased: Bool?)?,
+    isCancelled: () -> Bool = { false },
     deadline: TimeInterval = 4,
     poll: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
     now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 ) -> String {
     let stop = now() + deadline
     while now() < stop {
+        if isCancelled() { return "cancelled" }
         guard let reply = status() else { return "statusUnavailable" }
         if reply.phase != .idle || reply.guardsReleased == true { return "ready" }
         let remaining = stop - now()

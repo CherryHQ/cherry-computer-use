@@ -30,10 +30,11 @@
   - 键鼠输入模拟
   - software cursor overlay
   - fixture test bridge
+  - 后台窗口恢复子进程：同一可执行文件的内部入口，继承管道断开后恢复登记过的窗口位置和遮挡状态；无持久窗口记录。
 - `packages/LockedUseNative` / `experiments/LockedUse`
   可选锁屏保护的原生签名/身份校验、Broker、Guardian、installer 与认证插件源码；由 Cherry app 构建脚本捆绑，用户另行安装和验证。
 - `packages/OpenComputerUseVirtualDisplayShim`
-  macOS 虚拟屏桥接；任务显式启用，应用会话停止时恢复所属窗口。
+  macOS 虚拟屏桥接；任务显式启用。恢复进程持有独立显示器子进程，应用会话停止时先恢复窗口，最后一个停放窗口恢复后结束显示器进程并确认屏幕移除。
 - `experiments/CursorMotion`
   独立的 Swift cursor motion lab，用于试验 `Bezier + arc + spring` 参数模型、调参 UI 和独立渲染，不直接耦合主 MCP runtime。
 - `experiments/StandaloneCursor`
@@ -158,6 +159,7 @@
 
 - 单元测试：`swift test`
 - 独立 AppKit 输入回归：`OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS=1 OPEN_COMPUTER_USE_VISUAL_CURSOR=0 swift test --filter UpstreamNativeInputTests`（需辅助功能权限，不需要录屏权限；只操作测试进程的窗口）。
+- 在上述命令上增加 `OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1`，显式验证 fixture 虚拟屏停放、既有显示器原点与窗口恢复；只需 AX 权限，会临时创建虚拟屏。
 - standalone cursor 构建：`swift build --product StandaloneCursor`
 - cursor lab 构建：`swift build --product CursorMotion`
 - 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`（11-tool 注册、原有工具与 `select_text` 的 headless fixture 回归、visual cursor idle；真实 AX query 另有定向测试）。

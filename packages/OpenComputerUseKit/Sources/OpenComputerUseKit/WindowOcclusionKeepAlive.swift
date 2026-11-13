@@ -50,7 +50,8 @@ func appHasLazyWebAccessibility(bundleURL: URL?) -> Bool {
 /// visible pins the app's notion at "visible", so covering the window later or
 /// moving it to another Space no longer hides its content. This is a
 /// WindowServer-level, app-agnostic switch, applied to every window the agent
-/// drives; its prior state is restored when the server shuts down normally.
+/// drives; an independent child retains the prior state for normal or abrupt
+/// server shutdown.
 /// Nothing here activates, raises, or moves a window, and it cannot un-hide a
 /// window that is already occluded when the agent first sees it.
 final class WindowOcclusionKeepAlive: @unchecked Sendable {
@@ -60,6 +61,7 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
     /// Preserve the state reported by the SPI so cleanup does not enable
     /// notifications that another owner had already disabled.
     private var frozenWindowPreviousStates: [CGWindowID: Bool] = [:]
+    private var recoveredWindows: Set<CGWindowID> = []
     private var exitHookInstalled = false
 
     /// Returns `true` when the window's visible state is pinned (now or already).
@@ -85,7 +87,15 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
             return false
         }
         do {
-            let previousState = try spi.setWindowOcclusionNotificationsEnabled(false, windowID: windowID)
+            let previousState: Bool
+            if spi === SkyLightSPI.shared {
+                guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.first,
+                      let pid = info[kCGWindowOwnerPID as String] as? Int32 else { return false }
+                previousState = try BackgroundWindowRecovery.shared.pin(windowID: windowID, pid: pid)
+                recoveredWindows.insert(windowID)
+            } else {
+                previousState = try spi.setWindowOcclusionNotificationsEnabled(false, windowID: windowID)
+            }
             frozenWindowPreviousStates[windowID] = previousState
         } catch {
             return false
@@ -102,19 +112,31 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
         return frozenWindowPreviousStates[windowID] != nil
     }
 
+    var pinnedWindowIDs: Set<CGWindowID> { lock.withLock { Set(frozenWindowPreviousStates.keys) } }
+
+    private func restore(_ id: CGWindowID, previous: Bool, spi: any WindowOcclusionControlling) throws {
+        if recoveredWindows.contains(id) {
+            try BackgroundWindowRecovery.shared.releaseOcclusion(windowID: id)
+            recoveredWindows.remove(id)
+        } else {
+            try spi.setWindowOcclusionNotificationsEnabled(previous, windowID: id)
+        }
+        frozenWindowPreviousStates.removeValue(forKey: id)
+    }
+
     func release(windowIDs: Set<CGWindowID>, spi: any WindowOcclusionControlling = SkyLightSPI.shared) throws {
         lock.lock()
         defer { lock.unlock() }
         var failure: Error?
         for windowID in windowIDs {
             guard let previousState = frozenWindowPreviousStates[windowID] else { continue }
-            if (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.isEmpty == true {
+            if !recoveredWindows.contains(windowID),
+               (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.isEmpty == true {
                 frozenWindowPreviousStates.removeValue(forKey: windowID)
                 continue
             }
             do {
-                try spi.setWindowOcclusionNotificationsEnabled(previousState, windowID: windowID)
-                frozenWindowPreviousStates.removeValue(forKey: windowID)
+                try restore(windowID, previous: previousState, spi: spi)
             } catch { failure = failure ?? error }
         }
         if let failure { throw failure }
@@ -125,8 +147,7 @@ final class WindowOcclusionKeepAlive: @unchecked Sendable {
         defer { lock.unlock() }
         for (windowID, previousState) in Array(frozenWindowPreviousStates) {
             do {
-                try spi.setWindowOcclusionNotificationsEnabled(previousState, windowID: windowID)
-                frozenWindowPreviousStates.removeValue(forKey: windowID)
+                try restore(windowID, previous: previousState, spi: spi)
             } catch {
                 // Retain failed entries so a later cleanup can retry.
             }

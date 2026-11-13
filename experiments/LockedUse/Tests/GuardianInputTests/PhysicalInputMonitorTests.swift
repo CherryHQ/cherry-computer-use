@@ -14,6 +14,7 @@ private final class FakeInputBackend: PhysicalInputBackend {
     var stops = 0
     var failStart = false
     var changeWhileObserving = false
+    var inputWhileObserving = false
     func start(input: @escaping @MainActor (IOReturn) -> Void,
                topologyChanged: @escaping @MainActor () -> Void) throws -> [MonitoredInputDevice] {
         self.input = input; topology = topologyChanged
@@ -27,11 +28,39 @@ private final class FakeInputBackend: PhysicalInputBackend {
     func observe(_ id: UInt64) {
         observed.append(id)
         if changeWhileObserving { topology?() }
+        if inputWhileObserving { input?(kIOReturnSuccess) }
     }
     func stop() { stops += 1 }
 }
 
 final class PhysicalInputMonitorTests: XCTestCase {
+    func testInputDuringPreparationCannotBeLostBeforeUnlock() async throws {
+        try await MainActor.run {
+            let backend = FakeInputBackend()
+            backend.inputWhileObserving = true
+            let monitor = PhysicalInputMonitor(backend: backend, activity: {}, failure: {})
+            XCTAssertThrowsError(try monitor.start())
+            XCTAssertFalse(monitor.healthy)
+            XCTAssertEqual(backend.stops, 1)
+        }
+    }
+
+    func testPermissionRevocationStopsAnAlreadyHealthyMonitor() async throws {
+        try await MainActor.run {
+            let backend = FakeInputBackend()
+            var failures = 0
+            let monitor = PhysicalInputMonitor(backend: backend, activity: {}, failure: { failures += 1 })
+            try monitor.start()
+            backend.inputMonitoringAllowed = false
+            XCTAssertFalse(monitor.healthy)
+            XCTAssertEqual(failures, 1)
+            backend.inputMonitoringAllowed = true
+            XCTAssertFalse(monitor.healthy)
+            XCTAssertEqual(failures, 1)
+            monitor.stop()
+        }
+    }
+
     func testNormalInputAndIdempotentCleanup() async throws {
         try await MainActor.run {
             let backend = FakeInputBackend()

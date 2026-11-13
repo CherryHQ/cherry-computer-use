@@ -24,7 +24,10 @@ final class SDKFeatureTests: XCTestCase {
         XCTAssertEqual(options.windowID, 42)
     }
 
-    func testQueryBudgetsAndOwnershipAreEnforcedThroughSDK() throws {
+    @MainActor
+    func testQueryBudgetsAndOwnershipAreEnforcedThroughSDK() async throws {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.finishLaunching()
         let oldNamespace = getenv("OPEN_COMPUTER_USE_FIXTURE_NAMESPACE").map { String(cString: $0) }
         setenv("OPEN_COMPUTER_USE_FIXTURE_NAMESPACE", UUID().uuidString, 1)
         defer {
@@ -81,12 +84,44 @@ final class SDKFeatureTests: XCTestCase {
         defer { try? desktop.close() }
         _ = try desktop.call("listApps", params: [:], cancellation: SDKCancellation())
         XCTAssertEqual(protection.entries, 0)
+        let app = RunningAppDescriptor(name: "Fixture", bundleIdentifier: nil, pid: getpid(), runningApplication: .current)
+        let session = try desktop.openAppSession(appID: "one", app: app)
+        let id = try XCTUnwrap(session["id"] as? String)
         for method in ["resolveApp", "getAppState", "query", "act", "perform"] {
-            XCTAssertThrowsError(try desktop.call(method, params: [:], cancellation: SDKCancellation())) {
+            let params: [String: Any]
+            switch method {
+            case "resolveApp": params = ["query": "TextEdit"]
+            case "getAppState": params = ["appSessionId": id]
+            case "query": params = ["appSessionId": id, "text": "input"]
+            default: params = ["appSessionId": id, "snapshotId": "s", "type": "typeText", "text": "test"]
+            }
+            XCTAssertThrowsError(try desktop.call(method, params: params, cancellation: SDKCancellation())) {
                 XCTAssertEqual(($0 as? SDKDomainError)?.code, "PERMISSION_REQUIRED")
             }
         }
         XCTAssertEqual(protection.entries, 5)
+    }
+
+    func testApplicationStopCancelsLeasePreparationBeforeAnyGUIAction() throws {
+        let protection = PreparingTaskProtection()
+        let desktop = MacOSSDKDesktop(protection: protection)
+        let app = RunningAppDescriptor(name: "Fixture", bundleIdentifier: nil, pid: getpid(), runningApplication: .current)
+        let session = try desktop.openAppSession(appID: "one", app: app)
+        let id = try XCTUnwrap(session["id"] as? String)
+        let finished = expectation(description: "Acquisition cancelled")
+        DispatchQueue.global().async {
+            defer { finished.fulfill() }
+            do {
+                _ = try desktop.call("getAppState", params: ["appSessionId": id], cancellation: SDKCancellation())
+                XCTFail("Stopped acquisition must not reach GUI execution")
+            } catch { XCTAssertEqual((error as? SDKDomainError)?.code, "CANCELLED") }
+        }
+        XCTAssertEqual(protection.entered.wait(timeout: .now() + 2), .success)
+        let finishStop = try desktop.prepareAppStop(["appSessionId": id])
+        protection.resume.signal()
+        XCTAssertEqual(try finishStop().value["cleanup"] as? String, "complete")
+        wait(for: [finished], timeout: 2)
+        try desktop.close()
     }
 
     func testStoppingAnAppKeepsTaskProtectionAndOtherAppsUntilTaskClose() throws {
@@ -122,6 +157,21 @@ final class SDKFeatureTests: XCTestCase {
             }
         }
     }
+}
+
+private final class PreparingTaskProtection: SDKTaskProtection, @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let resume = DispatchSemaphore(value: 0)
+    func availability() -> [String: Any] { ["status": "available"] }
+    func configure(enabled: Bool) throws {}
+    func perform(cancellation: SDKCancellation, _ body: () throws -> Any) throws -> Any {
+        entered.signal()
+        guard resume.wait(timeout: .now() + 2) == .success, cancellation.isCancelled else {
+            throw SDKDomainError("PREPARATION_NOT_CANCELLED", "Stop did not reach pending acquisition")
+        }
+        throw SDKDomainError("CANCELLED", "Acquisition cancelled")
+    }
+    func close() throws {}
 }
 
 private final class TestTaskProtection: SDKTaskProtection, @unchecked Sendable {

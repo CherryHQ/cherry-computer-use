@@ -4,8 +4,172 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class UpstreamNativeInputTests: XCTestCase {
-    func testSDKQuerySelectsAndReplacesNativeTextWithoutScreenshot() throws {
+    @MainActor
+    func testVirtualDisplayRestoresFixtureAndPreservesExistingDisplayOrigins() async throws {
+        // Match the app runtime: SDK work runs off-main while AppKit continues
+        // processing display-reconfiguration notifications on the main loop.
+        try await Task.detached { try UpstreamNativeInputTests.verifyVirtualDisplaySession() }.value
+    }
+
+    private static func verifyVirtualDisplaySession() throws {
         try requireLiveTests()
+        guard ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Enable the controlled virtual display fixture explicitly")
+        }
+        guard AgentDisplay.shared.isSupported else { throw XCTSkip("Virtual display SPI unavailable") }
+        let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
+        defer { resetOpenComputerUseBackgroundWindowState(); fixture.close() }
+        try fixture.configure(["reset": true])
+        let id = try XCTUnwrap(try fixture.state()["windowID"] as? UInt32)
+        let app = try fixture.descriptor()
+        let context = try SnapshotBuilder.resolveTargetWindow(for: app, windowID: id)
+        let original = try XCTUnwrap(context.windowBounds).origin
+        func displays() throws -> [CGDirectDisplayID: CGRect] {
+            var ids = [CGDirectDisplayID](repeating: 0, count: 32), count: UInt32 = 0
+            guard CGGetActiveDisplayList(32, &ids, &count) == .success else {
+                throw SDKProtocolError("Display inventory unavailable")
+            }
+            return Dictionary(uniqueKeysWithValues: ids.prefix(Int(count)).map { ($0, CGDisplayBounds($0)) })
+        }
+        let before = try displays()
+        let desktop = MacOSSDKDesktop()
+        defer { try? desktop.close() }
+        _ = try desktop.call("configureTask", params: ["virtualDisplay": true], cancellation: SDKCancellation())
+        let discovered = try XCTUnwrap(AppDiscovery.runningApps().first { $0.pid == app.pid })
+        let resolved = try XCTUnwrap(try desktop.call("resolveApp", params: ["query": discovered.sdkID,
+            "launch": false], cancellation: SDKCancellation()) as? [String: Any])
+        let session = try XCTUnwrap(try desktop.call("openAppSession", params: ["appId": try XCTUnwrap(resolved["id"])],
+            cancellation: SDKCancellation()) as? [String: Any])
+        let sessionID = try XCTUnwrap(session["id"] as? String)
+        _ = try desktop.call("getAppState", params: ["appSessionId": sessionID,
+            "windowId": String(id), "windowPlacement": "agentDisplay", "includeScreenshot": false], cancellation: SDKCancellation())
+        let bounds = try XCTUnwrap(AgentDisplay.shared.displayBounds)
+        XCTAssertEqual(AgentDisplay.shared.parkedWindowIDs(pid: app.pid), [id])
+        let during = try displays()
+        for (displayID, frame) in before { XCTAssertEqual(during[displayID], frame) }
+        XCTAssertEqual(bounds.minX, before.values.map(\.maxX).max())
+        let neighbors = before.values.filter { $0.maxX == bounds.minX }
+        XCTAssertEqual(bounds.minY, try XCTUnwrap(neighbors.map(\.maxY).max()))
+        let parked = try XCTUnwrap(try SnapshotBuilder.resolveTargetWindow(for: app, windowID: id).windowBounds)
+        XCTAssertTrue(bounds.contains(CGPoint(x: parked.minX + 1, y: parked.minY + 1)))
+        XCTAssertEqual(try desktop.prepareAppStop(["appSessionId": sessionID])().value["cleanup"] as? String, "complete")
+        XCTAssertFalse(AgentDisplay.shared.isParked(windowID: id))
+        XCTAssertNil(AgentDisplay.shared.displayBounds)
+        // Virtual-display termination callbacks use the main queue, which the
+        // production app pumps independently of SDK execution.
+        let deadline = Date().addingTimeInterval(5)
+        while (try displays()) != before && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertEqual(try displays(), before)
+        let restored = try XCTUnwrap(try SnapshotBuilder.resolveTargetWindow(for: app, windowID: id).windowBounds)
+        XCTAssertTrue(AgentDisplay.isRestored(frame: restored, to: original), "expected \(original), actual \(restored.origin)")
+    }
+
+    func testExplicitBackgroundWindowDoesNotExposeAnotherDocumentsSelection() throws {
+        try Self.requireLiveTests()
+        let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
+        defer { resetOpenComputerUseBackgroundWindowState(); fixture.close() }
+        try fixture.configure(["reset": true])
+        let windowID = try XCTUnwrap(try fixture.state()["windowID"] as? UInt32)
+        try fixture.configure(["target": "other", "text": "private other content", "selection": [0, 7]])
+        let app = try fixture.descriptor()
+        let snapshot = try SnapshotBuilder.build(for: app, recoveryPolicy: .readOnly,
+            includeScreenshot: false, windowID: windowID)
+        XCTAssertEqual(snapshot.targetWindowID, windowID)
+        XCTAssertNil(snapshot.focusedElement)
+        XCTAssertNil(snapshot.selectedText)
+        XCTAssertNil(try SnapshotBuilder.resolveTargetWindow(for: app, windowID: windowID).focusedElement)
+    }
+
+    func testExplicitSavePanelResolvesAfterAnotherDocumentBecomesKey() throws {
+        try Self.requireLiveTests()
+        let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
+        defer { resetOpenComputerUseBackgroundWindowState(); fixture.close() }
+        try fixture.configure(["reset": true, "target": "savePanel"])
+        try fixture.wait { ($0["sheetWindowID"] as? Int ?? 0) > 0 }
+        let id = try XCTUnwrap(try fixture.state()["sheetWindowID"] as? UInt32)
+        try fixture.configure(["target": "other", "text": "other document"])
+        let context = try SnapshotBuilder.resolveTargetWindow(for: fixture.descriptor(), windowID: id)
+        XCTAssertEqual(context.windowID, id)
+        let snapshot = try SnapshotBuilder.build(for: fixture.descriptor(), recoveryPolicy: .readOnly,
+            includeScreenshot: false, windowID: id)
+        XCTAssertEqual(snapshot.targetWindowID, id)
+        XCTAssertTrue(snapshot.treeLines.joined().contains("recovery.txt"))
+    }
+
+    func testIndependentRecoveryRestoresFixtureAfterOwnerIsKilled() throws {
+        try Self.verifyOwnerKillRecovery(virtualDisplay: false)
+    }
+
+    @MainActor
+    func testRecoveryRestoresVirtualDisplayWindowBeforeRemovingDisplayAfterOwnerKill() async throws {
+        guard ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Enable the controlled virtual display fixture explicitly")
+        }
+        try await Task.detached { try UpstreamNativeInputTests.verifyOwnerKillRecovery(virtualDisplay: true) }.value
+    }
+
+    private static func verifyOwnerKillRecovery(virtualDisplay: Bool) throws {
+        try requireLiveTests()
+        let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
+        defer { fixture.close() }
+        try fixture.configure(["reset": true])
+        let id = try XCTUnwrap(try fixture.state()["windowID"] as? UInt32)
+        let app = try fixture.descriptor()
+        let context = try SnapshotBuilder.resolveTargetWindow(for: app, windowID: id)
+        let original = try XCTUnwrap(context.windowBounds).origin
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let ready = fixture.root.appendingPathComponent("recovery-ready.json")
+        let owner = Process()
+        owner.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        owner.arguments = [repo.appendingPathComponent("scripts/tests/window-recovery-owner.py").path,
+            repo.appendingPathComponent(".build/debug/OpenComputerUse").path,
+            String(app.pid), String(id), ready.path]
+        if virtualDisplay { owner.arguments?.append("--virtual-display") }
+        try owner.run()
+        defer { if owner.isRunning { owner.terminate(); owner.waitUntilExit() } }
+        XCTAssertNotNil(waitUntil(timeout: 8) { FileManager.default.fileExists(atPath: ready.path) })
+        let reply = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: ready)) as? [String: Any])
+        let registration = try XCTUnwrap(reply["reply"] as? [String: Any])
+        XCTAssertNil(registration["error"], "\(registration)")
+        guard registration["error"] == nil else { return }
+        // AX and WindowServer may round the backing-scale boundary by a point.
+        XCTAssertEqual(try XCTUnwrap(registration["x"] as? Double), Double(original.x), accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(registration["y"] as? Double), Double(original.y), accuracy: 1)
+        var displaced = CGPoint(x: original.x + 60, y: original.y + 60)
+        var displayID: CGDirectDisplayID?
+        if virtualDisplay {
+            let display = try XCTUnwrap(reply["display"] as? [String: Any])
+            let created = try XCTUnwrap(display["displayID"] as? UInt32, "\(display)")
+            displayID = created
+            displaced = agentDisplayPlacement(windowSize: try XCTUnwrap(context.windowBounds).size,
+                displayBounds: CGDisplayBounds(created))
+        }
+        let value = try XCTUnwrap(AXValueCreate(.cgPoint, &displaced))
+        XCTAssertEqual(AXUIElementSetAttributeValue(context.windowElement, kAXPositionAttribute as CFString, value), .success)
+        XCTAssertNotNil(waitUntil(timeout: 2) {
+            guard let bounds = try? SnapshotBuilder.resolveTargetWindow(for: app, windowID: id).windowBounds else { return false }
+            return AgentDisplay.isRestored(frame: bounds, to: displaced)
+        })
+        XCTAssertEqual(kill(owner.processIdentifier, SIGKILL), 0)
+        owner.waitUntilExit()
+        // Recovery retries for ten seconds, with a final bounded AX operation.
+        XCTAssertNotNil(waitUntil(timeout: 15) {
+            guard let bounds = try? SnapshotBuilder.resolveTargetWindow(for: app, windowID: id).windowBounds else { return false }
+            return AgentDisplay.isRestored(frame: bounds, to: original)
+        }, "The recovery child must restore after SIGKILL, without atexit in its owner; original=\(original), registered=\(registration), actual=\(String(describing: try? SnapshotBuilder.resolveTargetWindow(for: app, windowID: id).windowBounds))")
+        if let displayID {
+            XCTAssertNotNil(waitUntil(timeout: 5) {
+                var ids = [CGDirectDisplayID](repeating: 0, count: 64), count: UInt32 = 0
+                return CGGetOnlineDisplayList(64, &ids, &count) == .success && !ids.prefix(Int(count)).contains(displayID)
+            }, "The owned virtual display must disappear after recovery")
+        }
+    }
+
+    func testSDKQuerySelectsAndReplacesNativeTextWithoutScreenshot() throws {
+        try Self.requireLiveTests()
         let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
         defer { fixture.close() }
         try fixture.configure(["reset": true])
@@ -33,7 +197,7 @@ final class UpstreamNativeInputTests: XCTestCase {
     }
 
     func testLiveFocusSelectionAndVerifiedWrites() throws {
-        try requireLiveTests()
+        try Self.requireLiveTests()
         let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
         defer { fixture.close() }
         let service = ComputerUseService()
@@ -91,7 +255,7 @@ final class UpstreamNativeInputTests: XCTestCase {
     }
 
     func testBlankAndWindowClicksDoNotPressOtherControls() throws {
-        try requireLiveTests()
+        try Self.requireLiveTests()
         let fixture = try NativeInputFixture(source: "MacOSHitTestFixture.swift", hasCommands: false)
         defer { fixture.close() }
         let service = ComputerUseService()
@@ -109,7 +273,7 @@ final class UpstreamNativeInputTests: XCTestCase {
         XCTAssertEqual(try fixture.state()["closeAttempts"] as? Int, 0)
     }
 
-    private func requireLiveTests() throws {
+    private static func requireLiveTests() throws {
         guard ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS"] == "1" else {
             throw XCTSkip("Set OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS=1 to run isolated AppKit fixtures")
         }
@@ -179,11 +343,16 @@ private final class NativeInputFixture {
     }
 
     func snapshot() throws -> AppSnapshot {
-        let app = try XCTUnwrap(NSRunningApplication(processIdentifier: process.processIdentifier))
         return try SnapshotBuilder.build(
-            for: RunningAppDescriptor(name: "CherryUpstreamFixture", bundleIdentifier: nil, pid: process.processIdentifier, runningApplication: app),
+            for: descriptor(),
             recoveryPolicy: .readOnly, includeScreenshot: false
         )
+    }
+
+    func descriptor() throws -> RunningAppDescriptor {
+        let app = try XCTUnwrap(NSRunningApplication(processIdentifier: process.processIdentifier))
+        return RunningAppDescriptor(name: "CherryUpstreamFixture", bundleIdentifier: nil,
+            pid: process.processIdentifier, runningApplication: app)
     }
 
     // These tests exercise native hit testing without screen-recording access.

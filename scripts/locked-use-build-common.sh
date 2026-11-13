@@ -50,11 +50,11 @@ locked_use_with_keychain() {
 }
 
 locked_use_sign() {
-  local args=()
+  local args=(/usr/bin/codesign)
   if [[ -n "${OPEN_COMPUTER_USE_CODESIGN_KEYCHAIN:-}" ]]; then
     args+=(--keychain "$OPEN_COMPUTER_USE_CODESIGN_KEYCHAIN")
   fi
-  locked_use_with_keychain /usr/bin/codesign "${args[@]}" "$@"
+  locked_use_with_keychain "${args[@]}" "$@"
 }
 
 locked_use_version="$(python3 - "$repo_root/packages/sdk/package.json" <<'PYVERSION'

@@ -132,6 +132,24 @@ struct GuardianMain {
             case ["--permission-status"]:
                 emit("permissionStatus", details: ["accessibility": AXIsProcessTrusted(),
                     "inputMonitoring": CGPreflightListenEventAccess()])
+            case let args where args.count == 2 && args[0] == "--input-monitor-probe":
+                guard let seconds = Double(args[1]), seconds.isFinite, seconds >= 1, seconds <= 60 else {
+                    throw GuardianError.message("Input monitor probe duration must be 1 to 60 seconds")
+                }
+                var activities = 0, failures = 0
+                let monitor = PhysicalInputMonitor(activity: { activities += 1 }, failure: { failures += 1 })
+                try monitor.start()
+                defer { monitor.stop() }
+                emit("inputMonitorReady", details: ["observedDevices": monitor.observedDeviceCount,
+                    "seizedDevices": monitor.seizedDeviceCount, "lockRequested": false, "unlockRequested": false])
+                let deadline = ProcessInfo.processInfo.systemUptime + seconds
+                while ProcessInfo.processInfo.systemUptime < deadline && monitor.healthy {
+                    _ = RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+                }
+                emit("inputMonitorProbe", details: ["healthy": monitor.healthy,
+                    "activityEvents": activities, "failures": failures,
+                    "lockRequested": false, "unlockRequested": false])
+                guard monitor.healthy else { throw GuardianError.message("Input monitor lost coverage") }
             case ["--request-permissions"]:
                 _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
                 _ = CGRequestListenEventAccess()

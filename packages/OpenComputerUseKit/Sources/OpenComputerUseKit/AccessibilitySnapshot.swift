@@ -319,6 +319,7 @@ enum SnapshotBuilder {
                                observation: observation)
         }
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+            .flatMap { belongsToWindow($0, window: rootElement) ? $0 : nil }
         let selectedText = focusedElement.flatMap { copySelectedText($0, textLimit: textLimit) }
         let context = RenderContext(
             windowBounds: windowBounds,
@@ -2520,6 +2521,7 @@ extension SnapshotBuilder {
             throw ComputerUseError.stateUnavailable("query could not bind this AX window to its current window geometry")
         }
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+            .flatMap { belongsToWindow($0, window: rootWindow) ? $0 : nil }
 
         return TargetedAX.WindowContext(
             app: app,
@@ -2576,11 +2578,17 @@ extension SnapshotBuilder {
         return false
     }
 
-    private static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {
+    static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {
         let isWindow = { SkyLightSPI.shared.windowID(for: $0) == windowID }
-        // AXWindows leaves sheets out; a sheet is found as the focused window.
-        return copyArray(appElement, attribute: kAXWindowsAttribute)?.first(where: isWindow)
-            ?? copyElement(appElement, attribute: kAXFocusedWindowAttribute).flatMap { isWindow($0) ? $0 : nil }
+        let windows = copyArray(appElement, attribute: kAXWindowsAttribute) ?? []
+        if let window = windows.first(where: isWindow) { return window }
+        if let focused = copyElement(appElement, attribute: kAXFocusedWindowAttribute), isWindow(focused) { return focused }
+        // An attached open/save sheet may not be AXFocusedWindow when another
+        // document is key. Search only the explicit sheet relationship.
+        return windows.flatMap { window in
+            (copyArray(window, attribute: "AXSheets") ?? [])
+                + (copyArray(window, attribute: kAXChildrenAttribute) ?? []).filter { stringValue(of: $0, attribute: kAXRoleAttribute) == kAXSheetRole as String }
+        }.first(where: isWindow)
     }
 
     // Attributes read for every visited node, in one batched IPC call. Position

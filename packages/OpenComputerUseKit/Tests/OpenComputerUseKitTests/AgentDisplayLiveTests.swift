@@ -21,6 +21,9 @@ final class AgentDisplayLiveTests: XCTestCase {
         guard AgentDisplay.shared.isSupported else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this macOS")
         }
+        guard AXIsProcessTrusted(), CGPreflightScreenCaptureAccess() else {
+            throw XCTSkip("The Chrome screenshot regression requires Accessibility and Screen Recording permissions")
+        }
         let chromeURL = URL(fileURLWithPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
         guard FileManager.default.isExecutableFile(atPath: chromeURL.path) else {
             throw XCTSkip("Google Chrome is not installed at the standard path")

@@ -143,12 +143,12 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             return control
         }
         return {
-            guard control.running.wait(timeout: .now() + 1) == .success else {
+            guard control.running.wait(timeout: .now() + self.cleanupTimeout) == .success else {
                 self.controlLock.withLock { self.uncertain = true }
                 throw SDKDomainError("CLEANUP_FAILED", "Application request did not settle; cleanup is unconfirmed", effect: "possible")
             }
             do { try self.resources.withLock { try self.releaseResources(control) } }
-            catch { throw SDKDomainError("CLEANUP_FAILED", "Window restoration could not be confirmed", effect: "possible") }
+            catch { throw SDKDomainError("CLEANUP_FAILED", "Window restoration could not be confirmed: \(error)", effect: "possible") }
             return self.controlLock.withLock {
                 control.snapshots.removeAll()
                 control.keyboardTarget = nil
@@ -160,21 +160,41 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
 
     public func call(_ method: String, params: [String: Any], cancellation: SDKCancellation) throws -> Any {
         try resources.withLock {
-            if ["resolveApp", "getAppState", "query", "act", "perform"].contains(method), let protection {
-                return try protection.perform(cancellation: cancellation) { try dispatch(method, params: params, cancellation: cancellation) }
+            let control: AppControl?
+            switch method {
+            case "query":
+                _ = try SDKQueryOptions(params)
+                control = try beginAppRequest(params["appSessionId"] as! String, cancellation: cancellation)
+            case "getAppState":
+                _ = try SDKObservationOptions(params)
+                control = try beginAppRequest(params["appSessionId"] as! String, cancellation: cancellation)
+            case "act", "perform":
+                let action = try SDKAction(params)
+                control = try beginAppRequest(action.appSessionID, cancellation: cancellation)
+            default: control = nil
             }
-            return try dispatch(method, params: params, cancellation: cancellation)
+            // Register cancellation before lease/display acquisition, so a user
+            // stopping this application can interrupt preparation too.
+            defer { if let control { endAppRequest(control) } }
+            if ["resolveApp", "getAppState", "query", "act", "perform"].contains(method), let protection {
+                return try protection.perform(cancellation: cancellation) { try dispatch(method, params: params, cancellation: cancellation, control: control) }
+            }
+            return try dispatch(method, params: params, cancellation: cancellation, control: control)
         }
     }
 
     private func releaseResources(_ control: AppControl) throws {
-        try AgentDisplay.shared.restoreAll(pid: control.app.pid)
-        try WindowOcclusionKeepAlive.shared.release(windowIDs: control.windows)
-        control.windows.removeAll()
+        var failure: Error?
+        do { try AgentDisplay.shared.restoreAll(pid: control.app.pid) } catch { failure = error }
+        do {
+            try WindowOcclusionKeepAlive.shared.release(windowIDs: control.windows)
+            control.windows.removeAll()
+        } catch { failure = failure ?? error }
         control.webCDP = nil
+        if let failure { throw failure }
     }
 
-    private func dispatch(_ method: String, params: [String: Any], cancellation: SDKCancellation) throws -> Any {
+    private func dispatch(_ method: String, params: [String: Any], cancellation: SDKCancellation, control: AppControl?) throws -> Any {
         guard !controlLock.withLock({ uncertain }) else { throw SDKDomainError("CLOSED", "An earlier action has an uncertain outcome; start a new session") }
         try check(cancellation)
         switch method {
@@ -250,18 +270,15 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             return try openAppSession(appID: appID, app: app)
         case "query":
             let options = try SDKQueryOptions(params)
-            let control = try beginAppRequest(params["appSessionId"] as! String, cancellation: cancellation)
-            defer { endAppRequest(control) }
+            guard let control else { throw SDKDomainError("APP_SESSION_NOT_FOUND", "Missing application control") }
             return try query(options, control: control, cancellation: cancellation)
         case "getAppState":
             _ = try SDKObservationOptions(params)
-            let control = try beginAppRequest(params["appSessionId"] as! String, cancellation: cancellation)
-            defer { endAppRequest(control) }
+            guard let control else { throw SDKDomainError("APP_SESSION_NOT_FOUND", "Missing application control") }
             return try observe(params, control: control, cancellation: cancellation)
         case "act", "perform":
             let action = try SDKAction(params)
-            let control = try beginAppRequest(action.appSessionID, cancellation: cancellation)
-            defer { endAppRequest(control) }
+            guard let control else { throw SDKDomainError("APP_SESSION_NOT_FOUND", "Missing application control") }
             let keyboard = action.isKeyboard && method == "perform" && control.keyboardTarget?.id == action.snapshotID ? control.keyboardTarget?.snapshot : nil
             guard let snapshot = control.snapshots[action.snapshotID] ?? keyboard else {
                 throw SDKDomainError("STALE_SNAPSHOT", "Snapshot is expired or belongs to another session")
@@ -388,6 +405,24 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
     }
 
     private func observe(_ options: [String: Any], control: AppControl, cancellation: SDKCancellation) throws -> [String: Any] {
+        let parkedBefore = Set(AgentDisplay.shared.parkedWindowIDs(pid: control.app.pid))
+        let pinnedBefore = WindowOcclusionKeepAlive.shared.pinnedWindowIDs
+        do {
+            return try observeWindow(options, control: control, cancellation: cancellation)
+        } catch {
+            let failure = error
+            var cleanupFailure: Error?
+            for id in Set(AgentDisplay.shared.parkedWindowIDs(pid: control.app.pid)).subtracting(parkedBefore) {
+                do { try AgentDisplay.shared.restore(windowID: id) } catch { cleanupFailure = cleanupFailure ?? error }
+            }
+            let newPins = WindowOcclusionKeepAlive.shared.pinnedWindowIDs.subtracting(pinnedBefore)
+            do { try WindowOcclusionKeepAlive.shared.release(windowIDs: newPins) } catch { cleanupFailure = cleanupFailure ?? error }
+            if cleanupFailure != nil { throw SDKDomainError("CLEANUP_FAILED", "Observation failed and its window changes could not be restored", effect: "possible") }
+            throw failure
+        }
+    }
+
+    private func observeWindow(_ options: [String: Any], control: AppControl, cancellation: SDKCancellation) throws -> [String: Any] {
         let appID = control.appID
         control.snapshots.removeAll()
         control.keyboardTarget = nil
@@ -411,7 +446,8 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
                 id = parentID
             }
             control.windows.insert(id)
-            do { try AgentDisplay.shared.park(windowID: id, pid: app.pid, window: window, enabled: true) }
+            do { try AgentDisplay.shared.park(windowID: id, pid: app.pid, window: window, enabled: true, cancellation: cancellation) }
+            catch let failure as SDKDomainError { throw failure }
             catch {
                 throw SDKDomainError("TARGET_UNAVAILABLE", "Window placement was not confirmed; close the app session to restore its original position", effect: "possible")
             }
@@ -426,6 +462,7 @@ public final class MacOSSDKDesktop: SDKDesktopBackend, @unchecked Sendable {
             let failure = SDKDomainError(error)
             throw SDKDomainError(failure.code, failure.message, effect: request.placement == "keep" ? failure.effect : "possible")
         }
+        if let id = state.targetWindowID { control.windows.insert(id) }
         if cancellation.isCancelled {
             throw SDKDomainError("CANCELLED", "Observation cancelled", effect: request.placement == "keep" ? "none" : "possible")
         }
