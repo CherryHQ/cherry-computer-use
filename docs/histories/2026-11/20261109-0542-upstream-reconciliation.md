@@ -50,3 +50,13 @@
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/`、`scripts/tests/`：单元与独立 AppKit fixture 回归。
 - `.github/workflows/sdk-check.yml`、`.changeset/quiet-upstream-input-fixes.md`
 - `docs/ARCHITECTURE.md`、`docs/QUALITY_SCORE.md`、`docs/releases/feature-release-notes.md` 与同步评估记录。
+
+### 2026-11-13：新增能力复评
+
+用户认为 Locked Use、虚拟显示器、后台操作、query/select_text、按需观察、截图配置和效率改进都重要，要求进一步核对。
+
+- 刷新 Cherry 主线至 `2d9bd95`、upstream 至 `bef6c05`；保留本地 `cb192a1`，未合并或改动运行时代码。
+- 逐项核对当前协议与原生调用路径：SDK 已有不截图、`perform()` 和结构化权限查询；缺少 query/select_text、纯截图模式、非 PNG 格式及后台窗口/锁屏能力。
+- 核对上游真实测试记录和当前 PR/issue：虚拟屏显示排列修复 #114 尚未合并；Karabiner #142 仍开放；新暗屏修复 #187 的签名完整锁屏流程尚未实测。
+- 新增[能力接入复评](../../references/upstream-feature-adoption-20261113.md)，修正“第一批只修 bug”可能被理解成长期排除能力的表述，给出 SDK 适配、生命周期归属与分批验收方案。
+- 本轮为源码评估，没有安装系统组件、触发锁屏或创建显示器；`make check-docs`、修改文档的相对链接检查和 `git diff --check` 通过。未重跑运行时测试，也不把上游验证记录当作 Cherry 的实机验收。
