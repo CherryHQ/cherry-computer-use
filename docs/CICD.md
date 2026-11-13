@@ -29,3 +29,5 @@ Action 必须固定 commit SHA。远端三平台通过、本地 ad-hoc 产物、
 新增桌面能力沿用上述矩阵：macOS 包含查询/选择、编码、树预算、虚拟屏几何和 Locked Use 状态机；Windows PowerShell 测试验证按需观察、元素/窗口身份、键盘投递与动作成功后观察失败。Locked Use 四组件由正式 Developer ID 构建捆绑并校验，ad-hoc CI 不安装组件，也不代表完整锁屏或多显示器验收。
 
 Windows 在原生启动测试前使用实际 bridge 所用的 Windows PowerShell 检查三个内嵌脚本的语法，并执行 SDK 按需观察回归；后续 `pwsh` 引擎回归也包含同一用例，覆盖默认、仅控件树和仅截图的采集及返回状态。
+
+Windows 引擎回归统一使用 `scripts/tests/windows-runtime.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1`。该入口为每个顶层 suite 启动相同 PowerShell 引擎的独立进程，防止 `Add-Type` 测试替身残留并冲突；任一 suite 失败即停止并返回失败。本地验证使用同一入口。

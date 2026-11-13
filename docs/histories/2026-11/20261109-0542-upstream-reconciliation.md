@@ -164,3 +164,12 @@
 - CI 在 Windows 原生启动前使用 Windows PowerShell 执行新回归，原 pwsh 引擎测试入口也包含它；没有移除或放宽既有桌面测试。
 - 新回归对旧提交复现与 CI 相同的 parser error；修复后全部九组 PowerShell 回归、Windows Go 测试与 amd64/arm64 编译通过。PowerShell 本地结果使用 macOS pwsh 和受控依赖，Windows PowerShell 与真实桌面结果由新 CI 验证。
 - 文档/仓库卫生和 diff 检查通过，workflow lint 与修改前相同，保留十条既有诊断、无新增诊断。
+
+### 2026-11-14：隔离 Windows CI 测试替身
+
+后续 head `09acdcf` 的 Windows CI 已通过 Windows PowerShell SDK 观察、真实原生冷启动及 Go 回归，随后在引擎函数测试中失败：同一 pwsh 进程先运行截图再运行选区测试，两者以 `Add-Type` 定义不同的 `OCUWin32`，导致类型重名。此前本地逐脚本启动独立进程，没有复现 CI 的共用进程方式。
+
+- 新增统一 `windows-runtime.test.ps1` 入口，为每个顶层 suite 启动当前 PowerShell 引擎的独立进程；子进程失败立即使入口失败，保留所有原有断言。
+- CI 与本地改用同一入口，避免执行方式漂移；不修改生产输入或观察逻辑。
+- 本地以原 CI 共用进程命令复现相同的类型冲突；新入口全部九组回归通过。另用受控子脚本验证非零退出码会传播且后续 suite 不再执行。
+- 文档/仓库卫生和 diff 检查通过；workflow lint 无新增诊断，仍保留十条原有诊断。真实 Windows 后续结果由新 CI 验证。
