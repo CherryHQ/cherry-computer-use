@@ -109,7 +109,25 @@ The [native contract tests](native.test.mjs) consume the public SDK and validate
 
 [desktop.test.mjs](desktop.test.mjs) drives a real counter fixture through two SDK sessions: structured hierarchy, PNG bytes, `Count: 0 → 1 → 2`, foreign IDs, used snapshots, external UI changes, truncation, confirmed app stop, reopening with a fresh identity on the same runtime and independent close. Application discovery belongs to this desktop suite, not the headless lifecycle suite. Set `COMPUTER_USE_FIXTURE_APP` to the exact fixture name and `COMPUTER_USE_REQUIRE_SCREENSHOT=1` to require capture; otherwise the desktop test is skipped. See [fixture instructions](fixtures/README.md).
 
-The previous desktop slice passed on Windows 11 ARM64 (Parallels) and Linux ARM64 X11 (Python-free Docker). The v2 app-session slice has been rerun on Linux X11 and the Windows x64 CI runner (`windows-2025`), including confirmed app stop and continued control in a second runtime. Windows CI also passed native framing/lifecycle and worker/descendant cleanup under cancellation and owner death. Windows ARM64 builds with v2; its local desktop rerun is pending after Parallels execution problems. macOS currently has lifecycle/contract evidence only; its GUI test needs explicit OS grants. Other Windows environments, Wayland, platform tarballs and Electron remain separate verification work.
+The previous desktop slice passed on Windows 11 ARM64 (Parallels) and Linux ARM64 X11 (Python-free Docker). The v2 app-session slice has been rerun on Linux X11 and the Windows x64 CI runner (`windows-2025`), including confirmed app stop and continued control in a second runtime. Windows CI also passed native framing/lifecycle and worker/descendant cleanup under cancellation and owner death. Windows ARM64 builds with v2; its local desktop rerun is pending after Parallels execution problems. macOS also passed the signed app-agent test below with a real AppKit window, decoded PNG/JPEG/WebP images and Unicode input readback. Cross-Space and Locked Use acceptance remain separate. Other Windows environments, Wayland, platform tarballs and Electron remain separate verification work.
+
+## macOS signed desktop acceptance
+
+After building the SDK and granting the signed helper Accessibility and Screen
+Recording, run from the repository root:
+
+```sh
+OPEN_COMPUTER_USE_RUN_SDK_DESKTOP_LIVE_TEST=1 OPEN_COMPUTER_USE_VISUAL_CURSOR=0 \
+  node --test protocol/macos-desktop-live.test.mjs
+```
+
+This opt-in test defaults to `dist/Cherry Computer Use.app`; override
+`COMPUTER_USE_RUNTIME_PATH` to test another complete bundle. It compiles an isolated
+AppKit fixture, checks permissions inside the task's app agent, captures and decodes
+three image formats with a size limit, queries and selects text, types Chinese and
+an emoji, and verifies the result through the fixture's own state. App stop and
+runtime close must complete without quitting the target. This does not establish
+cross-Space capture, a specific capture fallback, or Locked Use behavior.
 
 ## Windows engine regression
 

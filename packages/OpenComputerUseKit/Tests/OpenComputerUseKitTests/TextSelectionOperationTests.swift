@@ -27,6 +27,41 @@ final class TextSelectionOperationTests: XCTestCase {
         }
     }
 
+    func testAsynchronousRangePublicationDoesNotReplayTheWrite() throws {
+        let target = try target()
+        var publishAt = Double.infinity
+        var writes = 0
+        try applyVerifiedTextSelection(target: target, originalValue: "a👍中文", validate: {},
+            readValue: { "a👍中文" }, writeRange: { _ in
+                writes += 1
+                publishAt = ProcessInfo.processInfo.systemUptime + 0.03
+            }, readRange: {
+                ProcessInfo.processInfo.systemUptime >= publishAt
+                    ? CFRange(location: target.location, length: target.length) : CFRange(location: 0, length: 0)
+            })
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testTextChangesWhileWaitingForRangeAreRejected() throws {
+        var changeAt = Double.infinity
+        XCTAssertThrowsError(try applyVerifiedTextSelection(target: target(), originalValue: "a👍中文", validate: {},
+            readValue: { ProcessInfo.processInfo.systemUptime >= changeAt ? "changed" : "a👍中文" },
+            writeRange: { _ in changeAt = ProcessInfo.processInfo.systemUptime + 0.03 }, readRange: { nil })) {
+            XCTAssertTrue(String(describing: $0).contains("text changed"))
+        }
+    }
+
+    func testRevocationWhileWaitingForRangeIsRespected() throws {
+        var revokeAt = Double.infinity
+        XCTAssertThrowsError(try applyVerifiedTextSelection(target: target(), originalValue: "a👍中文", validate: {
+            if ProcessInfo.processInfo.systemUptime >= revokeAt { throw ComputerUseError.message("revoked") }
+        }, readValue: { "a👍中文" }, writeRange: { _ in
+            revokeAt = ProcessInfo.processInfo.systemUptime + 0.03
+        }, readRange: { nil })) {
+            XCTAssertTrue(String(describing: $0).contains("revoked"))
+        }
+    }
+
     func testRevokedSessionCannotWrite() throws {
         var wrote = false
         XCTAssertThrowsError(try applyVerifiedTextSelection(target: target(), originalValue: "a👍中文",

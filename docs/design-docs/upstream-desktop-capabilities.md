@@ -14,6 +14,10 @@
 
 macOS 的 CLI/MCP 现在有 11 个工具；Windows/Linux 保留原有 9 个。能力可用性通过 SDK `getCapabilities()` 查询；权限、目标应用实现和系统版本仍影响真实执行。
 
+Windows 另吸收了目标 HWND 截图、写值读回、UIA 缓存、密码/Chromium 选区保护、元素完整身份与定向按键校验、PowerShell 隐藏启动及动作完成/后续观察失败的区分。后续补齐上游 `5136415` / `4dbaa7a` 的物理 DPI、滚轮屏幕坐标和方向、经典子控件命中，并修复已有宿主应用指针路径的多显示器坐标归一化。保留 Cherry 的 UWP/CDP 路由；这些修复不表示新增 Windows 全局输入模式。
+
+Linux 将按需采集、可见控件优先和密码保护移植到 Go AT-SPI 引擎，保留 X11/Wayland/CDP 实现；CLI 写值保留首尾空白，点击文本控件时优先 click，避免误用 activate 提交表单。上游 Python 后端没有引入。新增改动的 Windows 混合 DPI 与 Linux 真实桌面验收仍独立进行。
+
 ## SDK 调用
 
 所有动作仍绑定 `appSessionId`、`snapshotId` 与该快照的 `elementId`。查询结果中的匹配项在 `result.snapshot.tree.elements` 中，后续动作使用 `result.snapshot.id`。新查询或观察替换旧元素引用；跨应用、旧快照及已停止的会话均拒绝操作。
@@ -101,5 +105,7 @@ HID 监控逐设备打开，允许部分设备被独占，但要求可观察设�
 自动验证覆盖查询预算与引用归属、文本选择、采集通道跳过、编码、树预算、Windows 目标身份、Linux 密码字段与控件预算、Locked Use 状态机/IPC/拒绝路径、SDK 清理和打包。见[接入计划](../exec-plans/completed/20261113-upstream-feature-adoption.md)和[任务历史](../histories/2026-11/20261109-0542-upstream-reconciliation.md)。
 
 后续真实 fixture 验证覆盖后台选区隔离、原生保存弹窗、SDK 停止恢复和拥有者 SIGKILL 后的窗口/虚拟屏恢复；Developer ID 组件完成构建、签名和离线身份校验。结果与边界见[恢复计划](../exec-plans/completed/20261113-desktop-resource-recovery.md)。
+
+授予权限后，签名 app agent 经公开 TypeScript SDK 完成真实 AppKit 窗口的 PNG/JPEG/WebP 截图、尺寸限制、图像解码与非空内容检查，以及 query/selectText/skyKey 中文和 emoji 输入读回、停止和关闭清理。Chrome 被完全遮挡时的定向键盘回归也通过，前台应用/窗口焦点和真实鼠标保持不变。可重复入口见[协议验收](../../protocol/README.md#macos-signed-desktop-acceptance)。这些结果不证明跨 Space 或某个专属截图回退路径。
 
 正式发布仍需分别确认：签名组件安装/升级/卸载、锁屏完整循环及物理接管、暗屏恢复、多物理显示器/跨 Space，以及 Windows/Linux 真实桌面。单测、headless fixture、签名校验与这些实机结果不能互相替代。

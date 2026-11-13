@@ -59,6 +59,49 @@ public static class OCUWin32 {
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr ChildWindowFromPointEx(IntPtr hwnd, POINT point, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowEnabled(IntPtr hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetThreadDpiAwarenessContext();
+
+    [DllImport("user32.dll")]
+    public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+
+    // Hit-test within the requested window even when another application covers it.
+    public static IntPtr ClickTarget(IntPtr root, int x, int y) {
+        uint rootPid; GetWindowThreadProcessId(root, out rootPid);
+        IntPtr current = root;
+        for (int depth = 0; depth < 64; depth++) {
+            uint pid; GetWindowThreadProcessId(current, out pid);
+            if (rootPid == 0 || pid != rootPid || (current != root && !IsChild(root, current)))
+                throw new InvalidOperationException("Click target process/window changed; observe again.");
+            if (!IsWindowEnabled(current))
+                throw new InvalidOperationException("Click target is disabled.");
+            POINT point = new POINT { X = x, Y = y }; RECT client;
+            if (!ScreenToClient(current, ref point) || !GetClientRect(current, out client) ||
+                point.X < client.Left || point.Y < client.Top || point.X >= client.Right || point.Y >= client.Bottom)
+                throw new InvalidOperationException("Posted click is outside the target client area; use accessibility for window chrome.");
+            // Keep disabled children in the hit-test so clicks are refused rather than sent to a parent.
+            IntPtr child = ChildWindowFromPointEx(current, point, 1);
+            if (child == IntPtr.Zero || child == current) return current;
+            current = child;
+        }
+        throw new InvalidOperationException("Click target hierarchy is too deep.");
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool PostMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, IntPtr lParam);
 
@@ -216,6 +259,7 @@ public static class OCUWin32 {
     const uint MOUSE_MIDDLE_DOWN = 0x0020;
     const uint MOUSE_MIDDLE_UP = 0x0040;
     const uint MOUSE_ABSOLUTE = 0x8000;
+    const uint MOUSE_VIRTUALDESK = 0x4000;
 
     // Real keyboard input: the only way to deliver modifier and navigation keys to hosted apps.
     public static bool SendKeyChord(ushort virtualKey, bool shift, bool control, bool alt) {
@@ -240,14 +284,15 @@ public static class OCUWin32 {
     }
 
     public static bool SendPointerClick(int screenX, int screenY, string button, int count) {
-        int width = GetSystemMetrics(0);
-        int height = GetSystemMetrics(1);
+        int left = GetSystemMetrics(76), top = GetSystemMetrics(77);
+        int width = GetSystemMetrics(78), height = GetSystemMetrics(79);
         if (width < 2 || height < 2) { return false; }
+        if (screenX < left || screenY < top || (long)screenX >= (long)left + width || (long)screenY >= (long)top + height) { return false; }
         var move = new PointerInput();
         move.type = 0;
-        move.dx = (int)Math.Round(screenX * 65535.0 / (width - 1));
-        move.dy = (int)Math.Round(screenY * 65535.0 / (height - 1));
-        move.flags = MOUSE_MOVE | MOUSE_ABSOLUTE;
+        move.dx = (int)Math.Round(((double)screenX - left) * 65535.0 / (width - 1));
+        move.dy = (int)Math.Round(((double)screenY - top) * 65535.0 / (height - 1));
+        move.flags = MOUSE_MOVE | MOUSE_ABSOLUTE | MOUSE_VIRTUALDESK;
         uint downFlag = MOUSE_LEFT_DOWN, upFlag = MOUSE_LEFT_UP;
         if (button == "right") { downFlag = MOUSE_RIGHT_DOWN; upFlag = MOUSE_RIGHT_UP; }
         else if (button == "middle") { downFlag = MOUSE_MIDDLE_DOWN; upFlag = MOUSE_MIDDLE_UP; }
@@ -263,6 +308,19 @@ public static class OCUWin32 {
 }
 "@
 
+function Initialize-PhysicalCoordinates {
+    # UIA and screenshots use physical pixels. A host-selected process context may
+    # be immutable, so verify the thread override before reading window geometry.
+    $context = [IntPtr](-4)
+    try { [void][OCUWin32]::SetProcessDpiAwarenessContext($context) } catch { }
+    $previous = [OCUWin32]::SetThreadDpiAwarenessContext($context)
+    if ($previous -eq [IntPtr]::Zero -or
+        [OCUWin32]::GetAwarenessFromDpiAwarenessContext([OCUWin32]::GetThreadDpiAwarenessContext()) -ne 2) {
+        throw 'Cannot establish per-monitor physical coordinates for the Windows bridge.'
+    }
+}
+
+Initialize-PhysicalCoordinates
 [OCUWin32]::InitializeUIAutomation()
 
 $WM_SETTEXT = 0x000C
@@ -464,7 +522,18 @@ function Get-ScrollableAncestor($element, [int]$depth = 8) {
     return $null
 }
 
-function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
+function Assert-InputWindowBounds([IntPtr]$hwnd, $expected) {
+    $current = Get-WindowRectFrame $hwnd
+    foreach ($key in @('x', 'y', 'width', 'height')) {
+        if ($null -eq $expected -or $null -eq $current -or $current.$key -ne $expected.$key) {
+            throw 'Input window geometry changed; observe again.'
+        }
+    }
+}
+
+function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count, $bounds) {
+    Assert-OperationActive
+    Assert-InputWindowBounds $hwnd $bounds
     $inputWindow = Get-InputWindowHandle $hwnd
     # Hosted content ignores posted mouse messages: use real pointer input when the target already owns the
     # pointer, otherwise the element action under the point. Classic windows keep posted messages.
@@ -478,11 +547,11 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
         $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
         throw "Coordinate clicks cannot be delivered to this hosted application while it is in the background; click the element instead, or bring the window to the foreground and retry"
     }
-    $clickWindow = $hwnd
+    $clickWindow = [OCUWin32]::ClickTarget($hwnd, $screenX, $screenY)
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
     $point.Y = $screenY
-    [void][OCUWin32]::ScreenToClient($clickWindow, [ref]$point)
+    if (-not [OCUWin32]::ScreenToClient($clickWindow, [ref]$point)) { throw 'ScreenToClient failed for click target.' }
     $lParam = ConvertTo-LParam $point.X $point.Y
 
     $down = $WM_LBUTTONDOWN
@@ -501,11 +570,21 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
     $repeat = [math]::Max(1, $count)
     for ($i = 0; $i -lt $repeat; $i++) {
         Assert-OperationActive
-        [void][OCUWin32]::PostMessage($clickWindow, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
+        Assert-InputWindowBounds $hwnd $bounds
+        if ([OCUWin32]::ClickTarget($hwnd, $screenX, $screenY) -ne $clickWindow) { throw 'Click target changed; observe again.' }
+        $currentPoint = New-Object OCUWin32+POINT
+        $currentPoint.X = $screenX; $currentPoint.Y = $screenY
+        if (-not [OCUWin32]::ScreenToClient($clickWindow, [ref]$currentPoint) -or
+            $currentPoint.X -ne $point.X -or $currentPoint.Y -ne $point.Y) {
+            throw 'Click target geometry changed; observe again.'
+        }
+        if (-not [OCUWin32]::PostMessage($clickWindow, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)) { throw 'PostMessage mouse move delivery failed.' }
         try {
-            [void][OCUWin32]::PostMessage($clickWindow, $down, [IntPtr]$downFlag, $lParam)
+            if (-not [OCUWin32]::PostMessage($clickWindow, $down, [IntPtr]$downFlag, $lParam)) { throw 'PostMessage mouse down delivery failed.' }
             Start-Sleep -Milliseconds 35
-        } finally { [void][OCUWin32]::PostMessage($clickWindow, $up, [IntPtr]::Zero, $lParam) }
+        } finally {
+            if (-not [OCUWin32]::PostMessage($clickWindow, $up, [IntPtr]::Zero, $lParam)) { throw 'PostMessage mouse up delivery failed.' }
+        }
         Start-Sleep -Milliseconds 50
     }
 }
@@ -544,22 +623,23 @@ function Send-Drag([IntPtr]$hwnd, [int]$fromX, [int]$fromY, [int]$toX, [int]$toY
     } finally { [void][OCUWin32]::PostMessage($dragWindow, $WM_LBUTTONUP, [IntPtr]::Zero, $lastParam) }
 }
 
-function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direction, [double]$pages) {
-    $point = New-Object OCUWin32+POINT
-    $point.X = $screenX
-    $point.Y = $screenY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$point)
-    $lParam = ConvertTo-LParam $point.X $point.Y
+function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direction, [double]$pages, $bounds) {
+    Assert-OperationActive
+    Assert-InputWindowBounds $hwnd $bounds
+    # Wheel messages carry screen coordinates, including negative monitor origins.
+    $lParam = ConvertTo-LParam $screenX $screenY
     $delta = [int][math]::Round(120 * $pages)
     $message = $WM_MOUSEWHEEL
-    if ($direction -eq "down" -or $direction -eq "right") {
+    if ($direction -eq "down" -or $direction -eq "left") {
         $delta = -1 * $delta
     }
     if ($direction -eq "left" -or $direction -eq "right") {
         $message = $WM_MOUSEHWHEEL
     }
     $wheelWindow = $hwnd
-    [void][OCUWin32]::PostMessage($wheelWindow, $message, (ConvertTo-WheelWParam $delta), $lParam)
+    if (-not [OCUWin32]::PostMessage($wheelWindow, $message, (ConvertTo-WheelWParam $delta), $lParam)) {
+        throw 'PostMessage wheel delivery failed.'
+    }
 }
 
 function Get-PostedKeyTarget([IntPtr]$hwnd) {
@@ -1656,7 +1736,7 @@ function Invoke-Operation($process, $operation, $element) {
                         y = [int][math]::Round($windowBounds.y + [double]$operation.y)
                     }
                 }
-                Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
             } elseif ($clickMethod -eq "global") {
                 $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
                 $script:sdkEffect = 'none'
@@ -1682,7 +1762,7 @@ function Invoke-Operation($process, $operation, $element) {
                             y = [int][math]::Round($windowBounds.y + [double]$operation.y)
                         }
                     }
-                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                 }
             } else {
                 $script:sdkCode = 'INVALID_ARGUMENT'
@@ -1717,7 +1797,7 @@ function Invoke-Operation($process, $operation, $element) {
                 }
                 $frame = if ($null -ne $operation.element) { $operation.element.frame } else { New-Frame 0 0 $windowBounds.width $windowBounds.height }
                 $point = Get-ScreenPoint $frame $windowBounds
-                Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)
+                Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages) $windowBounds
             }
         }
         "drag" {

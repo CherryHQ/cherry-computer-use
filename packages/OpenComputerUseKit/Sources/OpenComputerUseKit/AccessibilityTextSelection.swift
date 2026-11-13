@@ -42,10 +42,19 @@ func applyVerifiedTextSelection(
     try validate()
     try requireUnchangedText()
     try writeRange(CFRange(location: target.location, length: target.length))
-    try validate()
-    guard let applied = readRange(), applied.location == target.location, applied.length == target.length else {
-        throw ComputerUseError.message("select_text could not verify the requested range; the app may not support accessibility selection")
-    }
-    try requireUnchangedText()
-    try validate()
+    // Chromium can acknowledge AX writes before publishing the new range.
+    // Wait for read-back without replaying the write or relaxing the text/lease checks.
+    let deadline = ProcessInfo.processInfo.systemUptime + 1
+    repeat {
+        try validate()
+        try requireUnchangedText()
+        if let applied = readRange(), applied.location == target.location, applied.length == target.length {
+            try requireUnchangedText()
+            try validate()
+            return
+        }
+        guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+        Thread.sleep(forTimeInterval: 0.01)
+    } while true
+    throw ComputerUseError.message("select_text could not verify the requested range; the app may not support accessibility selection")
 }

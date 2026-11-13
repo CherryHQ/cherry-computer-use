@@ -76,3 +76,6 @@ if ($LASTEXITCODE -ne 0) { throw "Keyboard focus regression failed" }
 
 & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'windows-action-observation.test.ps1') -RuntimePath $RuntimePath
 if ($LASTEXITCODE -ne 0) { throw 'Action observation regression failed' }
+
+& (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'windows-pointer-routing.test.ps1') -RuntimePath $RuntimePath
+if ($LASTEXITCODE -ne 0) { throw 'Pointer routing regression failed' }
