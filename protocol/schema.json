@@ -5,6 +5,70 @@
   "type": "object",
   "additionalProperties": false,
   "definitions": {
+    "AppIconInput": {
+      "title": "AppIconInput",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "identity"
+      ]
+    },
+    "AppIconResult": {
+      "title": "AppIconResult",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "available"
+            },
+            "icon": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mimeType": {
+                  "const": "image/png"
+                },
+                "dataBase64": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 65536,
+                  "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                }
+              },
+              "required": [
+                "mimeType",
+                "dataBase64"
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "icon"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        }
+      ]
+    },
     "ErrorCode": {
       "type": "string",
       "enum": [

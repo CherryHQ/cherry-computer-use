@@ -758,10 +758,18 @@ function Get-WindowHostedProcessId([IntPtr]$hwnd, [int]$hostProcessId) {
 
 function Get-WindowAppIdentity([IntPtr]$hwnd, [int]$hostProcessId) {
     $identityPid = Get-WindowHostedProcessId $hwnd $hostProcessId
-    if ($identityPid -le 0) {
-        $identityPid = $hostProcessId
+    if ($identityPid -gt 0) {
+        return [SDKApplicationIdentity]::ForProcess($identityPid)
     }
-    return [SDKApplicationIdentity]::ForProcess($identityPid)
+    $identity = [SDKApplicationIdentity]::ForProcess($hostProcessId)
+    $frameHost = Join-Path ([Environment]::SystemDirectory) 'ApplicationFrameHost.exe'
+    if ($identity -ceq ('win32:exe:' + $frameHost.ToLowerInvariant())) {
+        $appID = [SDKApplicationIdentity]::ForWindow($hwnd)
+        if ($appID -match '^[^\\/:]+![^\\/:]+$') {
+            return 'win32:aumid:' + $appID.ToLowerInvariant()
+        }
+    }
+    return $identity
 }
 
 # A window handle is the identity of a hosted application: ApplicationFrameHost owns the frame

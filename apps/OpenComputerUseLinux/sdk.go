@@ -176,6 +176,9 @@ func (d *linuxDesktop) Apps(ctx context.Context) ([]sdkruntime.Target, error) {
 		}
 		if !known {
 			identity = desktopentry.ProcessIdentity(entries, "/proc", app.PID)
+			if identity == "" {
+				identity = executableIdentity("/proc", app.PID)
+			}
 		}
 		targets = append(targets, sdkruntime.Target{Key: app.Ref.Bus + string(app.Ref.Path), Name: app.Name, Identity: identity, Native: app})
 	}

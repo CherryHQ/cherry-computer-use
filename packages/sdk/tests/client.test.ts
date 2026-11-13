@@ -529,3 +529,15 @@ test(
     await client.close()
   }
 )
+
+
+test('app icons use an independent validated request without opening app control', async (t) => {
+  const runtime = launch(t)
+  const client = await connectClient(runtime.connection, runtime.sessionId)
+  assert.deepEqual(await client.getAppIcon({ identity: 'finder' }), {
+    status: 'available', icon: { mimeType: 'image/png', dataBase64: 'aWNvbg==' }
+  })
+  assert.deepEqual(await client.getAppIcon({ identity: 'missing' }), { status: 'unavailable' })
+  await assert.rejects(client.getAppIcon({ identity: '' }), hasCode('INVALID_ARGUMENT'))
+  await assert.rejects(client.getAppIcon({ identity: 'oversized' }), hasCode('PROTOCOL_ERROR'))
+})

@@ -1,5 +1,9 @@
 # @cherrystudio/computer-use-darwin-x64
 
+## 0.1.11
+
+No changes in this release.
+
 ## 0.1.10
 
 No changes in this release.

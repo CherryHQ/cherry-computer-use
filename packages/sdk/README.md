@@ -169,8 +169,7 @@ The runtime checks `expectedIdentity` before launch; a changed identity fails
 without launching. Running `AppInfo` and app sessions include the same optional
 `identity`; their opaque `id` is still only a runtime control reference.
 
-`launch: false` retains its running-only semantics. Windows/Linux do not launch
-applications and reject installed identity resolution with `UNSUPPORTED_CAPABILITY`.
+`launch: false` limits resolution to running applications.
 Host stop decisions remain host-owned and must be checked before effects.
 
 On macOS, text elements advertise `setValue` only when their AX value is writable.
@@ -213,3 +212,32 @@ ambiguous running targets are never selected by a guessed name after launch.
 After dispatch, cancellation, missing accessibility or window timeout reports
 `effect: possible`; do not replay launch automatically. These SDK additions do not
 change the legacy CLI/MCP launch policy or authorize global input.
+
+
+## Application icons for host UI
+
+`client.getAppIcon({ identity })` reads presentation data independently of app control.
+Pass the stable `AppInfo.identity` or the `id` from `resolveAppIdentity({ query })`. On macOS, Windows and Linux,
+the native runtime reads the installed application's icon and returns
+`{ status: 'available', icon: { mimeType: 'image/png', dataBase64 } }` with a 64×64 PNG.
+An absent icon, blocked identity, or missing native image library returns `{ status: 'unavailable' }`.
+The query never launches or activates the target, opens an app control session, or
+adds icon bytes to `AppInfo`, snapshots, action results or MCP tool results. Hosts
+should query lazily and cache by identity; this API is not intended as a model tool.
+
+Windows reads executable and packaged app icons through the Shell, including packaged
+apps hidden from the Start menu. Hosted windows such as Settings use their own
+packaged app identity. When an executable lacks an icon resource, the runtime
+can use its registered shortcut icon or a Windows UI resource. `resolveAppIdentity` can also return a
+`win32:shell:` identity for an AppsFolder entry such as Control Panel or a shortcut
+whose executable is missing. Use that identity for presentation queries.
+Linux loads system GTK 3 and
+GdkPixbuf dynamically (including installed SVG loaders), without Python or a build-time
+GTK dependency; a headless process uses the hicolor fallback theme.
+
+Linux running applications without a matching desktop entry expose a canonical
+`linux:exe:` identity for presentation. Icon queries first read the executable's
+X11/Xwayland window icon, then try its lowercase executable name in the installed
+GTK icon theme. These identities do not resolve an installed launch target.
+Native Wayland applications need a matching desktop entry or theme icon; unreadable
+executables and applications with no icon remain unavailable.
