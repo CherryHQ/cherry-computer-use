@@ -141,6 +141,11 @@ leaves discovery and subsequent actions usable; unknown effects still close desk
 operations. This fixture does not establish support for every Chromium application
 or GPU screenshot correctness.
 
+The fixture focuses its editor on startup, exposes a "Focus editor" button for
+explicit setup before keyboard input, and counts key releases on that child HWND.
+Posting a key only to the top-level form must not satisfy the
+keyboard assertion; pointer and wheel counters remain on the form.
+
 ## Explicit observation boundary (unreleased)
 
 `perform` returns only a completed receipt with the requested app session ID. It never performs post-action capture. Element and coordinate snapshots are consumed; only keyboard operations can reuse the last target snapshot through `perform`. Explicit re-observation, input failure or app stop clears that retained target. Native validation still runs before every input; macOS also compares focused-window identity and refreshes the focused input element. Existing `act` keeps its observation response.

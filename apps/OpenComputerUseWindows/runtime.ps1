@@ -782,8 +782,8 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
         return
     }
     $vk = Get-VirtualKey $main
-    # Hosted content ignores posted key messages, so it needs real input; classic windows keep the
-    # historical posted-message path (apps may count keys on the top-level window).
+    # Hosted content ignores posted key messages, so it needs real input; classic windows
+    # receive posted messages at their focused child (or the root when no child is focused).
     if ($inputWindow -ne $hwnd) {
         if (-not $super -and (Test-WindowForeground $hwnd) -and [OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
             return

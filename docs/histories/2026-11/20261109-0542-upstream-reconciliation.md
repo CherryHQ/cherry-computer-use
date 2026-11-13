@@ -173,3 +173,12 @@
 - CI 与本地改用同一入口，避免执行方式漂移；不修改生产输入或观察逻辑。
 - 本地以原 CI 共用进程命令复现相同的类型冲突；新入口全部九组回归通过。另用受控子脚本验证非零退出码会传播且后续 suite 不再执行。
 - 文档/仓库卫生和 diff 检查通过；workflow lint 无新增诊断，仍保留十条原有诊断。真实 Windows 后续结果由新 CI 验证。
+
+### 2026-11-14：Windows 动作 fixture 对齐焦点子控件
+
+head `7d87fd5` 的 Windows CI 已通过九组 PowerShell 回归、原生协议及真实 counter 桌面测试，随后七动作 fixture 在 Return 后仍报告 `keys=0`。源码核对确认 fixture 只在顶层 Form 的 WndProc 统计按键，而当前经典窗口路径已将按键投递到属于目标窗口的焦点子 HWND。
+
+- 将按键计数移到 fixture 编辑框的 WndProc，顶层 Form 不再计入按键；保留原有 `keys=1` 和后续滚动、拖拽、多击精确计数断言。
+- fixture 启动时聚焦编辑框，并暴露显式“Focus editor”按钮供键盘验收前准备，避免依赖先前 UIA 操作留下的焦点。测试通过 SDK 语义点击该按钮，再断言单次 Return 到达编辑框。
+- 更新协议说明与过期的运行时注释，生产输入行为未改变。
+- 本地统一入口九组回归、fixture PowerShell 解析、JavaScript 语法、文档/仓库卫生与 diff 检查通过；macOS 本地未执行 WinForms GUI，更新后的真实七动作场景仍由 Windows CI 验证。
