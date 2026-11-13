@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -49,7 +48,7 @@ func (b *powershellSDKBridge) Run(ctx context.Context, operation any) (json.RawM
 		return nil, err
 	}
 	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(b.directory, "sdk.ps1"))
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideConsoleWindow(command)
 	input, err := command.StdinPipe()
 	if err != nil {
 		return nil, err

@@ -7,7 +7,7 @@ Some apps might have a separate dedicated plugin or skill. You may want to use t
 
 Begin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. Codex will automatically stop the session after each assistant turn, so this step is required before interacting with apps in a new assistant turn.
 
-The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.
+The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, set_value, select_text, and query. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.
 
 Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!
 
@@ -18,13 +18,21 @@ Ask the user before taking destructive or externally visible actions such as sen
 """
 
 public final class StdioMCPServer {
+    private let service: ComputerUseService
     private let dispatcher: ComputerUseToolDispatcher
+    private let backgroundStateReset: () -> Void
 
-    public init(service: ComputerUseService = ComputerUseService()) {
+    public init(
+        service: ComputerUseService = ComputerUseService(),
+        backgroundStateReset: @escaping () -> Void = resetOpenComputerUseBackgroundWindowState
+    ) {
+        self.service = service
         self.dispatcher = ComputerUseToolDispatcher(service: service)
+        self.backgroundStateReset = backgroundStateReset
     }
 
     public func run() throws {
+        defer { endSession() }
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue
@@ -71,9 +79,7 @@ public final class StdioMCPServer {
             case "notifications/initialized":
                 return nil
             case "notifications/turn-ended":
-                VisualCursorSupport.performOnMain {
-                    SoftwareCursorOverlay.reset()
-                }
+                endSession()
                 return nil
             case "ping":
                 return try encodeJSONRPCResult(id: id, result: [:])
@@ -121,6 +127,17 @@ public final class StdioMCPServer {
                 ]
             )
         }
+    }
+
+    /// Release state that is scoped to one MCP client session. App-hosted MCP
+    /// connections call this explicitly because they use `handle(line:)`
+    /// instead of the stdio `run()` loop.
+    public func endSession() {
+        service.clearQueryIndexes()
+        VisualCursorSupport.performOnMain {
+            SoftwareCursorOverlay.reset()
+        }
+        backgroundStateReset()
     }
 
     private func encodeJSONRPCResult(id: Any?, result: [String: Any]) throws -> String {

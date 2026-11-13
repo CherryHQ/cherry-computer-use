@@ -122,7 +122,7 @@ func (config Config) execute(job work) response {
 			available = desktop.Capabilities(job.ctx)
 		}
 		capabilities := make([]any, 0, 9)
-		for _, name := range []string{"accessibility", "screenshot", "click", "performSecondaryAction", "scroll", "drag", "typeText", "pressKey", "setValue"} {
+		for _, name := range []string{"accessibility", "screenshot", "click", "performSecondaryAction", "scroll", "drag", "typeText", "pressKey", "setValue", "query", "selectText", "screenshotFormats", "virtualDisplay", "lockedUse", "backgroundKeyboard"} {
 			availability, exists := available[name]
 			if !exists {
 				availability = Availability{Status: "unsupported", Reason: &Reason{"UNSUPPORTED_CAPABILITY", "Capability is not connected to SDK protocol"}}

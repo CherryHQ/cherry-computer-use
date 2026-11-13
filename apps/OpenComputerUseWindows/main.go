@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"math"
 	"os"
@@ -23,10 +26,21 @@ var version = "0.1.11"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 
+var keyMethodValues = []string{"auto", "sky_key"}
+
+var pressKeyMethodValues = []string{"auto", "sky_key", "global"}
+
+var windowPlacementValues = []string{"keep", "agent_display", "restore"}
+
+const (
+	minimumScreenshotDimension = 64
+	minimumScreenshotArea      = 20_000
+)
+
 //go:embed runtime.ps1
 var windowsRuntimeScript string
 
-const serverInstructions = "Computer Use tools let you interact with Windows apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Windows actions use UI Automation patterns first and fall back to window messages when an app does not expose the needed pattern. The Windows runtime does not auto-launch apps, perform SetFocus, or use UIA text fallback by default, so background-capable actions do not intentionally steal the user's foreground focus."
+const serverInstructions = "Computer Use tools let you interact with Windows apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Screenshot-coordinate actions require get_app_state to return a usable image; hidden, minimized, cloaked, off-screen, or degenerate windows may return only the accessibility tree. Windows actions use UI Automation patterns first and fall back to window messages when an app does not expose the needed pattern. The Windows runtime does not auto-launch apps, perform SetFocus, or use UIA text fallback by default, so background-capable actions do not intentionally steal the user's foreground focus. Setting OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 enables click_method 'global' plus real-pointer scroll/drag fallbacks; real keyboard input additionally requires press_key key_method=global. Physical input may move the system pointer and change foreground focus; leave the environment flag unset to keep every action on UI Automation patterns and window messages. Auto press_key always uses window messages, sent to the control that has keyboard focus, and refuses key combinations because window messages cannot carry modifier keys. Global input verifies the observed process/window, current geometry, foreground and pointer hit target, and refuses delivery if these cannot be confirmed."
 
 type toolDefinition struct {
 	Name        string         `json:"name"`
@@ -73,6 +87,7 @@ type elementRecord struct {
 	RuntimeID            []int    `json:"runtimeId,omitempty"`
 	AutomationID         string   `json:"automationId,omitempty"`
 	Name                 string   `json:"name,omitempty"`
+	NameDigest           string   `json:"nameDigest,omitempty"`
 	ControlType          string   `json:"controlType,omitempty"`
 	LocalizedControlType string   `json:"localizedControlType,omitempty"`
 	ClassName            string   `json:"className,omitempty"`
@@ -83,6 +98,8 @@ type elementRecord struct {
 }
 
 type appSnapshot struct {
+	WindowHandle        int64           `json:"windowHandle,omitempty"`
+	ScreenshotOmitted   bool            `json:"-"`
 	App                 appDescriptor   `json:"app"`
 	WindowTitle         string          `json:"windowTitle,omitempty"`
 	WindowBounds        *frame          `json:"windowBounds,omitempty"`
@@ -111,6 +128,11 @@ func (s *appSnapshot) renderedText() string {
 		fmt.Sprintf("Window: %q, App: %s.", title, s.App.Name),
 	}
 	lines = append(lines, s.TreeLines...)
+	if s.ScreenshotOmitted {
+		lines = append(lines, "", "Screenshot omitted by include_screenshot=false")
+	} else if !s.hasUsableScreenshot() {
+		lines = append(lines, "", "Screenshot unavailable. Restore a visible, non-minimized, on-screen window before using screenshot-coordinate actions; element_index actions may still work.")
+	}
 	if strings.TrimSpace(s.SelectedText) != "" {
 		lines = append(lines, "", fmt.Sprintf("Selected text: [%s]", s.SelectedText))
 	} else if strings.TrimSpace(s.FocusedSummary) != "" {
@@ -120,42 +142,98 @@ func (s *appSnapshot) renderedText() string {
 }
 
 func (s *appSnapshot) result() toolCallResult {
+	s.sanitizeScreenshot()
 	result := toolCallResult{
 		Content: []contentItem{{Type: "text", Text: s.renderedText()}},
 	}
-	if s != nil && s.ScreenshotPNGBase64 != "" {
+	if screenshot := s.usableScreenshotPNGBase64(); screenshot != "" {
 		result.Content = append(result.Content, contentItem{
 			Type:     "image",
-			Data:     s.ScreenshotPNGBase64,
+			Data:     screenshot,
 			MimeType: "image/png",
 		})
 	}
 	return result
 }
 
+func (s *appSnapshot) usableScreenshotPNGBase64() string {
+	if !s.hasUsableScreenshot() {
+		return ""
+	}
+	return s.ScreenshotPNGBase64
+}
+
+func (s *appSnapshot) hasUsableScreenshot() bool {
+	return s != nil && isUsableScreenshotFrame(s.WindowBounds) && s.ScreenshotPNGBase64 != ""
+}
+
+func (s *appSnapshot) sanitizeScreenshot() {
+	if s == nil {
+		return
+	}
+	if !isUsableScreenshotFrame(s.WindowBounds) {
+		s.ScreenshotPNGBase64 = ""
+		return
+	}
+	s.ScreenshotPNGBase64 = validateScreenshotPNGBase64(s.ScreenshotPNGBase64)
+}
+
+func isUsableScreenshotFrame(bounds *frame) bool {
+	if bounds == nil || math.IsNaN(bounds.Width) || math.IsNaN(bounds.Height) || math.IsInf(bounds.Width, 0) || math.IsInf(bounds.Height, 0) {
+		return false
+	}
+	return bounds.Width >= minimumScreenshotDimension &&
+		bounds.Height >= minimumScreenshotDimension &&
+		bounds.Width*bounds.Height >= minimumScreenshotArea
+}
+
+func validateScreenshotPNGBase64(encoded string) string {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return ""
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return ""
+	}
+	configuration, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil || configuration.Width < minimumScreenshotDimension || configuration.Height < minimumScreenshotDimension {
+		return ""
+	}
+	if int64(configuration.Width)*int64(configuration.Height) < minimumScreenshotArea {
+		return ""
+	}
+	return encoded
+}
+
 type psRequest struct {
-	Tool         string         `json:"tool"`
-	App          string         `json:"app,omitempty"`
-	Element      *elementRecord `json:"element,omitempty"`
-	X            *float64       `json:"x,omitempty"`
-	Y            *float64       `json:"y,omitempty"`
-	FromX        *float64       `json:"from_x,omitempty"`
-	FromY        *float64       `json:"from_y,omitempty"`
-	ToX          *float64       `json:"to_x,omitempty"`
-	ToY          *float64       `json:"to_y,omitempty"`
-	ClickCount   int            `json:"click_count,omitempty"`
-	MouseButton  string         `json:"mouse_button,omitempty"`
-	ClickMethod  string         `json:"click_method,omitempty"`
-	Action       string         `json:"action,omitempty"`
-	Direction    string         `json:"direction,omitempty"`
-	Pages        float64        `json:"pages,omitempty"`
-	Text         string         `json:"text,omitempty"`
-	Key          string         `json:"key,omitempty"`
-	Value        string         `json:"value,omitempty"`
-	WindowBounds *frame         `json:"windowBounds,omitempty"`
-	TextLimit    any            `json:"text_limit,omitempty"`
-	MaxTreeNodes int            `json:"max_tree_nodes,omitempty"`
-	MaxTreeDepth int            `json:"max_tree_depth,omitempty"`
+	ExpectedPID       int            `json:"expected_pid,omitempty"`
+	WindowHandle      int64          `json:"windowHandle,omitempty"`
+	KeyMethod         string         `json:"key_method,omitempty"`
+	IncludeAX         *bool          `json:"include_ax,omitempty"`
+	IncludeScreenshot *bool          `json:"include_screenshot,omitempty"`
+	Tool              string         `json:"tool"`
+	App               string         `json:"app,omitempty"`
+	Element           *elementRecord `json:"element,omitempty"`
+	X                 *float64       `json:"x,omitempty"`
+	Y                 *float64       `json:"y,omitempty"`
+	FromX             *float64       `json:"from_x,omitempty"`
+	FromY             *float64       `json:"from_y,omitempty"`
+	ToX               *float64       `json:"to_x,omitempty"`
+	ToY               *float64       `json:"to_y,omitempty"`
+	ClickCount        int            `json:"click_count,omitempty"`
+	MouseButton       string         `json:"mouse_button,omitempty"`
+	ClickMethod       string         `json:"click_method,omitempty"`
+	Action            string         `json:"action,omitempty"`
+	Direction         string         `json:"direction,omitempty"`
+	Pages             float64        `json:"pages,omitempty"`
+	Text              string         `json:"text,omitempty"`
+	Key               string         `json:"key,omitempty"`
+	Value             string         `json:"value,omitempty"`
+	WindowBounds      *frame         `json:"windowBounds,omitempty"`
+	TextLimit         any            `json:"text_limit,omitempty"`
+	MaxTreeNodes      int            `json:"max_tree_nodes,omitempty"`
+	MaxTreeDepth      int            `json:"max_tree_depth,omitempty"`
 }
 
 type textLimit struct {
@@ -175,6 +253,8 @@ type psResponse struct {
 	Text     string       `json:"text,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Snapshot *appSnapshot `json:"snapshot,omitempty"`
+	// ObservationError is set when an action was delivered but reading the window afterwards failed.
+	ObservationError string `json:"observationError,omitempty"`
 }
 
 type service struct {
@@ -203,7 +283,25 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		if err != nil {
 			return textResult(err.Error(), true)
 		}
-		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth)
+		windowPlacement, err := parseWindowPlacement(optionalString(args, "window_placement"))
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		if windowPlacement != "keep" {
+			return textResult("window_placement '"+windowPlacement+"' is not supported on Windows", true)
+		}
+		includeAX, err := optionalBool(args, "include_ax")
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		includeScreenshot, err := optionalBool(args, "include_screenshot")
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		if includeAX != nil && !*includeAX && includeScreenshot != nil && !*includeScreenshot {
+			return textResult("At least one of include_ax or include_screenshot must be true", true)
+		}
+		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth, includeAX, includeScreenshot)
 	case "click":
 		clickMethod, err := parseClickMethod(optionalString(args, "click_method"))
 		if err != nil {
@@ -240,9 +338,17 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 			requiredFloat(args, "to_y"),
 		)
 	case "type_text":
-		return s.typeText(requiredString(args, "app"), requiredString(args, "text"))
+		keyMethod, err := parseKeyMethod(optionalString(args, "key_method"))
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		return s.typeText(requiredString(args, "app"), requiredString(args, "text"), keyMethod)
 	case "press_key":
-		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"))
+		keyMethod, err := parsePressKeyMethod(optionalString(args, "key_method"))
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"), keyMethod)
 	case "set_value":
 		value, ok := args["value"].(string)
 		if !ok {
@@ -268,11 +374,11 @@ func (s *service) listApps() toolCallResult {
 	return textResult(response.Text, false)
 }
 
-func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, maxTreeDepth *int) toolCallResult {
+func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, maxTreeDepth *int, includeAX, includeScreenshot *bool) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
 	}
-	request := psRequest{Tool: "get_app_state", App: app}
+	request := psRequest{Tool: "get_app_state", App: app, IncludeAX: includeAX, IncludeScreenshot: includeScreenshot}
 	if textLimit != nil {
 		request.TextLimit = textLimit.runtimeValue()
 	}
@@ -286,7 +392,11 @@ func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, ma
 	if result.IsError {
 		return result
 	}
-	return snapshot.result()
+	result = snapshot.result()
+	if includeAX != nil && !*includeAX {
+		result.Content[0].Text += "\nAccessibility omitted; previous element indexes invalidated. Read AX before element-targeted actions."
+	}
+	return result
 }
 
 func (s *service) click(app, elementIndex string, x, y *float64, clickCount int, mouseButton, clickMethod string) toolCallResult {
@@ -299,15 +409,18 @@ func (s *service) click(app, elementIndex string, x, y *float64, clickCount int,
 	if clickMethod == "accessibility" && elementIndex == "" {
 		return textResult("click_method 'accessibility' requires element_index", true)
 	}
-	if clickMethod == "global" {
-		return textResult("click_method 'global' is not supported on Windows", true)
-	}
 	if clickMethod == "sky_click" {
 		return textResult("click_method 'sky_click' is not supported on Windows", true)
+	}
+	if clickMethod == "global" {
+		return textResult("click_method 'global' is not supported on Windows", true)
 	}
 	snapshot := s.currentSnapshot(app)
 	if snapshot == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
+	}
+	if (elementIndex == "" || clickMethod == "app_post" || clickMethod == "global") && !snapshot.hasUsableScreenshot() {
+		return screenshotCoordinatesUnavailableResult(app)
 	}
 	request := psRequest{
 		Tool:         "click",
@@ -372,7 +485,7 @@ func (s *service) scroll(app, direction, elementIndex string, pages float64) too
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
-	return s.actionResult(app, psRequest{Tool: "scroll", App: app, Element: record, Direction: normalized, Pages: pages})
+	return s.actionResult(app, psRequest{Tool: "scroll", App: app, Element: record, Direction: normalized, Pages: pages, WindowBounds: snapshot.WindowBounds})
 }
 
 func (s *service) drag(app string, fromX, fromY, toX, toY *float64) toolCallResult {
@@ -395,15 +508,25 @@ func (s *service) drag(app string, fromX, fromY, toX, toY *float64) toolCallResu
 	if snapshot == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
 	}
+	if !snapshot.hasUsableScreenshot() {
+		return screenshotCoordinatesUnavailableResult(app)
+	}
 	return s.actionResult(app, psRequest{Tool: "drag", App: app, FromX: fromX, FromY: fromY, ToX: toX, ToY: toY, WindowBounds: snapshot.WindowBounds})
 }
 
-func (s *service) typeText(app, text string) toolCallResult {
+func screenshotCoordinatesUnavailableResult(app string) toolCallResult {
+	return textResult("No usable screenshot is available for "+app+". Run get_app_state with include_screenshot=true on a visible, non-minimized, on-screen window before using screenshot coordinates.", true)
+}
+
+func (s *service) typeText(app, text, keyMethod string) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
 	}
 	if text == "" {
 		return textResult("Missing required argument: text", true)
+	}
+	if keyMethod == "sky_key" {
+		return textResult("key_method 'sky_key' is not supported on Windows", true)
 	}
 	if s.currentSnapshot(app) == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
@@ -411,17 +534,23 @@ func (s *service) typeText(app, text string) toolCallResult {
 	return s.actionResult(app, psRequest{Tool: "type_text", App: app, Text: text})
 }
 
-func (s *service) pressKey(app, key string) toolCallResult {
+func (s *service) pressKey(app, key, keyMethod string) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
 	}
 	if key == "" {
 		return textResult("Missing required argument: key", true)
 	}
+	if keyMethod == "sky_key" {
+		return textResult("key_method 'sky_key' is not supported on Windows", true)
+	}
+	if keyMethod == "global" {
+		return textResult("key_method 'global' is not supported on Windows", true)
+	}
 	if s.currentSnapshot(app) == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
 	}
-	return s.actionResult(app, psRequest{Tool: "press_key", App: app, Key: key})
+	return s.actionResult(app, psRequest{Tool: "press_key", App: app, Key: key, KeyMethod: keyMethod})
 }
 
 func (s *service) setValue(app, elementIndex, value string) toolCallResult {
@@ -443,8 +572,12 @@ func (s *service) setValue(app, elementIndex, value string) toolCallResult {
 }
 
 func (s *service) actionResult(app string, request psRequest) toolCallResult {
+	if previous := s.currentSnapshot(app); previous != nil {
+		request.ExpectedPID = previous.App.PID
+		request.WindowHandle = previous.WindowHandle
+	}
 	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
+	if result.IsError || snapshot == nil {
 		return result
 	}
 	return snapshot.result()
@@ -454,17 +587,65 @@ func (s *service) currentSnapshot(app string) *appSnapshot {
 	return s.snapshots[strings.ToLower(app)]
 }
 
+// Without a trustworthy post-operation observation, no alias may retain the old indexes.
+func (s *service) invalidateSnapshot(app string) {
+	previous := s.currentSnapshot(app)
+	for alias, cached := range s.snapshots {
+		if alias == strings.ToLower(app) || (previous != nil && (cached == previous || cached.App.PID == previous.App.PID)) {
+			delete(s.snapshots, alias)
+		}
+	}
+}
+
 func (s *service) refreshSnapshot(app string, request psRequest) (*appSnapshot, toolCallResult) {
 	response, err := s.runBridge(request)
 	if err != nil {
-		return nil, textResult(err.Error(), true)
+		s.invalidateSnapshot(app)
+		message := err.Error()
+		if request.Tool != "get_app_state" {
+			message += "\nThe action outcome is unknown; it may already have been delivered. Run get_app_state before retrying."
+		}
+		return nil, textResult(message, true)
+	}
+	if response == nil {
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return a response. Run get_app_state before retrying.", true)
 	}
 	if !response.OK {
+		s.invalidateSnapshot(app)
 		return nil, textResult(response.Error, true)
 	}
-	if response.Snapshot == nil {
-		return nil, textResult("Windows runtime did not return an app snapshot.", true)
+	if response.ObservationError != "" {
+		s.invalidateSnapshot(app)
+		if request.Tool == "get_app_state" {
+			return nil, textResult(response.ObservationError, true)
+		}
+		return nil, textResult("The "+request.Tool+" action was delivered, but reading "+app+" afterwards failed: "+response.ObservationError+"\nRun get_app_state before the next action instead of repeating this one.", false)
 	}
+	if response.Snapshot == nil {
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return an app snapshot. Run get_app_state before retrying.", true)
+	}
+	if request.IncludeScreenshot != nil && !*request.IncludeScreenshot {
+		response.Snapshot.ScreenshotPNGBase64 = ""
+		response.Snapshot.ScreenshotOmitted = true
+	}
+	if request.IncludeAX != nil && !*request.IncludeAX {
+		// A screenshot cannot validate AX indexes, even if the window title matches.
+		// Invalidate every alias of the prior observation, including PID queries.
+		previous := s.currentSnapshot(app)
+		for alias, cached := range s.snapshots {
+			if cached == previous || cached.App.PID == response.Snapshot.App.PID ||
+				(previous != nil && cached.App.PID == previous.App.PID) {
+				delete(s.snapshots, alias)
+			}
+		}
+		response.Snapshot.Elements = nil
+		response.Snapshot.TreeLines = nil
+		response.Snapshot.FocusedSummary = ""
+		response.Snapshot.SelectedText = ""
+	}
+	response.Snapshot.sanitizeScreenshot()
 	s.rememberSnapshot(app, response.Snapshot)
 	return response.Snapshot, toolCallResult{}
 }
@@ -521,8 +702,12 @@ func runPowerShell(request psRequest) (*psResponse, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, operationPath)
+	hideConsoleWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
+		if request.Tool != "list_apps" && request.Tool != "get_app_state" {
+			return nil, errors.New("Windows runtime timed out after 30s; the " + request.Tool + " action may already have been delivered. Run get_app_state before retrying it.")
+		}
 		return nil, errors.New("Windows runtime timed out after 30s")
 	}
 	if err != nil {
@@ -548,6 +733,18 @@ func requiredString(args map[string]any, key string) string {
 func optionalString(args map[string]any, key string) string {
 	value, _ := args[key].(string)
 	return value
+}
+
+func optionalBool(args map[string]any, key string) (*bool, error) {
+	value, exists := args[key]
+	if !exists {
+		return nil, nil
+	}
+	boolean, ok := value.(bool)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a boolean", key)
+	}
+	return &boolean, nil
 }
 
 func requiredElementIndex(args map[string]any) string {
@@ -701,6 +898,32 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+func parseWindowPlacement(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "keep", nil
+	}
+	for _, candidate := range windowPlacementValues {
+		if normalized == candidate {
+			return normalized, nil
+		}
+	}
+	return "", fmt.Errorf("Invalid window_placement %q. Expected one of: %s", value, strings.Join(windowPlacementValues, ", "))
+}
+
+func parseKeyMethod(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "auto", nil
+	}
+	for _, candidate := range keyMethodValues {
+		if normalized == candidate {
+			return normalized, nil
+		}
+	}
+	return "", fmt.Errorf("Invalid key_method %q. Expected one of: %s", value, strings.Join(keyMethodValues, ", "))
+}
+
 func parseClickMethod(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
@@ -712,6 +935,27 @@ func parseClickMethod(value string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("Invalid click_method %q. Expected one of: %s", value, strings.Join(clickMethodValues, ", "))
+}
+
+func parsePressKeyMethod(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "global" {
+		return normalized, nil
+	}
+	method, err := parseKeyMethod(value)
+	if err != nil {
+		return "", fmt.Errorf("Invalid key_method %q. Expected one of: auto, sky_key, global", value)
+	}
+	return method, nil
+}
+
+func globalPointerFallbacksEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolDefinitions() []toolDefinition {
@@ -727,7 +971,7 @@ func toolDefinitions() []toolDefinition {
 				"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
 				"click_count":   integerProperty("Number of clicks. Defaults to 1"),
 				"mouse_button":  enumStringProperty("Mouse button to click. Defaults to left.", []string{"left", "right", "middle"}),
-				"click_method":  enumStringProperty("Click implementation: auto (default), accessibility, app_post, sky_click, or global. Accessibility requires element_index. Windows supports app_post through HWND messages and does not currently support sky_click or global.", clickMethodValues),
+				"click_method":  enumStringProperty("Click implementation: auto (default), accessibility, app_post, sky_click, or global. Accessibility requires element_index. Windows supports app_post through HWND messages; sky_click is macOS-only, and global requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it moves the real system pointer.", clickMethodValues),
 			}, []string{"app"}),
 		},
 		{
@@ -744,13 +988,15 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "get_app_state",
-			Description: "Get the state of an already running app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
+			Description: "Get the state of an already running app's key window. By default returns a screenshot and accessibility tree; include_ax/include_screenshot can opt out of either collection. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
 			Annotations: readOnlyAnnotations(),
 			InputSchema: objectSchema(map[string]any{
-				"app":            stringProperty("App name or bundle identifier"),
-				"text_limit":     textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
-				"max_tree_nodes": positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
-				"max_tree_depth": positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
+				"include_ax":         map[string]any{"type": "boolean", "default": true, "description": "Include accessibility tree, focus and selection. False skips AX collection and invalidates prior element indexes; coordinate actions remain available."},
+				"include_screenshot": map[string]any{"type": "boolean", "default": true, "description": "Capture and return a screenshot. False skips capture and PNG encoding."},
+				"app":                stringProperty("App name or bundle identifier"),
+				"text_limit":         textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
+				"max_tree_nodes":     positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
+				"max_tree_depth":     positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
 			}, []string{"app"}),
 		},
 		{
@@ -774,8 +1020,9 @@ func toolDefinitions() []toolDefinition {
 			Description: "Press a key or key-combination on the keyboard, including modifier and navigation keys.\n  - This supports xdotool's `key` syntax.\n  - Examples: \"a\", \"Return\", \"Tab\", \"super+c\", \"Up\", \"KP_0\" (for the numpad 0). This tool is part of plugin `Computer Use`.",
 			Annotations: defaultAnnotations(),
 			InputSchema: objectSchema(map[string]any{
-				"app": stringProperty("App name or bundle identifier"),
-				"key": stringProperty("Key or key-combination to press"),
+				"app":        stringProperty("App name or bundle identifier"),
+				"key":        stringProperty("Key or key-combination to press"),
+				"key_method": enumStringProperty("Keyboard delivery: auto (default window messages to the focused control; key combinations need global), global (real keys, requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1), or macOS-only sky_key (unsupported on Windows).", pressKeyMethodValues),
 			}, []string{"app", "key"}),
 		},
 		{
@@ -791,7 +1038,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "set_value",
-			Description: "Set the value of a settable accessibility element. This tool is part of plugin `Computer Use`.",
+			Description: "Set the value of a settable accessibility element and verify the actual value. Text is compared exactly, including whitespace; an empty string clears it. Unverified writes return an error. This tool is part of plugin `Computer Use`.",
 			Annotations: defaultAnnotations(),
 			InputSchema: objectSchema(map[string]any{
 				"app":           stringProperty("App name or bundle identifier"),
@@ -804,8 +1051,9 @@ func toolDefinitions() []toolDefinition {
 			Description: "Type literal text using keyboard input. This tool is part of plugin `Computer Use`.",
 			Annotations: defaultAnnotations(),
 			InputSchema: objectSchema(map[string]any{
-				"app":  stringProperty("App name or bundle identifier"),
-				"text": stringProperty("Literal text to type"),
+				"app":        stringProperty("App name or bundle identifier"),
+				"text":       stringProperty("Literal text to type"),
+				"key_method": enumStringProperty("Keyboard delivery: auto (default) or sky_key. sky_key is the macOS SkyLight background-window path and is not supported on Windows.", keyMethodValues),
 			}, []string{"app", "text"}),
 		},
 	}
@@ -901,6 +1149,9 @@ func runCLI(args []string, stdout io.Writer) error {
 			SessionID: sessionID, Version: version, Platform: "win32", Backend: sdkruntime.NewDesktop(&windowsDesktop{}),
 		})
 	case "doctor":
+		if len(args) > 1 && args[1] == "--json" {
+			return errors.New("doctor --json permission diagnostics are only supported on macOS")
+		}
 		fmt.Fprintln(stdout, "Windows runtime: UI Automation and Win32 window-message bridge are available when this process runs in the signed-in desktop session.")
 		return nil
 	case "list-apps":
@@ -911,13 +1162,16 @@ func runCLI(args []string, stdout io.Writer) error {
 		fmt.Fprintln(stdout, result.Content[0].Text)
 		return nil
 	case "snapshot":
-		app, textLimit, maxTreeNodes, maxTreeDepth, err := parseSnapshotArgs(args[1:])
+		snapshotArgs, observation, err := parseSnapshotObservationArgs(args[1:])
 		if err != nil {
 			return err
 		}
-		toolArgs := map[string]any{
-			"app": app,
+		app, textLimit, maxTreeNodes, maxTreeDepth, err := parseSnapshotArgs(snapshotArgs)
+		if err != nil {
+			return err
 		}
+		toolArgs := observation
+		toolArgs["app"] = app
 		if textLimit != nil {
 			toolArgs["text_limit"] = textLimit.runtimeValue()
 		}
@@ -950,6 +1204,37 @@ func runCLI(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command: %s\n\n%s", args[0], helpText(""))
 	}
+}
+
+func parseSnapshotObservationArgs(args []string) ([]string, map[string]any, error) {
+	remaining := []string{}
+	options := map[string]any{}
+	for index := 0; index < len(args); index++ {
+		option := args[index]
+		if option != "--include-ax" && option != "--include-screenshot" {
+			remaining = append(remaining, option)
+			continue
+		}
+		index++
+		if index >= len(args) {
+			return nil, nil, fmt.Errorf("%s requires true or false", option)
+		}
+		var value bool
+		switch strings.ToLower(args[index]) {
+		case "true":
+			value = true
+		case "false":
+			value = false
+		default:
+			return nil, nil, fmt.Errorf("%s requires true or false", option)
+		}
+		key := strings.ReplaceAll(strings.TrimPrefix(option, "--"), "-", "_")
+		options[key] = value
+	}
+	if options["include_ax"] == false && options["include_screenshot"] == false {
+		return nil, nil, errors.New("At least one of include_ax or include_screenshot must be true")
+	}
+	return remaining, options, nil
 }
 
 func parseSnapshotArgs(args []string) (string, *textLimit, *int, *int, error) {
@@ -1255,7 +1540,7 @@ func helpText(command string) string {
 	case "call":
 		return "Usage:\n  open-computer-use.exe call <tool> [--args '<json-object>']\n  open-computer-use.exe call --calls '<json-array>'\n\nThe JSON array form keeps all calls in one process so element_index state can be reused.\n"
 	case "snapshot":
-		return "Usage:\n  open-computer-use.exe snapshot [--text-limit <positive-int|max>] [--max-tree-nodes <positive-int>] [--max-tree-depth <positive-int>] <app>\n\nPrint the current Windows UI Automation snapshot for the target app.\n"
+		return "Usage:\n  open-computer-use.exe snapshot [--include-ax true|false] [--include-screenshot true|false] [--text-limit <positive-int|max>] [--max-tree-nodes <positive-int>] [--max-tree-depth <positive-int>] <app>\n\nPrint the current Windows UI Automation snapshot for the target app.\n"
 	default:
 		return `Cherry Computer Use for Windows
 

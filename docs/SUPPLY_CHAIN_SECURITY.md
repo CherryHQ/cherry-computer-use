@@ -33,3 +33,7 @@
 - 让构建过程尽量可重复、可验证。
 - 如果条件允许，在部署链路里增加对 provenance 的校验。
 - 把 attestation 校验继续下沉到部署平台或准入层。
+
+## macOS 图像与系统组件依赖
+
+WebP 编码使用 `libwebp-Xcode` 精确版本 1.6.0；`Package.resolved` 固定源码 revision。libwebp 与 Swift wrapper 的许可证保留在 `THIRD_PARTY_NOTICES.md`，随 app Resources 和 npm 平台包分发。Locked Use 组件使用同一 Cherry Developer ID Team 签名并逐个校验，构建不会安装或启动特权服务。

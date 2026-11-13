@@ -63,12 +63,15 @@ func verifySetValueReadBack(
     requested: String,
     elementIndex: String,
     read: () -> CFTypeRef?,
+    validate: () throws -> Void,
     now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
     sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
 ) throws {
     let deadline = now() + 0.6
     while true {
+        try validate()
         let matches = setValueMatches(requested: requested, actual: read())
+        try validate()
         if matches { return }
         let remaining = deadline - now()
         guard remaining > 0 else {

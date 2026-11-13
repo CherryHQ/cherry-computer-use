@@ -8,6 +8,8 @@ Forked from [iFurySt/open-codex-computer-use](https://github.com/iFurySt/open-co
 
 `@cherrystudio/computer-use` is the public SDK. Version 0.1.0 requires an explicit native `runtimePath`; the native-distribution patch adds six automatically selected OS/CPU runtime packages. The CLI workspace stays private. See the [SDK guide](packages/sdk/README.md) and [release guide](docs/releases/RELEASE_GUIDE.md).
 
+Unreleased additions include macOS targeted queries, precise text selection, background windows, configurable PNG/JPEG/WebP capture, and opt-in virtual displays and Locked Use. All platforms support tree-only or screenshot-only observations. See [capabilities, setup and validation boundaries](docs/design-docs/upstream-desktop-capabilities.md).
+
 ## Demos
 
 ### Codex App and Codex CLI

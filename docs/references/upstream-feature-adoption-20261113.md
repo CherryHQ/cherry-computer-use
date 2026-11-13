@@ -6,7 +6,7 @@
 
 建议把这些能力纳入 Cherry 的接入路线，保留 SDK、应用会话、CDP、Linux Go/Wayland 引擎和发布身份。区分“功能值得做”与“上游实现能原样合并”：多数能力可以复用上游引擎，SDK 契约和资源清理必须适配。
 
-本轮完成源码、协议和上游验证记录审查；以下接入方案尚未实施，也未执行锁屏、创建显示器或安装系统组件。上游文档中的实机结果是上游证据，不是 Cherry 的验收结果。
+本文保留实施前的源码复评基线。用户随后确认开始接入，当前实现与验收状态见[新增桌面能力](../design-docs/upstream-desktop-capabilities.md)和[执行计划](../exec-plans/completed/20261113-upstream-feature-adoption.md)。上游文档中的实机结果仍不是 Cherry 的验收结果。
 
 ## 复核基线
 

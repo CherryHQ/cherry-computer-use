@@ -4,6 +4,8 @@ import type { ComputerUseError } from './errors.js'
 export interface StartOptions {
   /** Complete .app bundle on macOS; executable on Windows/Linux. */
   runtimePath?: string
+  /** Opt in to macOS task resources; neither option installs system components. */
+  taskOptions?: Wire.TaskOptions
 }
 
 export interface CallOptions {
@@ -20,6 +22,8 @@ export type Snapshot = Omit<Wire.Snapshot, 'screenshot'> & {
     | { status: 'available'; image: Screenshot }
     | { status: 'unavailable'; reason: Wire.Failure }
 }
+export type QueryResult = Omit<Wire.QueryResult, 'snapshot'> & { snapshot: Snapshot }
+
 export interface ActionResult {
   status: 'completed'
   observation:
@@ -54,6 +58,8 @@ export interface ComputerUseClient {
     input: Wire.AppSessionInput,
     options?: CallOptions
   ): Promise<Wire.StopAppSessionResult>
+  /** Find controls without taking a screenshot or rendering the full tree. */
+  query(input: Wire.QueryInput, options?: CallOptions): Promise<QueryResult>
   getAppState(
     input: Wire.ObserveInput,
     options?: CallOptions

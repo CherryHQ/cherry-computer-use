@@ -68,6 +68,32 @@ public static class OCUWin32 {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO {
+        public int cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    // The window with keyboard focus on the target window's own GUI thread, or zero when that thread has none.
+    public static IntPtr FocusedWindow(IntPtr window) {
+        uint pid;
+        uint thread = GetWindowThreadProcessId(window, out pid);
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return IntPtr.Zero;
+        uint focusPid;
+        if (info.hwndFocus == IntPtr.Zero || GetWindowThreadProcessId(info.hwndFocus, out focusPid) == 0 || focusPid != pid)
+            return IntPtr.Zero;
+        return info.hwndFocus;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool IsChild(IntPtr parent, IntPtr child);
+
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [DllImport("user32.dll")]
@@ -536,6 +562,16 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
     [void][OCUWin32]::PostMessage($wheelWindow, $message, (ConvertTo-WheelWParam $delta), $lParam)
 }
 
+function Get-PostedKeyTarget([IntPtr]$hwnd) {
+    $focus = [OCUWin32]::FocusedWindow($hwnd)
+    if ($focus -ne [IntPtr]::Zero -and ($focus -eq $hwnd -or [OCUWin32]::IsChild($hwnd, $focus))) {
+        return $focus
+    }
+    return $hwnd
+}
+
+# Edit and RichEdit controls, including WinForms' superclasses (WindowsForms10.EDIT..., WindowsForms10.RichEdit20W...).
+
 function Send-Text([IntPtr]$hwnd, [string]$text) {
     $target = Get-InputWindowHandle $hwnd
     foreach ($char in $text.ToCharArray()) {
@@ -544,7 +580,7 @@ function Send-Text([IntPtr]$hwnd, [string]$text) {
             Send-Key $hwnd 'Return'
             continue
         }
-        [void][OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        if (-not [OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)) { throw 'PostMessage character delivery failed' }
         Start-Sleep -Milliseconds 8
     }
 }
@@ -655,42 +691,34 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
     $alt = $chord.alt
     $super = $chord.super
     Assert-OperationActive
-    $target = Get-InputWindowHandle $hwnd
+    $inputWindow = Get-InputWindowHandle $hwnd
+    $target = if ($inputWindow -ne $hwnd) { $inputWindow } else { Get-PostedKeyTarget $hwnd }
     if (-not $control -and -not $alt -and -not $super -and (Test-CharacterKey $main)) {
         # Plain characters reach hosted apps as character input; this is also what fixes '+' '*'
         # '=' and friends, which previously had no virtual-key mapping at all.
         $char = if ($shift) { $main.ToUpperInvariant() } else { $main }
-        [void][OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        if (-not [OCUWin32]::PostMessage($target, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)) { throw 'PostMessage character delivery failed' }
         Start-Sleep -Milliseconds 20
         return
     }
     $vk = Get-VirtualKey $main
     # Hosted content ignores posted key messages, so it needs real input; classic windows keep the
     # historical posted-message path (apps may count keys on the top-level window).
-    if ($target -ne $hwnd) {
-        if ((Test-WindowForeground $hwnd) -and [OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
+    if ($inputWindow -ne $hwnd) {
+        if (-not $super -and (Test-WindowForeground $hwnd) -and [OCUWin32]::SendKeyChord($vk, $shift, $control, $alt)) {
             return
         }
         $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
         throw "Key '$key' cannot be delivered to this hosted application in the background; bring the window to the foreground and retry, or use an element action instead"
     }
-    $modifiers = @()
-    if ($control) { $modifiers += 0x11 }
-    if ($shift) { $modifiers += 0x10 }
-    if ($alt) { $modifiers += 0x12 }
-    if ($super) { $modifiers += 0x5B }
-    try {
-        foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
-        }
-        [void][OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
-        Start-Sleep -Milliseconds 25
-    } finally {
-        [void][OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
-        [array]::Reverse($modifiers)
-        foreach ($modifier in $modifiers) {
-            [void][OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
-        }
+    if ($shift -or $control -or $alt -or $super) {
+        $script:sdkCode = 'UNSUPPORTED_CAPABILITY'
+        throw "Window messages cannot carry modifier state for '$key'; use a semantic control action or a page input channel"
+    }
+    if (-not [OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)) { throw 'PostMessage key delivery failed' }
+    try { Start-Sleep -Milliseconds 25 }
+    finally {
+        if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw 'PostMessage key release failed' }
     }
 }
 
@@ -929,7 +957,18 @@ function Limit-Text([string]$Text, $TextLimit = $script:DefaultTextLimit) {
     return $Text
 }
 
+function Test-PasswordElement($element) {
+    try { return ($element.Current.IsPassword -ne $false) } catch { return $true }
+}
+
+function Get-NameDigest([string]$name) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($name))) }
+    finally { $hash.Dispose() }
+}
+
 function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
+    if (Test-PasswordElement $element) { return "" }
     try {
         $valuePattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         $value = $valuePattern.Current.Value
@@ -945,14 +984,16 @@ function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
 
 function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $script:DefaultTextLimit) {
     $frame = Get-ElementFrame $element $windowBounds
+    $fullName = Get-ElementString $element "Name"
     $runtimeId = @()
     try { $runtimeId = @($element.GetRuntimeId()) } catch {}
     [pscustomobject]@{
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
-        identityName = Get-ElementString $element "Name"
-        name = Limit-Text (Get-ElementString $element "Name") $TextLimit
+        identityName = $fullName
+        name = Limit-Text $fullName $TextLimit
+        nameDigest = Get-NameDigest $fullName
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
         className = Get-ElementString $element "ClassName"
@@ -973,32 +1014,147 @@ function Get-ElementTitle($record) {
     return ""
 }
 
+function New-TreeCacheRequest {
+    $cache = New-Object Windows.Automation.CacheRequest
+    $cache.TreeScope = [Windows.Automation.TreeScope]::Element
+    $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
+    foreach ($name in @('ControlType', 'IsPassword', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+        'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
+        'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
+        $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
+    }
+    $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+    return $cache
+}
+
+function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
+    try {
+        $info = $element.Cached
+        $rect = $info.BoundingRectangle
+        $frame = $null
+        if (-not $rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
+            $frame = if ($null -eq $windowBounds) { New-Frame $rect.X $rect.Y $rect.Width $rect.Height }
+                     else { New-Frame ($rect.X - $windowBounds.x) ($rect.Y - $windowBounds.y) $rect.Width $rect.Height }
+        }
+        $actions = New-Object System.Collections.Generic.List[string]
+        foreach ($pair in @(@('Invoke', 'Invoke'), @('Toggle', 'Toggle'), @('SelectionItem', 'Select'),
+            @('ScrollItem', 'ScrollIntoView'), @('Scroll', 'Scroll'), @('Value', 'SetValue'))) {
+            if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::('Is' + $pair[0] + 'PatternAvailableProperty'))) {
+                $actions.Add($pair[1])
+            }
+        }
+        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty)) {
+            $state = $element.GetCachedPropertyValue([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+            if ($state -eq [Windows.Automation.ExpandCollapseState]::Collapsed) { $actions.Add('Expand') }
+            elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
+        }
+        $value = ''
+        if ($info.IsPassword -eq $false) {
+            $value = Get-ElementValue $element $TextLimit
+        }
+        return [pscustomobject]@{
+            index = $index
+            runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
+            automationId = $info.AutomationId
+            identityName = $info.Name
+            name = Limit-Text $info.Name $TextLimit
+            nameDigest = Get-NameDigest $info.Name
+            controlType = $info.ControlType.ProgrammaticName
+            localizedControlType = $info.LocalizedControlType
+            className = $info.ClassName
+            value = $value
+            nativeWindowHandle = [int64]$info.NativeWindowHandle
+            frame = $frame
+            actions = $actions.ToArray()
+        }
+    } catch {
+        return Get-ElementRecord $element $index $windowBounds $TextLimit
+    }
+}
+
+function Get-TreeChildren($node, [int]$limit) {
+    if ($limit -le 0) {
+        return [pscustomobject]@{ children = @(); truncated = ($null -ne [Windows.Automation.TreeWalker]::RawViewWalker.GetFirstChild($node)) }
+    }
+    $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
+    $result = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt [math]::Min($children.Count, $limit); $i++) { $result.Add($children.Item($i)) }
+    [pscustomobject]@{ children = $result.ToArray(); truncated = ($children.Count -gt $limit) }
+}
+
+function Get-PrioritizedTree($root, [int]$MaxNodes, [int]$MaxDepth) {
+    $queues = @(); $offsets = @(0, 0, 0, 0, 0)
+    for ($i = 0; $i -lt 5; $i++) { $queues += ,(New-Object System.Collections.Generic.List[object]) }
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $selected = New-Object System.Collections.Generic.List[object]
+    $state = @{ reasons = (New-Object System.Collections.Generic.HashSet[string]); scanned = 0; truncated = $false; limit = [math]::Max(64, [math]::Min($MaxNodes, 2500) * 4) }
+    function Enqueue($node, [int]$depth, [string]$path, [bool]$inCollection) {
+        if ($depth -gt $MaxDepth -or $state.scanned -ge $state.limit) { $state.truncated = $true; [void]$state.reasons.Add($(if ($depth -gt $MaxDepth) { 'depth' } else { 'nodes' })); return }
+        $state.scanned++
+        if ($null -eq $node) { return }
+        try { $runtime = (@($node.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty)) -join '.') }
+        catch { try { $runtime = (@($node.GetRuntimeId()) -join '.') } catch { $runtime = $path } }
+        if ([string]::IsNullOrWhiteSpace($runtime)) { $runtime = $path }
+        if (-not $seen.Add($runtime)) { return }
+        try { $role = $node.Cached.ControlType.ProgrammaticName } catch { $role = Get-ElementControlTypeName $node }
+        if ([string]::IsNullOrWhiteSpace($role)) { $role = Get-ElementControlTypeName $node }
+        $collection = $inCollection -or $role -in @('ControlType.List', 'ControlType.DataGrid', 'ControlType.Tree', 'ControlType.Table')
+        $hidden = $false
+        try {
+            $info = $node.Cached
+            if ($null -eq $info) { $info = $node.Current }
+            $hidden = [bool]$info.IsOffscreen
+        } catch { try { $hidden = [bool]$node.Current.IsOffscreen } catch { } }
+        $control = $role -in @('ControlType.Button', 'ControlType.CheckBox', 'ControlType.RadioButton', 'ControlType.Edit', 'ControlType.ComboBox', 'ControlType.Slider', 'ControlType.Spinner', 'ControlType.Hyperlink')
+        $rank = if ($hidden) { 4 } elseif ($collection) { if ($control) { 2 } else { 3 } } elseif ($control) { 0 } else { 1 }
+        $queues[$rank].Add([pscustomobject]@{ node = $node; depth = $depth; path = $path; collection = $collection })
+    }
+    Enqueue $root 0 '' $false
+    while ($selected.Count -lt $MaxNodes) {
+        $rank = -1
+        for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $rank = $i; break } }
+        if ($rank -lt 0) { break }
+        $work = $queues[$rank][$offsets[$rank]]; $offsets[$rank]++
+        $selected.Add($work)
+        try {
+            $remaining = if ($work.depth -ge $MaxDepth) { 0 } else { [math]::Max(0, $state.limit - $state.scanned) }
+            $result = Get-TreeChildren $work.node $remaining
+            if ($result.truncated) { $state.truncated = $true; [void]$state.reasons.Add($(if ($work.depth -ge $MaxDepth) { 'depth' } else { 'nodes' })) }
+            for ($i = 0; $i -lt $result.children.Count; $i++) {
+                Enqueue $result.children[$i] ($work.depth + 1) ($work.path + '/' + $i.ToString('D10')) $work.collection
+            }
+        } catch { $state.truncated = $true }
+    }
+    for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $state.truncated = $true } }
+    [pscustomobject]@{ nodes = @($selected | Sort-Object path); truncated = $state.truncated; reasons = @($state.reasons) }
+}
+
 function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth) {
     $records = New-Object System.Collections.Generic.List[object]
     $lines = New-Object System.Collections.Generic.List[string]
-    $visited = New-Object System.Collections.Generic.HashSet[string]
-    $nextIndex = 0
     $effectiveMaxTreeNodes = if ($MaxTreeNodes -gt 0) { $MaxTreeNodes } else { $script:AccessibilityTreeMaxNodeCount }
     $effectiveMaxTreeDepth = if ($MaxTreeDepth -gt 0) { $MaxTreeDepth } else { $script:AccessibilityTreeMaxDepth }
-
-    function Visit($node, [int]$depth, [int]$parentIndex) {
-        if ($script:nextIndex -ge $script:MaxTreeNodes) { [void]$script:truncated.Add('nodes'); return }
-        if ($depth -gt $script:MaxTreeDepth) { [void]$script:truncated.Add('depth'); return }
-        $runtime = ""
-        try { $runtime = (@($node.GetRuntimeId()) -join ".") } catch { $runtime = [guid]::NewGuid().ToString() }
-        if (-not $script:visited.Add($runtime)) {
-            return
-        }
-
-        $index = $script:nextIndex
-        $script:nextIndex++
-        $record = Get-ElementRecord $node $index $script:windowBounds $TextLimit
-        $record | Add-Member -NotePropertyName parentIndex -NotePropertyValue $parentIndex
-        if ($null -ne $TextLimit -and ($record.identityName.Length -gt $TextLimit -or (Get-ElementValue $node $null).Length -gt $TextLimit)) {
-            [void]$script:truncated.Add('text')
-        }
-        $script:records.Add($record)
-
+    $cache = New-TreeCacheRequest
+    $scope = $cache.Activate()
+    try {
+        try { $element = $element.GetUpdatedCache($cache) } catch { }
+        $plan = Get-PrioritizedTree $element $effectiveMaxTreeNodes $effectiveMaxTreeDepth
+    } finally { $scope.Dispose() }
+    $parents = @{}
+    $truncated = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($reason in $plan.reasons) { [void]$truncated.Add($reason) }
+    if ($plan.truncated -and $truncated.Count -eq 0) { [void]$truncated.Add('nodes') }
+    foreach ($work in $plan.nodes) {
+        Assert-OperationActive
+        $depth = $work.depth
+        $index = $records.Count
+        $record = Get-TreeRecord $work.node $index $windowBounds $TextLimit
+        $parentPath = if ($work.path.Contains('/')) { $work.path.Substring(0, $work.path.LastIndexOf('/')) } else { $null }
+        $parent = if ($null -ne $parentPath -and $parents.ContainsKey($parentPath)) { $parents[$parentPath] } else { -1 }
+        $record | Add-Member -NotePropertyName parentIndex -NotePropertyValue $parent
+        $parents[$work.path] = $index
+        if ($null -ne $TextLimit -and ($record.identityName.Length -gt $TextLimit -or (Get-ElementValue $work.node $null).Length -gt $TextLimit)) { [void]$truncated.Add('text') }
+        $records.Add($record)
         $role = $record.localizedControlType
         if ([string]::IsNullOrWhiteSpace($role)) {
             $role = $record.controlType
@@ -1017,29 +1173,15 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
         if ($null -ne $record.frame) {
             $frameSegment = " Frame: {{x: {0}, y: {1}, width: {2}, height: {3}}}" -f [int][math]::Round($record.frame.x), [int][math]::Round($record.frame.y), [int][math]::Round($record.frame.width), [int][math]::Round($record.frame.height)
         }
-        $script:lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
+        $lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
 
-        try {
-            $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
-            for ($i = 0; $i -lt $children.Count; $i++) {
-                Visit $children.Item($i) ($depth + 1) $index
-            }
-        } catch {
-        }
+    }
+    if ($plan.truncated) {
+        $lines.Add('[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]')
     }
 
-    $script:records = $records
-    $script:lines = $lines
-    $script:visited = $visited
-    $script:nextIndex = $nextIndex
-    $script:windowBounds = $windowBounds
-    $script:MaxTreeNodes = $effectiveMaxTreeNodes
-    $script:MaxTreeDepth = $effectiveMaxTreeDepth
-    $script:truncated = New-Object System.Collections.Generic.HashSet[string]
-    Visit $element 0 -1
-
     [pscustomobject]@{
-        truncated = @($script:truncated)
+        truncated = @($truncated)
         records = $records.ToArray()
         lines = $lines.ToArray()
     }
@@ -1102,41 +1244,95 @@ function Get-FocusedSummary($processId, $TextLimit = $script:DefaultTextLimit) {
     return $null
 }
 
+function Test-ChromiumWindow($processId) {
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        $className = [OCUWin32]::ClassNameOf($(if ($script:TargetHwnd) { [IntPtr][long]$script:TargetHwnd } else { $process.MainWindowHandle }))
+        if ([string]::IsNullOrEmpty($className)) { return $null }
+        return $className -like "Chrome_*"
+    } catch { return $null }
+}
+
+function Read-SafeSelectedText($focused, $TextLimit) {
+    if (Test-PasswordElement $focused) { return $null }
+    # Embedded Chromium controls can live under a non-Chromium host HWND.
+    if ($focused.Current.FrameworkId -eq 'Chrome' -or $focused.Current.ClassName -like 'Chrome_*') { return $null }
+    $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    $selection = $textPattern.GetSelection()
+    if ($selection.Count -gt 0) {
+        $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
+        return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
+    }
+    return $null
+}
+
 function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
+    # Chromium and Electron UIA providers raise an uncatchable AccessViolationException
+    # inside TextPatternRange.GetText, which terminates the PowerShell runspace and
+    # fails every observation/action for that app. Skip the selection read for them.
+    if ((Test-ChromiumWindow $processId) -ne $false) {
+        return $null
+    }
     try {
         $focused = [Windows.Automation.AutomationElement]::FocusedElement
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
             return $null
         }
-        $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
-        $selection = $textPattern.GetSelection()
-        if ($selection.Count -gt 0) {
-            $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
-            return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
-        }
+        return Read-SafeSelectedText $focused $TextLimit
     } catch {
     }
     return $null
 }
 
-function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth) {
+function Resolve-ObservationOptions($operation) {
+    $values = @{ include_ax = $true; include_screenshot = $true }
+    foreach ($key in @("include_ax", "include_screenshot")) {
+        $property = $operation.PSObject.Properties[$key]
+        if ($null -ne $property) {
+            if ($property.Value -isnot [bool]) { throw "$key must be a boolean" }
+            $values[$key] = $property.Value
+        }
+    }
+    if (-not $values.include_ax -and -not $values.include_screenshot) {
+        throw "At least one of include_ax or include_screenshot must be true"
+    }
+    return [pscustomobject]$values
+}
+
+function Resolve-OperationWindow($process, $operation) {
+    if ($operation.expected_pid -and [int]$operation.expected_pid -ne [int]$process.Id) {
+        throw 'staleSnapshot: the observed application has restarted; get_app_state is required'
+    }
+    $hwnd = if ($operation.windowHandle) { [IntPtr][long]$operation.windowHandle } else { [IntPtr][long]$process.MainWindowHandle }
+    if ($operation.windowHandle -and (-not [OCUWin32]::IsAlive($hwnd) -or [OCUWin32]::OwnerProcessOf($hwnd) -ne [uint32]$process.Id)) {
+        throw 'staleSnapshot: the observed window is no longer owned by the application; get_app_state is required'
+    }
+    return $hwnd
+}
+
+function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth, [bool]$IncludeAX = $true, [bool]$IncludeScreenshot = $true) {
+    if (-not $IncludeAX -and -not $IncludeScreenshot) { throw "At least one observation channel is required" }
     $process = Resolve-App $query
-    $hwnd = [IntPtr][long]$process.MainWindowHandle
+    $hwnd = Resolve-OperationWindow $process ([pscustomobject]@{ windowHandle = $script:TargetHwnd })
     $element = Get-MainElement $process $hwnd
     $bounds = Get-WindowBounds $process $element $hwnd
-    $rendered = Render-Tree $element $bounds $TextLimit $MaxTreeNodes $MaxTreeDepth
+    $rendered = if ($IncludeAX) { Render-Tree $element $bounds $TextLimit $MaxTreeNodes $MaxTreeDepth } else { @{ records = @(); lines = @(); truncated = @() } }
+    $image = if ($IncludeScreenshot) { Capture-WindowPngBase64 $bounds $hwnd } else { $null }
+    $focus = if ($IncludeAX) { Get-FocusedSummary $process.Id $TextLimit } else { $null }
+    $selection = if ($IncludeAX) { Get-SelectedText $process.Id $TextLimit } else { $null }
     [pscustomobject]@{
         app = [pscustomobject]@{
             name = $process.ProcessName
             bundleIdentifier = $process.ProcessName
             pid = [int]$process.Id
         }
+        windowHandle = [long]$hwnd
         windowTitle = Limit-Text $process.MainWindowTitle $TextLimit
         windowBounds = $bounds
-        screenshotPngBase64 = Capture-WindowPngBase64 $bounds $hwnd
+        screenshotPngBase64 = $image
         treeLines = @($rendered.lines)
-        focusedSummary = Get-FocusedSummary $process.Id $TextLimit
-        selectedText = Get-SelectedText $process.Id $TextLimit
+        focusedSummary = $focus
+        selectedText = $selection
         elements = @($rendered.records)
     }
 }
@@ -1179,30 +1375,20 @@ function Get-AllElements($root) {
 }
 
 function Find-Element($process, $record) {
-    if ($null -eq $record) {
-        return $null
-    }
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
+    if ($null -eq $record) { return $null }
+    foreach ($element in (Get-AllElements (Get-MainElement $process))) {
         try {
-            if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
+            if (-not (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId))) { continue }
+            $current = $element.Current
+            if ($current.ControlType.ProgrammaticName -ceq $record.controlType -and
+                ([string]$current.AutomationId) -ceq ([string]$record.automationId) -and
+                -not [string]::IsNullOrEmpty($record.nameDigest) -and
+                (Get-NameDigest $current.Name) -ceq $record.nameDigest) {
                 return $element
             }
-        } catch {
-        }
+        } catch { }
     }
-    foreach ($element in (Get-AllElements $root)) {
-        try {
-            $sameAutomationId = -not [string]::IsNullOrWhiteSpace($record.automationId) -and $element.Current.AutomationId -eq $record.automationId
-            $sameName = -not [string]::IsNullOrWhiteSpace($record.name) -and $element.Current.Name -eq $record.name
-            $sameType = $element.Current.ControlType.ProgrammaticName -eq $record.controlType
-            if (($sameAutomationId -or $sameName) -and $sameType) {
-                return $element
-            }
-        } catch {
-        }
-    }
-    return $null
+    throw "Element $($record.index) changed or is no longer available. Run get_app_state again before acting; nothing was sent."
 }
 
 function Invoke-VerifiedSetValue($pattern, [string]$value) {
@@ -1571,17 +1757,23 @@ try {
     if ($operation.tool -eq "list_apps") {
         $response = [pscustomobject]@{ ok = $true; text = (List-Apps) }
     } elseif ($operation.tool -eq "get_app_state") {
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app (Resolve-TextLimit $operation.text_limit) ([int]$operation.max_tree_nodes) ([int]$operation.max_tree_depth)) }
+        $observe = Resolve-ObservationOptions $operation
+        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app (Resolve-TextLimit $operation.text_limit) ([int]$operation.max_tree_nodes) ([int]$operation.max_tree_depth) $observe.include_ax $observe.include_screenshot) }
     } else {
         $process = Resolve-App $operation.app
-        $hwnd = [IntPtr]$process.MainWindowHandle
+        $hwnd = Resolve-OperationWindow $process $operation
+        $script:TargetHwnd = $hwnd
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 
         Invoke-Operation $process $operation $element
 
         Start-Sleep -Milliseconds 120
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        try {
+            $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        } catch {
+            $response = [pscustomobject]@{ ok = $true; observationError = $_.Exception.Message }
+        }
     }
 } catch {
     $message = $_.Exception.Message

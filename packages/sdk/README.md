@@ -3,7 +3,7 @@
 TypeScript client for the Cherry Computer Use native runtime, for Node 24+ and Electron's main process.
 
 **Status: private native app control sessions are implemented on all three platforms.**
-macOS and Windows adapt their existing engines for all seven actions. Windows uses
+macOS adapts its existing engine for eight actions, including `selectText`; Windows supports the original seven actions. Windows uses
 UI Automation and window-directed messages, including coordinate clicks; it never
 falls back to global input. Linux supports discovery, observation and semantic
 element actions: left click, secondary actions, `setValue`, and `typeText` into the
@@ -105,19 +105,60 @@ try {
 - `listAppSessions()`: query native control status (`active`, `stopping`, `stopped`) independently of queued desktop work.
 - `stopAppSession({ appSessionId })`: block new/queued work for that context, cancel its active request, and wait for native cleanup. It does not quit the app or close other contexts.
 - `getAppState({ appSessionId })`: obtain structured observations for an active app context. Observation defaults to `activation: 'never'`; unsupported constraints must be rejected by native code.
-- `act(action)`: the contract includes `click`, `performSecondaryAction`, `scroll`, `drag`, `typeText`, `pressKey`, or `setValue`. Only single left element clicks are connected in this slice. All actions reference an `appSessionId` and its `snapshotId`. Click takes either `elementId` or `x/y`; coordinates refer to returned screenshot pixels. `allowGlobalInput` defaults to `false` and is a native execution constraint, not proof of host authorization.
+- `act(action)`: the contract includes `click`, `performSecondaryAction`, `scroll`, `drag`, `typeText`, `pressKey`, `setValue`, or macOS `selectText`. Supported actions are reported per platform and element. All actions reference an `appSessionId` and its `snapshotId`. Click takes either `elementId` or `x/y`; coordinates refer to returned screenshot pixels. `allowGlobalInput` defaults to `false` and is a native execution constraint, not proof of host authorization.
 - `onClosed(listener)`: final cleanup status; returns an unsubscribe function. A late subscriber immediately receives the final event.
 - `close()`: idempotent; cancel pending requests, require the owning runtime's cleanup acknowledgement, and wait for its process to exit.
 
-`Snapshot.tree` and `Snapshot.screenshot` independently report `available` or `unavailable`. Available trees include elements and truncation reasons. Available screenshots contain `image.data: Uint8Array`, PNG MIME type and dimensions. Capture must identify one application window; ambiguous mappings return unavailable, with no whole-screen fallback. Element bounds are not exposed in this slice. Model-specific text/image blocks belong in the host adapter.
+`Snapshot.tree` and `Snapshot.screenshot` independently report `available` or `unavailable`. Available trees include elements and truncation reasons. Available screenshots contain `image.data: Uint8Array`, the actual PNG/JPEG/WebP MIME type and dimensions (Windows/Linux currently return PNG). Capture must identify one application window; ambiguous mappings return unavailable, with no whole-screen fallback. Element bounds are not exposed in this slice. Model-specific text/image blocks belong in the host adapter.
 
 Protocol v2 requires matching rebuilt SDK/runtime artifacts; restart a running host after updating local links. Old unscoped observation/action calls are rejected. The SDK validates that snapshots and stop acknowledgements belong to the requested app session.
 
 Stopping is irreversible once dispatched, including if the caller cancels the stop request. Repeating a stop is safe; explicitly reopening a stopped target creates a fresh ID. The host must retain the user's stop decision and prevent tools/scripts from automatically reopening the app or recreating the runtime. That Cherry host policy, Tray UI and per-app cursor feedback remain pending.
 
+## Targeted queries and task protection (unreleased)
+
+`query({ appSessionId, text?, role?, exact?, limit?, maxNodes?, windowId? })` is
+available on macOS. Provide text or role; defaults are 20 matches and 500 visited
+nodes, with maxima of 100 and 5000. Matches are in `result.snapshot.tree.elements`;
+use that snapshot's ID for the next action. `truncated`, `stopReason` and
+`visitedNodes` distinguish an exhausted budget from a complete search. A new query
+or observation invalidates earlier element references. Query does not capture an image.
+
+`act` and `perform` accept macOS `selectText`, with `elementId`, `text`, optional
+`prefix` / `suffix`, and `selection: 'text' | 'cursor_before' | 'cursor_after'`.
+Native code verifies the resulting selection and rejects ambiguous or secure fields.
+
+All platforms accept `includeAX` and `includeScreenshot` on `getAppState`. Both
+default to true; at least one must remain true. Skipped channels are not collected
+and report `OBSERVATION_NOT_REQUESTED` or `CAPTURE_NOT_REQUESTED`. Screenshot-only
+observations cannot reuse old element references. macOS additionally accepts
+`screenshot: { format: 'png' | 'jpeg' | 'webp', maxDimension?, jpegQuality? }`;
+WebP is lossless and `jpegQuality` affects only JPEG. SDK observations use explicit
+options rather than the CLI's user configuration file.
+
+macOS can target a native `windowId`. Keyboard actions accept
+`keyMethod: 'auto' | 'skyKey'`: auto preserves the existing CDP-first routing;
+skyKey explicitly targets background windows. Delivery failures never silently
+switch to global input or replay an uncertain action.
+
+`ComputerUse.start({ taskOptions: { virtualDisplay: true, lockedUse: true } })`
+enables either optional resource for this task; both default to false. With virtual
+displays enabled, `getAppState({ appSessionId, windowPlacement: 'agentDisplay' })`
+parks the target window; `restore` returns it and `keep` leaves it in place.
+Stopping an app restores its windows. Closing the task releases all its resources
+and waits for protection cleanup. A failed restoration or unconfirmed relock is
+`CLEANUP_FAILED`, never a successful close.
+
+Locked Use also requires explicitly installed and validated, Developer ID-signed Cherry
+system components. Starting a task does not install them. Windows/Linux reject these
+macOS-only options with `UNSUPPORTED_CAPABILITY`. Query `getCapabilities()` first.
+The optional `configureTask` extension keeps protocol version 2; callers without
+`taskOptions` do not send it. Use matching SDK/native artifacts for new features.
+See [component packaging, configuration and validation boundaries](../../docs/design-docs/upstream-desktop-capabilities.md).
+
 ## Cancellation and failures
 
-Calls accept `signal` and `timeoutMs` (default 30 seconds, except `requestPermissions`, which allows 5 minutes for human interaction). An explicit `timeoutMs` overrides either default. Cancellation sends `$/cancelRequest` and waits up to two additional seconds for the original request's terminal response. A confirmed completed action can win a cancellation race and is returned as completed. If cancellation cannot be confirmed, the client becomes unusable and starts closing.
+Calls accept `signal` and `timeoutMs` (default 30 seconds, except `requestPermissions`, which allows 5 minutes for human interaction). An explicit `timeoutMs` overrides either default. Cancellation sends `$/cancelRequest` and waits up to two additional seconds for the original request's terminal response, or 15 seconds when Locked Use or a virtual display is explicitly enabled for the task. A confirmed completed action can win a cancellation race and is returned as completed. If cancellation cannot be confirmed, the client becomes unusable and starts closing.
 
 `ComputerUseError` includes `code`, `effect` (`none`, `possible`, `applied`) and, when relevant, `cleanup`. An action that completed but whose subsequent observation failed returns `status: 'completed'` with `observation.status: 'unavailable'`. Neither that result nor an uncertain error causes automatic retry. Unconfirmed app cleanup returns `CLEANUP_FAILED` with `cleanup: unconfirmed`, disables further calls and closes the connection. A native action with an uncertain outcome disables further desktop operations in that session; close it before starting a new task.
 

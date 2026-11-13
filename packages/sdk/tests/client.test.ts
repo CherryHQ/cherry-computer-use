@@ -541,3 +541,38 @@ test('app icons use an independent validated request without opening app control
   await assert.rejects(client.getAppIcon({ identity: '' }), hasCode('INVALID_ARGUMENT'))
   await assert.rejects(client.getAppIcon({ identity: 'oversized' }), hasCode('PROTOCOL_ERROR'))
 })
+
+
+test('query carries an owned snapshot and invalidates the preceding action reference', async (t) => {
+  const { client } = await start(t)
+  const old = await client.getAppState({ appSessionId: 'control' })
+  const result = await client.query({ appSessionId: 'control', text: '按钮', exact: true, maxNodes: 20 })
+  assert.equal(result.snapshot.appSessionId, 'control')
+  assert.equal(result.snapshot.tree.status, 'available')
+  assert.equal(result.snapshot.screenshot.status, 'unavailable')
+  assert.equal(result.stopReason, 'complete')
+  await assert.rejects(client.perform({ type: 'click', appSessionId: 'control', snapshotId: old.id, elementId: 'button' }), hasCode('STALE_SNAPSHOT'))
+  await client.perform({ type: 'click', appSessionId: 'control', snapshotId: result.snapshot.id, elementId: 'button' })
+})
+
+test('query rejects a response owned by another app session', async (t) => {
+  const { client } = await start(t, 'foreign-snapshot')
+  await assert.rejects(client.query({ appSessionId: 'control', text: '按钮' }), hasCode('PROTOCOL_ERROR'))
+})
+
+test('screenshot-only results preserve missing tree and actual image encoding', async (t) => {
+  const { client } = await start(t)
+  const state = await client.getAppState({ appSessionId: 'control', includeAX: false, screenshot: { format: 'jpeg', jpegQuality: 0.6 } })
+  assert.equal(state.tree.status, 'unavailable')
+  assert.equal(state.screenshot.status, 'available')
+  if (state.screenshot.status === 'available') {
+    assert.equal(state.screenshot.image.mimeType, 'image/jpeg')
+    assert.deepEqual([...state.screenshot.image.data], [255, 216, 255, 217])
+  }
+})
+
+test('unsupported task resources fail startup and release the private process', async (t) => {
+  const { connection, sessionId, child } = launch(t)
+  await assert.rejects(connectClient(connection, sessionId, {}, { lockedUse: true }), hasCode('UNSUPPORTED_CAPABILITY'))
+  assert.equal(child.exitCode, 0)
+})

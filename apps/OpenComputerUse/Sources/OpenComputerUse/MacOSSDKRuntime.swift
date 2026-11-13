@@ -29,7 +29,7 @@ enum MacOSSDKRuntime {
                     connectedToOwner = true
                     let transport = try SDKTransport(input: socket, output: socket)
                     try transport.write(SDKMessage(["sessionId": sessionID, "pid": getpid()]))
-                    try SDKSession(sessionID: sessionID, version: resolvedOpenComputerUseVersion(), transport: transport, permissionRequest: SDKPermissionOnboarding.request, desktop: MacOSSDKDesktop()).run()
+                    try SDKSession(sessionID: sessionID, version: resolvedOpenComputerUseVersion(), transport: transport, permissionRequest: SDKPermissionOnboarding.request, desktop: MacOSSDKDesktop(protection: SDKLockedUseProtection(clientSocket: socket.fileDescriptor))).run()
                 } catch {
                     code = EXIT_FAILURE
                     FileHandle.standardError.write(Data("SDK agent failed: \(error)\n".utf8))
@@ -134,7 +134,7 @@ enum MacOSSDKRuntime {
             do {
                 while let request = owner.next() { try agent.write(request) }
                 _ = Darwin.shutdown(socket.fileDescriptor, SHUT_WR)
-                if !owner.waitForExit(timeout: 1.5) { owner.terminateIfRunning(); agent.stop() }
+                if !owner.waitForExit(timeout: 12) { owner.terminateIfRunning(); agent.stop() }
             } catch {
                 owner.disconnect(failed: true)
                 agent.stop()

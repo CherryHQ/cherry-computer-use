@@ -38,7 +38,6 @@ type Node struct {
 	Text       string
 	TextLength int32
 	Value      *float64
-	children   []Ref
 }
 
 func (n Node) Supports(iface string) bool {
@@ -46,6 +45,7 @@ func (n Node) Supports(iface string) bool {
 }
 
 type TreeOptions struct {
+	WithoutAX          bool
 	MaxNodes, MaxDepth int
 	// TextReadLimit caps characters read from Text interfaces; negative reads everything.
 	TextReadLimit int
@@ -59,7 +59,7 @@ type Observation struct {
 	DepthTruncated bool
 }
 
-// Observe walks the main window depth-first so element indices follow document order.
+// Observe reserves the bounded tree for visible controls, then emits document order.
 func (e *Engine) Observe(ctx context.Context, app App, options TreeOptions) (Observation, error) {
 	windows, err := e.Windows(ctx, app)
 	if err != nil {
@@ -70,48 +70,49 @@ func (e *Engine) Observe(ctx context.Context, app App, options TreeOptions) (Obs
 		return Observation{}, err
 	}
 	observation := Observation{App: app, Window: window, Nodes: []Node{}}
-	visited := map[Ref]bool{}
-	var visit func(ref Ref, parent, depth int, path []int) error
-	visit = func(ref Ref, parent, depth int, path []int) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if visited[ref] {
-			return nil
-		}
-		if len(observation.Nodes) >= options.MaxNodes {
-			observation.NodesTruncated = true
-			return nil
-		}
-		node, ok := e.readNode(ctx, ref, options)
-		if !ok {
-			if parent < 0 {
-				return fail("TARGET_UNAVAILABLE", "Application window is no longer available")
-			}
-			return nil
-		}
-		visited[ref] = true
-		node.Path, node.Parent, node.Depth = slices.Clone(path), parent, depth
-		index := len(observation.Nodes)
-		observation.Nodes = append(observation.Nodes, node)
-		children := node.children
-		observation.Nodes[index].children = nil
-		if depth >= options.MaxDepth {
-			observation.DepthTruncated = observation.DepthTruncated || len(children) > 0
-			return nil
-		}
-		for i, child := range children {
-			if err := visit(child, index, depth+1, append(path, i)); err != nil {
-				return err
-			}
-		}
-		return nil
+	if options.WithoutAX {
+		return observation, nil
 	}
-	if err := visit(window.Ref, -1, 0, []int{window.Index}); err != nil {
+	plan, err := planTree(window.Ref, window.Index, options, func(ref Ref) (treeTraits, error) {
+		if ctx.Err() != nil {
+			return treeTraits{}, ctx.Err()
+		}
+		var role string
+		var states States
+		var roleErr, stateErr error
+		parallel(func() { role, roleErr = e.role(ctx, ref) }, func() { states, stateErr = e.states(ctx, ref) })
+		if roleErr != nil {
+			return treeTraits{}, roleErr
+		}
+		return treeTraits{
+			control:    slices.Contains([]string{"push button", "check box", "radio button", "text", "entry", "password text", "combo box", "slider", "spin button", "link"}, role),
+			collection: slices.Contains([]string{"list", "table", "tree", "tree table"}, role),
+			hidden:     stateErr == nil && !states.Has(StateShowing),
+		}, nil
+	}, func(ref Ref) ([]Ref, error) { return e.children(ctx, ref) })
+	if err != nil {
+		return Observation{}, err
+	}
+	observation.NodesTruncated, observation.DepthTruncated = plan.nodesTruncated, plan.depthTruncated
+	indexes := map[Ref]int{}
+	for _, work := range plan.nodes {
 		if ctx.Err() != nil {
 			return Observation{}, fail("CANCELLED", "Observation cancelled")
 		}
-		return Observation{}, err
+		node, ok := e.readNode(ctx, work.ref, options)
+		if !ok {
+			return Observation{}, fail("TARGET_UNAVAILABLE", "Accessibility tree changed while reading")
+		}
+		node.Path, node.Depth, node.Parent = work.path, work.depth, -1
+		if work.ref != window.Ref {
+			parent, exists := indexes[work.parent]
+			if !exists {
+				return Observation{}, fail("TARGET_UNAVAILABLE", "Accessibility parent changed while reading")
+			}
+			node.Parent = parent
+		}
+		indexes[work.ref] = len(observation.Nodes)
+		observation.Nodes = append(observation.Nodes, node)
 	}
 	return observation, nil
 }
@@ -128,7 +129,6 @@ func (e *Engine) readNode(ctx context.Context, ref Ref, options TreeOptions) (No
 		func() { node.States, _ = e.states(ctx, ref) },
 		func() { _ = e.property(ctx, ref, "Accessible", "AccessibleId", &node.AccessibleID) },
 		func() { node.Actions = e.actions(ctx, ref) },
-		func() { node.children, _ = e.children(ctx, ref) },
 	)
 	if nameErr != nil || roleErr != nil {
 		return node, false
@@ -138,9 +138,15 @@ func (e *Engine) readNode(ctx context.Context, ref Ref, options TreeOptions) (No
 		reads = append(reads, func() { node.Extents = e.extents(ctx, ref) })
 	}
 	if node.Supports("Text") {
-		reads = append(reads, func() { node.Text, node.TextLength = e.readText(ctx, ref, options.TextReadLimit) })
+		reads = append(reads, func() {
+			if node.IsPassword() {
+				_ = e.property(ctx, ref, "Text", "CharacterCount", &node.TextLength)
+			} else {
+				node.Text, node.TextLength = e.readText(ctx, ref, options.TextReadLimit)
+			}
+		})
 	}
-	if node.Supports("Value") {
+	if node.Supports("Value") && !node.IsPassword() {
 		reads = append(reads, func() {
 			var value float64
 			if e.property(ctx, ref, "Value", "CurrentValue", &value) == nil {
@@ -202,20 +208,24 @@ func (e *Engine) readText(ctx context.Context, ref Ref, limit int) (string, int3
 
 var preferredClickActions = []string{"click", "press", "activate", "default.activate", "invoke", "select", "toggle", "open"}
 
+func (n Node) IsPassword() bool { return strings.EqualFold(strings.TrimSpace(n.Role), "password text") }
+
 // ClickAction picks the action that best means a primary click, if any.
 func ClickAction(actions []Action) (Action, bool) {
-	var fallback *Action
-	for i, action := range actions {
-		label := strings.ToLower(action.Label())
-		if slices.Contains(preferredClickActions, label) {
-			return action, true
-		}
-		if fallback == nil && (strings.Contains(label, "activate") || strings.Contains(label, "click") || strings.Contains(label, "press")) {
-			fallback = &actions[i]
+	// GTK entries expose activate for their default button. Prefer an actual click
+	// when both are present; activating a text entry can submit a form.
+	for _, name := range preferredClickActions {
+		for _, action := range actions {
+			if strings.EqualFold(action.Label(), name) {
+				return action, true
+			}
 		}
 	}
-	if fallback != nil {
-		return *fallback, true
+	for _, action := range actions {
+		label := strings.ToLower(action.Label())
+		if strings.Contains(label, "click") || strings.Contains(label, "press") || strings.Contains(label, "activate") {
+			return action, true
+		}
 	}
 	return Action{}, false
 }
@@ -274,7 +284,7 @@ func (e *Engine) Focused(ctx context.Context, window Window) ([]Node, error) {
 
 // Selection returns the first text selection of a node, if it has one.
 func (e *Engine) Selection(ctx context.Context, node Node, limit int) (string, bool) {
-	if !node.Supports("Text") {
+	if !node.Supports("Text") || node.IsPassword() {
 		return "", false
 	}
 	start, end, ok := e.selection(ctx, node.Ref)

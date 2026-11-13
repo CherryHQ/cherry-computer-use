@@ -17,12 +17,17 @@ on:
       - "protocol/**"
       - "packages/runtime-go/**"
       - "packages/OpenComputerUseKit/**"
+      - "packages/LockedUseNative/**"
+      - "packages/OpenComputerUseVirtualDisplayShim/**"
+      - "experiments/LockedUse/**"
+      - "scripts/*locked-use*.sh"
       - "apps/OpenComputerUse/**"
       - "apps/OpenComputerUseWindows/**"
       - "apps/OpenComputerUseLinux/**"
       - "experiments/LinuxNativeProbe/**"
       - "scripts/build-open-computer-use-*.sh"
       - "Package.swift"
+      - "Package.resolved"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/sdk-check.yml"
@@ -42,12 +47,17 @@ on:
       - "protocol/**"
       - "packages/runtime-go/**"
       - "packages/OpenComputerUseKit/**"
+      - "packages/LockedUseNative/**"
+      - "packages/OpenComputerUseVirtualDisplayShim/**"
+      - "experiments/LockedUse/**"
+      - "scripts/*locked-use*.sh"
       - "apps/OpenComputerUse/**"
       - "apps/OpenComputerUseWindows/**"
       - "apps/OpenComputerUseLinux/**"
       - "experiments/LinuxNativeProbe/**"
       - "scripts/build-open-computer-use-*.sh"
       - "Package.swift"
+      - "Package.resolved"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/sdk-check.yml"
@@ -99,7 +109,7 @@ jobs:
         working-directory: packages/runtime-go
       - if: runner.os == 'macOS'
         run: |
-          swift test --filter 'SDKSessionTests|PermissionOnboardingTests'
+          swift test
           OPEN_COMPUTER_USE_CODESIGN_MODE=adhoc ./scripts/build-open-computer-use-app.sh debug
       - if: runner.os == 'Linux'
         name: Linux application icon libraries
@@ -152,11 +162,12 @@ jobs:
           go test ./...
           go build -o ../../dist/native/open-computer-use.exe .
       - if: runner.os == 'Windows'
-        name: Windows value verification and capture geometry
+        name: Windows observation, input identity and value verification
         shell: pwsh
         run: |
           ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
           ./scripts/tests/windows-capture-bounds.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          ./scripts/tests/windows-observation.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
       - if: runner.os == 'Linux'
         name: Linux wlroots input and capture (isolated headless Sway)
         run: |

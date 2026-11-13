@@ -191,7 +191,7 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 	if limit, ok := observeTextLimit(options); ok {
 		readLimit = limit
 	}
-	native, err := d.engine.Observe(ctx, app, desktop.TreeOptions{MaxNodes: options.MaxTreeNodes, MaxDepth: options.MaxTreeDepth, TextReadLimit: readLimit})
+	native, err := d.engine.Observe(ctx, app, desktop.TreeOptions{WithoutAX: options.IncludeAX != nil && !*options.IncludeAX, MaxNodes: options.MaxTreeNodes, MaxDepth: options.MaxTreeDepth, TextReadLimit: readLimit})
 	if err == nil {
 		// The page channel is a property of the window, so it is resolved here rather than guessed from input.
 		d.resolveWebInput(target.Key, int(app.PID), native.Window.Title)
@@ -233,6 +233,9 @@ func (d *linuxDesktop) Observe(ctx context.Context, target sdkruntime.Target, op
 			element.Actions = append(element.Actions, "setValue")
 		}
 		tree.Elements = append(tree.Elements, element)
+	}
+	if options.IncludeAX != nil && !*options.IncludeAX {
+		tree = sdkruntime.Tree{Status: "unavailable", Reason: &sdkruntime.Reason{Code: "OBSERVATION_NOT_REQUESTED", Message: "Accessibility tree was not requested"}}
 	}
 	observation := sdkruntime.Observation{Window: sdkruntime.Window{Title: native.Window.Title}, Tree: tree, Native: native}
 	if options.IncludeScreenshot != nil && !*options.IncludeScreenshot {

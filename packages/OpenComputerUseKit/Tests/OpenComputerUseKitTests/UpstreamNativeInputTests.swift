@@ -4,6 +4,34 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class UpstreamNativeInputTests: XCTestCase {
+    func testSDKQuerySelectsAndReplacesNativeTextWithoutScreenshot() throws {
+        try requireLiveTests()
+        let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
+        defer { fixture.close() }
+        try fixture.configure(["reset": true])
+        let desktop = MacOSSDKDesktop()
+        defer { try? desktop.close() }
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: fixture.process.processIdentifier))
+        let app = RunningAppDescriptor(name: "CherryUpstreamFixture", bundleIdentifier: nil,
+            pid: fixture.process.processIdentifier, runningApplication: running)
+        let session = try desktop.openAppSession(appID: "text-fixture", app: app)
+        let sessionID = try XCTUnwrap(session["id"] as? String)
+        let result = try XCTUnwrap(try desktop.call("query", params: ["appSessionId": sessionID,
+            "text": "Document input", "exact": true], cancellation: SDKCancellation()) as? [String: Any])
+        let snapshot = try XCTUnwrap(result["snapshot"] as? [String: Any])
+        let tree = try XCTUnwrap(snapshot["tree"] as? [String: Any])
+        let matches = try XCTUnwrap(tree["elements"] as? [[String: Any]])
+        XCTAssertEqual(matches.count, 1)
+        let input = try XCTUnwrap(matches.first)
+        let snapshotID = try XCTUnwrap(snapshot["id"])
+        _ = try desktop.call("perform", params: ["type": "selectText", "appSessionId": sessionID,
+            "snapshotId": snapshotID, "elementId": try XCTUnwrap(input["id"]),
+            "text": "world", "prefix": "hello "], cancellation: SDKCancellation())
+        _ = try desktop.call("perform", params: ["type": "typeText", "appSessionId": sessionID,
+            "snapshotId": snapshotID, "text": "新🚀"], cancellation: SDKCancellation())
+        try fixture.wait { $0["view"] as? String == "hello 新🚀" }
+    }
+
     func testLiveFocusSelectionAndVerifiedWrites() throws {
         try requireLiveTests()
         let fixture = try NativeInputFixture(source: "MacOSTextInputFixture.swift", hasCommands: true)
@@ -45,6 +73,7 @@ final class UpstreamNativeInputTests: XCTestCase {
             let snapshot = try fixture.snapshot()
             let element = try XCTUnwrap(snapshot.focusedElement)
             let record = try XCTUnwrap(snapshot.elements.values.first { $0.element.map { CFEqual($0, element) } == true })
+            XCTAssertEqual(try ElementIdentity.read(element), record.identity, mode)
             if mode == "ignore" || mode == "trim" {
                 XCTAssertThrowsError(try service.performSetValue(on: snapshot, elementIndex: String(record.index), value: " padded "))
             } else {
@@ -66,7 +95,7 @@ final class UpstreamNativeInputTests: XCTestCase {
         let fixture = try NativeInputFixture(source: "MacOSHitTestFixture.swift", hasCommands: false)
         defer { fixture.close() }
         let service = ComputerUseService()
-        let snapshot = try fixture.snapshot()
+        let snapshot = try fixture.snapshotWithCoordinateFrame()
         try service.performClick(on: snapshot, elementIndex: nil, x: 500, y: 300, clickCount: 1, mouseButton: "left")
         let window = try XCTUnwrap(snapshot.elements.values.first { $0.role == "AXWindow" })
         try service.performClick(on: snapshot, elementIndex: String(window.index), x: nil, y: nil, clickCount: 1, mouseButton: "left")
@@ -155,5 +184,22 @@ private final class NativeInputFixture {
             for: RunningAppDescriptor(name: "CherryUpstreamFixture", bundleIdentifier: nil, pid: process.processIdentifier, runningApplication: app),
             recoveryPolicy: .readOnly, includeScreenshot: false
         )
+    }
+
+    // These tests exercise native hit testing without screen-recording access.
+    // Supply a synthetic 1:1 image frame, not evidence of a captured screenshot.
+    func snapshotWithCoordinateFrame() throws -> AppSnapshot {
+        let state = try snapshot()
+        let bounds = try XCTUnwrap(state.windowBounds)
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height), bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        return AppSnapshot(app: state.app, windowTitle: state.windowTitle, windowBounds: bounds,
+            targetWindowID: state.targetWindowID, targetWindowLayer: state.targetWindowLayer,
+            screenshotData: try XCTUnwrap(image.representation(using: .png, properties: [:])),
+            mode: state.mode, treeLines: state.treeLines, focusedSummary: state.focusedSummary,
+            focusedElement: state.focusedElement, selectedText: state.selectedText,
+            windowElement: state.windowElement, elements: state.elements)
     }
 }

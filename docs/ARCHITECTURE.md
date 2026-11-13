@@ -1,13 +1,13 @@
 # 架构总览
 
-这个仓库当前已经从模板收敛成一个本地 `computer-use` 项目。主线仍是 Swift 实现的 macOS automation MCP server，同时新增了实验性的 Windows 和 Linux runtime，用独立 Go 二进制暴露同一组 9 个 Computer Use tools。
+这个仓库当前已经从模板收敛成一个本地 `computer-use` 项目。主线仍是 Swift 实现的 macOS automation MCP server，同时新增了实验性的 Windows 和 Linux runtime，用独立 Go 二进制暴露原有 9 个 Computer Use tools；macOS 增加 `query` / `select_text`，共 11 个。
 
 正式产品身份为 **Cherry Computer Use**：macOS Bundle ID `com.cherryai.cherrystudio.computer-use`，开发版为 `.dev`。SDK 由 Changesets 管理版本，并随同版本六个平台后端包发布到 Cherry scope，CLI workspace 为 private，暂不公开发布，见 [发布指南](releases/RELEASE_GUIDE.md)。
 
 ## 当前目录结构
 
 - `packages/sdk` / `protocol`
-  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS/Windows 的七种动作复用现有引擎，Linux 与 CLI/MCP 共用原生 AT-SPI/X11 引擎，语义动作默认可用，其余动作需显式 `allowGlobalInput`，在 X11 以及 Wayland 的 Sway/Hyprland 上可用（其他 Wayland 合成器只有键盘）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS GUI 等待系统授权，生命周期已验证。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux Wayland 输入与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md) 的 `webcdp` 子包处理 Chromium/Electron 页面输入（CDP：`Input.insertText` / `Input.dispatchKeyEvent`），平台 driver 只提供 `(pid, 窗口标题)`；macOS 用 Swift 镜像同一契约（`WebCDPInput.swift`，`URLSessionWebSocketTask`）。快照的 `inputChannel` 字段报告该窗口实际使用的输入通道（`accessibility` 或 `page`），由 `InputChannelDriver` / `AppControl.webCDP` 在 observe 时填写。
+  TypeScript SDK 客户端和独立的版本化协议 schema。三端 `serve --stdio` 已实现生命周期、应用发现和结构化观察；macOS 的八种动作（新增 `selectText`）与 Windows 的七种动作复用现有引擎，Linux 与 CLI/MCP 共用原生 AT-SPI/X11 引擎，语义动作默认可用，其余动作需显式 `allowGlobalInput`，在 X11 以及 Wayland 的 Sway/Hyprland 上可用（其他 Wayland 合成器只有键盘）。Windows 11 ARM64 与 Linux X11 已通过真实 SDK GUI 测试；macOS 生命周期和独立 AppKit 查询/文本选择/输入已验证，SCK 截图仍待录屏授权。macOS 显式权限申请及 Cherry 本地权限入口已接通；六个平台 npm 包通过自动安装/启动矩阵验收；Linux Wayland 输入与完整平台验收尚未完成。使用和边界见 [SDK README](../packages/sdk/README.md)。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md)，macOS 使用独立 Swift session 与任务私有 app agent；现有 CLI/MCP 路径保持独立。Windows/Linux 共用 [runtime-go](../packages/runtime-go/README.md) 的 `webcdp` 子包处理 Chromium/Electron 页面输入（CDP：`Input.insertText` / `Input.dispatchKeyEvent`），平台 driver 只提供 `(pid, 窗口标题)`；macOS 用 Swift 镜像同一契约（`WebCDPInput.swift`，`URLSessionWebSocketTask`）。快照的 `inputChannel` 字段报告该窗口实际使用的输入通道（`accessibility` 或 `page`），由 `InputChannelDriver` / `AppControl.webCDP` 在 observe 时填写。
   协议 v2 已实现任务内每应用控制上下文、状态查询与原生停止；观察/动作必须绑定应用会话。Cherry 控制归属、用户停止状态、Tray 与软件光标尚未接入；资源归属及验收顺序见 [runtime 设计](design-docs/computer-use-runtime.md)。
 - `experiments/LinuxNativeProbe/`
   Go 直接接入 AT-SPI D-Bus/X11 的隔离原型，已在无 Python 的 Linux 容器内完成 GTK 计数按钮操作与窗口截图；独立 probe 保留实验边界，同一容器另运行已接入的 Linux SDK 桌面测试；不证明 Wayland 支持。复现步骤见 [实验说明](../experiments/LinuxNativeProbe/README.md)。
@@ -16,7 +16,7 @@
 - `apps/OpenComputerUseFixture`
   本地 GUI fixture app，用来承载低风险、可预测的点击/输入/滚动/拖拽验证路径。
 - `apps/OpenComputerUseSmokeSuite`
-  端到端 smoke runner，会拉起 fixture 和 MCP server，并通过 JSON-RPC 真实调用 9 个 tools；同时也支持单独的 visual cursor idle smoke，用跨进程 observation file 断言等待下一次 move 时是 anchored tip + tiny rotate wobble，而不是横向漂移。
+  端到端 smoke runner，会拉起 fixture 和 MCP server，并通过 JSON-RPC 检查 11 个 tools 的注册，执行原有 9 个工具和 `select_text` 的 fixture 回归；同时也支持单独的 visual cursor idle smoke，用跨进程 observation file 断言等待下一次 move 时是 anchored tip + tiny rotate wobble，而不是横向漂移。
 - `apps/OpenComputerUseWindows`
   实验性 Windows runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 PowerShell UI Automation bridge，构建产物是 `open-computer-use.exe`，并随已有 npm 包的 `dist/windows/<arch>/` bundled artifacts 分发。
   SDK 的 `sdk.ps1` 复用 `runtime.ps1` 的树记录和 `Invoke-Operation` 动作分发，仅保留会话目标校验、窗口截图和错误协议；不再维护只支持点击的平行实现。共享 Go 层通过可选 `ActionDriver` 接入动作；Linux 的全局输入受 `allowGlobalInput` 约束。SDK 输入固定 UTF-8，解析失败返回无副作用错误；未知执行结果仍禁止后续桌面操作。
@@ -30,6 +30,10 @@
   - 键鼠输入模拟
   - software cursor overlay
   - fixture test bridge
+- `packages/LockedUseNative` / `experiments/LockedUse`
+  可选锁屏保护的原生签名/身份校验、Broker、Guardian、installer 与认证插件源码；由 Cherry app 构建脚本捆绑，用户另行安装和验证。
+- `packages/OpenComputerUseVirtualDisplayShim`
+  macOS 虚拟屏桥接；任务显式启用，应用会话停止时恢复所属窗口。
 - `experiments/CursorMotion`
   独立的 Swift cursor motion lab，用于试验 `Bezier + arc + spring` 参数模型、调参 UI 和独立渲染，不直接耦合主 MCP runtime。
 - `experiments/StandaloneCursor`
@@ -70,10 +74,10 @@
 
 ### 3. Tool Service 层
 
-- `ComputerUseService` 负责把 Computer Use tool 请求映射到本地能力，`ComputerUseToolDispatcher` 则把 9 个 tool 的参数解析与 service 方法分发收敛成 MCP server 和 `open-computer-use call` 共用的一层。
+- `ComputerUseService` 负责把 Computer Use tool 请求映射到本地能力，`ComputerUseToolDispatcher` 则把 11 个 tool 的参数解析与 service 方法分发收敛成 MCP server 和 `open-computer-use call` 共用的一层。
 - `list_apps` 通过 Spotlight metadata query 拉取标准 application 目录里的 app bundle，并读取 `kMDItemUseCount` / `kMDItemLastUsedDate_Ranking` 这类系统元数据；再与 `NSWorkspace` 的运行态 app 合并，输出“当前运行中 + 近 14 天用过”的视图。
-- `get_app_state` 优先走真实 AX / 窗口截图；真实 app 必须同时有未最小化的 `AXWindow` 和可匹配的 on-screen `CGWindow`。如果目标 app 只是隐藏或暂时没有 on-screen window，会先 best-effort unhide / activate / `open -b` / `AXRaise` 并短暂重试，以贴近官方 `computer-use` 会把 Lark / Electron 窗口拉回再采集的行为；恢复后仍无法匹配时返回官方风格的 `Apple event error -10005: cgWindowNotFound`，不再把 application 根节点或无截图窗口伪装成可操作状态。当目标是仓库内 fixture app 时，回退到 fixture 导出的合成状态。真实 AX tree 默认在 macOS、Linux、Windows 上最多渲染 1200 个节点、64 层深度；显式 `get_app_state` / `snapshot` 可通过 `max_tree_nodes` / `max_tree_depth` 覆盖预算，action tools 的刷新结果仍使用默认预算。snapshot 文本默认截断到 500 字符；显式 `get_app_state` / `snapshot` 可通过 `text_limit` 正整数或 `"max"` 覆盖，action tools 的刷新结果仍使用 500 字符默认值。对 Electron/WebView 这类深层 UI 会压缩空 `AXGroup` / `AXUnknown` wrapper、过滤 `AXScrollToVisible` 噪音和空字符串属性，避免 action-critical 的输入框被无语义容器挤出节点预算；但通用节点中的 `AXPress` / `AXConfirm` / `AXOpen` 子节点会形成文本摘要边界，避免多个可点击选项被合并成一个 container。这类动作节点如果 frame 有效、尺寸紧凑且不包含带 URL 的 `AXLink` 后代，会保留为带窗口相对 `Frame` 的 `button`，并用短文本后代作为按钮摘要，让 icon-only 和文字 Web 控件都能获得可区分的 `element_index`；包含带 URL 的 `AXLink` 后代时保留通用 wrapper 和链接子节点，避免导航链接被摘要吞掉。对原生 open panel / Finder column view 这类把内容放在 `AXContents` / `AXVisibleChildren` 里的控件，也会把可见文件项纳入元素树。
-- MCP `tools/list` 的 description / input schema 当前按官方 `computer-use` 的 9 个 tools 文案和参数面收敛，尽量减少 host 侧提示词和 tool surface 偏差。
+- `get_app_state` 分别按 `include_ax` / `include_screenshot` 采集控件树与截图，至少选择一个通道。macOS 支持明确窗口、focused sheet、被遮挡及其他 Space 的窗口，窗口身份与截图必须对应；CLI 的激活恢复和 SDK 默认不激活约束分别保留。节点预算优先可见操作控件，结果恢复文档顺序。fixture 仍仅走测试 bridge；详细契约见[新增桌面能力](design-docs/upstream-desktop-capabilities.md)。
+- MCP `tools/list` 在原有 9 个 tools 上增加 macOS `query` / `select_text`；三端支持按需观察，平台专属选项拒绝静默降级。
 - `open-computer-use call <tool> --args '{...}'` 会直接输出 MCP-style JSON result；`open-computer-use call --calls '[...]'` / `--calls-file <path>` 会在同一进程里顺序执行 JSON 数组里的 tool calls，并复用同一个 `ComputerUseService` 内存态，因此 `get_app_state` 之后的 action tool 可以继续使用同一轮 snapshot 的 `element_index`。序列执行默认会在成功的相邻操作之间 sleep 1 秒，也可以用 `--sleep <seconds>` 覆盖；遇到 `isError=true` 的 tool result 后停止。
 - 对真实 app 的 `get_app_state` / action tool 入口，当前只保留一层密码管理器 bundle denylist：bundle-id 直传时直接返回 safety denial；名称匹配时默认不解析到这些 app。终端、Chrome / Atlas 和系统组件不再属于内置阻止目标。
 - 普通 app 的 element frame 当前按“窗口左上角为原点”的 window-relative 坐标输出，便于后续把 `element_index` 和截图坐标统一到同一套参考系。
@@ -144,10 +148,10 @@
 
 ## 关键边界
 
-- 开源版当前不复刻官方闭源实现里的 caller signing、私有 IPC、完整 overlay choreography 和 plugin 自安装逻辑。
+- 普通 CLI/MCP 仍提供本地接口；可选 Locked Use 系统组件独立校验 Cherry 签名、调用方与租约，使用特权 Broker、Guardian 和认证插件。SDK 必须显式启用任务保护，普通调用不安装组件；尚不具备宿主产品完整的 session approval 界面。
 - 因为官方 `SkyComputerUseClient` 带有宿主侧 launch constraints，普通 stdio MCP client 在本机上可能被系统直接杀掉；如果要探测官方 bundled `computer-use`，`scripts/computer-use-cli` 的 app-server 模式现在只适合做工具清单和协议面观察。官方 `1.0.755` 的真实 tool call 还会经过 service-side sender authorization / active IPC client 追踪，外部 raw helper 即使走已签名 Codex binary，也可能返回 `Sender process is not authenticated`；需要真实使用官方工具时应走正常 Codex agent/tool 调用链，开源版则继续提供可直连的 `open-computer-use` MCP server。
 - 当前权限引导已经具备可运行 app、深链、拖拽辅助，以及一版更接近官方的 accessory panel 入场动画和返回 affordance；点击链路也已经补上独立 visual cursor、官方 asset fallback 和相对目标 window 的排序逻辑，并且在 overlay 可见期间会持续重申“排在目标 window 之上”，避免用户手动激活目标 app 后 cursor 被目标窗口重新盖住；但整体还没有完全复刻官方那套嵌入式 choreography / host 集成 / session approval 体验。
-- screenshot 当前通过 `ScreenCaptureKit` 捕获目标窗口，并以 MCP `image` content block 的 base64 PNG 返回，不再把普通 app 截图落盘到仓库或临时目录；编码前会按最大尺寸和目标字节数自适应缩小，避免复杂页面的大 PNG 触发 host 侧 MCP result 降级，同时 coordinate tools 继续按实际返回的 screenshot pixel 尺寸映射坐标；单次 ScreenCaptureKit capture 会设置超时，超时后省略 image block 而不是卡住整个 `get_app_state`。采集尺寸与输入映射统一使用 CG window bounds，拒绝不匹配的图像比例；AX/窗口的非有限、负尺寸或溢出几何不参与坐标运算，文本渲染用 `?` 表示不可用坐标。
+- macOS screenshot 通过 `ScreenCaptureKit` 捕获已校验归属的目标窗口，支持 PNG/JPEG/无损 WebP、尺寸与 JPEG 质量；返回实际 MIME，不落盘。CLI 读取 Cherry 独立配置，SDK 使用调用参数。截图超时返回不可用；输入按实际图像像素与 CG window bounds 映射，拒绝无效几何和不匹配窗口。Windows/Linux 保留 PNG。
 - 会话状态现在是进程内内存态，保存每个 app 最近一次 snapshot 和 element index 映射。
 
 ## 主要验证路径
@@ -156,7 +160,7 @@
 - 独立 AppKit 输入回归：`OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS=1 OPEN_COMPUTER_USE_VISUAL_CURSOR=0 swift test --filter UpstreamNativeInputTests`（需辅助功能权限，不需要录屏权限；只操作测试进程的窗口）。
 - standalone cursor 构建：`swift build --product StandaloneCursor`
 - cursor lab 构建：`swift build --product CursorMotion`
-- 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`（标准 9-tool smoke + visual cursor idle smoke；脚本默认以 headless 模式启动内部 fixture，避免在用户桌面弹出测试窗口）
+- 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`（11-tool 注册、原有工具与 `select_text` 的 headless fixture 回归、visual cursor idle；真实 AX query 另有定向测试）。
 - app 打包：`./scripts/build-open-computer-use-app.sh debug`
 - 权限 onboarding 端到端回归：`./scripts/run-permission-onboarding-e2e.sh`（需要当前 macOS 对被测 `open-computer-use` 已授予 Accessibility 与 Screen Recording；默认禁用 app-agent proxy 来测试当前 CLI 运行态，可用 `OPEN_COMPUTER_USE_E2E_CLI=/path/to/open-computer-use` 指定被测 CLI，或用 `OPEN_COMPUTER_USE_E2E_DISABLE_APP_AGENT_PROXY=0` 显式覆盖默认代理行为）
 - npm staging：`node ./scripts/npm/build-packages.mjs`
@@ -175,4 +179,4 @@
 
 ## 上游同步边界
 
-当前采用必要修复的选择性移植，未完整合并 upstream；来源、判断及待适配功能见 [上游同步评估](references/upstream-reconciliation-20261109.md)。
+当前已按用户确认接入上游桌面能力，保留 Cherry 的 SDK、Linux/CDP 和发布体系；不是整仓 upstream merge。来源与实现边界见[新增桌面能力](design-docs/upstream-desktop-capabilities.md)，此前判断保留在[上游同步评估](references/upstream-reconciliation-20261109.md)与[能力复评](references/upstream-feature-adoption-20261113.md)。

@@ -25,6 +25,7 @@ const (
 
 // snapshotOptions are the get_app_state budgets; textLimit < 0 means "max".
 type snapshotOptions struct {
+	omitAX, omitScreenshot                bool
 	textLimit, maxTreeNodes, maxTreeDepth int
 }
 
@@ -59,7 +60,20 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		if err != nil {
 			return textResult(err.Error(), true)
 		}
-		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth)
+		includeAX, includeScreenshot := true, true
+		for key, target := range map[string]*bool{"include_ax": &includeAX, "include_screenshot": &includeScreenshot} {
+			if value, present := args[key]; present {
+				flag, ok := value.(bool)
+				if !ok {
+					return textResult(key+" must be a boolean", true)
+				}
+				*target = flag
+			}
+		}
+		if !includeAX && !includeScreenshot {
+			return textResult("At least one observation channel must be requested", true)
+		}
+		return s.getAppState(requiredString(args, "app"), textLimit, maxTreeNodes, maxTreeDepth, includeAX, includeScreenshot)
 	case "click":
 		clickMethod, err := parseClickMethod(optionalString(args, "click_method"))
 		if err != nil {
@@ -159,11 +173,14 @@ func (s *service) listApps() toolCallResult {
 	return textResult(strings.Join(lines, "\n"), false)
 }
 
-func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, maxTreeDepth *int) toolCallResult {
+func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, maxTreeDepth *int, channels ...bool) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
 	}
-	options := snapshotOptions{defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth}
+	options := snapshotOptions{textLimit: defaultTextLimit, maxTreeNodes: defaultMaxTreeNodes, maxTreeDepth: defaultMaxTreeDepth}
+	if len(channels) == 2 {
+		options.omitAX, options.omitScreenshot = !channels[0], !channels[1]
+	}
 	if textLimit != nil {
 		options.textLimit = textLimit.count
 		if textLimit.max {
@@ -193,19 +210,25 @@ func (s *service) getAppState(app string, textLimit *textLimit, maxTreeNodes, ma
 }
 
 func (s *service) observe(ctx context.Context, query string, app desktop.App, options snapshotOptions) (*appSnapshot, error) {
-	observation, err := s.engine.Observe(ctx, app, desktop.TreeOptions{MaxNodes: options.maxTreeNodes, MaxDepth: options.maxTreeDepth, TextReadLimit: options.textLimit})
+	observation, err := s.engine.Observe(ctx, app, desktop.TreeOptions{WithoutAX: options.omitAX, MaxNodes: options.maxTreeNodes, MaxDepth: options.maxTreeDepth, TextReadLimit: options.textLimit})
 	if err != nil {
 		return nil, err
 	}
 	snapshot := renderSnapshot(observation, options)
-	if focused, err := s.engine.Focused(ctx, observation.Window); err == nil && len(focused) > 0 {
-		snapshot.FocusedSummary = strings.TrimSpace(focused[0].Role + " " + limitText(focused[0].Name, options.textLimit))
-		if selection, ok := s.engine.Selection(ctx, focused[0], options.textLimit); ok {
-			snapshot.SelectedText = limitText(selection, options.textLimit)
+	if !options.omitAX {
+		if focused, err := s.engine.Focused(ctx, observation.Window); err == nil && len(focused) > 0 {
+			snapshot.FocusedSummary = strings.TrimSpace(focused[0].Role + " " + limitText(focused[0].Name, options.textLimit))
+			if selection, ok := s.engine.Selection(ctx, focused[0], options.textLimit); ok {
+				snapshot.SelectedText = limitText(selection, options.textLimit)
+			}
 		}
+	} else {
+		snapshot.TreeLines = []string{"Accessibility omitted; previous element indexes invalidated."}
 	}
-	if capture := s.engine.Capture(ctx, app.PID, observation.Window.Title); capture.Reason == nil {
-		snapshot.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(capture.PNG)
+	if !options.omitScreenshot {
+		if capture := s.engine.Capture(ctx, app.PID, observation.Window.Title); capture.Reason == nil {
+			snapshot.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(capture.PNG)
+		}
 	}
 	s.rememberSnapshot(query, snapshot)
 	return snapshot, nil
@@ -396,6 +419,9 @@ func (s *service) click(app, elementIndex string, x, y *float64, clickCount int,
 	if failure != nil {
 		return *failure
 	}
+	if elementIndex == "" && snapshot.options.omitScreenshot {
+		return textResult("Request a screenshot before coordinate actions", true)
+	}
 	var node desktop.Node
 	var record *elementRecord
 	if elementIndex != "" {
@@ -518,6 +544,9 @@ func (s *service) drag(app string, fromX, fromY, toX, toY *float64) toolCallResu
 	snapshot, failure := s.actionTarget(app)
 	if failure != nil {
 		return *failure
+	}
+	if snapshot.options.omitScreenshot {
+		return textResult("Request a screenshot before coordinate actions", true)
 	}
 	from, err := screenPoint(snapshot, nil, fromX, fromY)
 	if err != nil {

@@ -120,7 +120,7 @@ function Observe-SDK($target, $options) {
     $hwnd = [long]$script:TargetHwnd
     $root = Get-MainElement $process $hwnd
     $bounds = Get-WindowBounds $process $root $hwnd
-    $rendered = Render-Tree $root $bounds (Resolve-TextLimit $options.textLimit) $options.maxTreeNodes $options.maxTreeDepth
+    $rendered = if ($options.includeAX -eq $false) { @{ records = @(); truncated = @() } } else { Render-Tree $root $bounds (Resolve-TextLimit $options.textLimit) $options.maxTreeNodes $options.maxTreeDepth }
     $elements = @()
     $references = @{}
     foreach ($record in $rendered.records) {
@@ -132,7 +132,8 @@ function Observe-SDK($target, $options) {
         $references[$id] = $record
     }
     $capture = if ($options.includeScreenshot -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'CAPTURE_NOT_REQUESTED'; message = 'Screenshot was not requested' } } } else { Get-SDKCapture $process }
-    return @{ window = @{ id = 'native'; title = [OCUWin32]::WindowTextOf([IntPtr][long]$script:TargetHwnd) }; tree = @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) }; screenshot = $capture; target = (Get-SDKTarget $process $hwnd); bounds = $bounds; references = $references }
+    $tree = if ($options.includeAX -eq $false) { @{ status = 'unavailable'; reason = @{ code = 'OBSERVATION_NOT_REQUESTED'; message = 'Accessibility tree was not requested' } } else { @{ status = 'available'; elements = $elements; truncated = @($rendered.truncated) } }
+    return @{ window = @{ id = 'native'; title = [OCUWin32]::WindowTextOf([IntPtr][long]$script:TargetHwnd) }; tree = $tree; screenshot = $capture; target = (Get-SDKTarget $process $hwnd); bounds = $bounds; references = $references }
 }
 function Invoke-SDKAction($operation) {
     $process = Resolve-SDKTarget $operation.target
