@@ -2,6 +2,7 @@ export { ComputerUse } from './computer-use.js'
 export { ComputerUseError } from './errors.js'
 export type {
   ActionResult,
+  QueryResult,
   CallOptions,
   ClosedEvent,
   ComputerUseClient,
@@ -30,6 +31,9 @@ export type {
   ErrorCode,
   Failure,
   ObserveInput,
+  QueryInput,
+  CaptureOptions,
+  TaskOptions,
   Permission,
   PermissionRequest,
   PermissionStatus,

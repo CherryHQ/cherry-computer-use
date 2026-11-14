@@ -21,6 +21,7 @@ Environment:
   OPEN_COMPUTER_USE_CODESIGN_MODE=auto|identity|adhoc|none
   OPEN_COMPUTER_USE_CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)"
   OPEN_COMPUTER_USE_CODESIGN_KEYCHAIN=/path/to/signing.keychain-db
+  OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE=auto|0|1 (auto includes signed release components)
 EOF
 }
 
@@ -211,7 +212,9 @@ codesign_app_bundle() {
     return
   fi
 
-  local -a args=(--force --deep --sign "${identity}")
+  # Nested Locked Use components carry their own identifiers and hardened-runtime
+  # flags. Sign the outer bundle without rewriting those signatures.
+  local -a args=(--force --sign "${identity}")
 
   if [[ -n "${codesign_keychain}" && "${identity}" != "-" ]]; then
     args+=(--keychain "${codesign_keychain}")
@@ -317,6 +320,7 @@ mkdir -p "${iconset_dir}"
 "${iconset_build_script}" "${icon_master_png}" "${iconset_dir}"
 iconutil -c icns "${iconset_dir}" -o "${resources_dir}/${bundle_icon_name}"
 cp "${cursor_reference_source}" "${resources_dir}/official-software-cursor-window-252.png"
+cp "${repo_root}/LICENSE" "${repo_root}/THIRD_PARTY_NOTICES.md" "${resources_dir}/"
 
 cat > "${contents_dir}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -357,7 +361,42 @@ cat > "${contents_dir}/Info.plist" <<PLIST
 </plist>
 PLIST
 
+locked_use_requested="${OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE:-auto}"
+if [[ "$locked_use_requested" != auto && "$locked_use_requested" != 0 && "$locked_use_requested" != 1 ]]; then
+  echo 'OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE must be auto, 0 or 1' >&2
+  exit 1
+fi
+locked_use_identity="$(resolve_codesign_identity || true)"
+if [[ "$locked_use_requested" == auto ]]; then
+  locked_use_requested=0
+  if [[ "$configuration" == release && -n "$locked_use_identity" && "$locked_use_identity" != - ]]; then
+    locked_use_requested=1
+  fi
+fi
+if [[ "$locked_use_requested" == 1 ]]; then
+  if [[ -z "$locked_use_identity" || "$locked_use_identity" == - ]]; then
+    echo 'Locked Use requires an Apple signing identity; refusing an incomplete release.' >&2
+    exit 1
+  fi
+  scripts/build-locked-use-components.sh --configuration "$configuration" --arch "$arch_mode" --identity "$locked_use_identity"
+  locked_use_components="${repo_root}/.build/locked-use/components"
+  guardian_component="Cherry Guardian (Dev).app"
+  if [[ "${configuration}" == release ]]; then
+    locked_use_components="${repo_root}/.build/locked-use/components-release"
+    guardian_component="Cherry Guardian.app"
+  fi
+  if [[ "$arch_mode" != native ]]; then locked_use_components="$locked_use_components-$arch_mode"; fi
+  mkdir -p "${resources_dir}/LockedUse"
+  for component in OCULockService OCULockInstaller CherryLockAuth.bundle; do
+    ditto "${locked_use_components}/${component}" "${resources_dir}/LockedUse/${component}"
+  done
+  ditto "${locked_use_components}/${guardian_component}" "${resources_dir}/LockedUse/Cherry Guardian.app"
+fi
+
 plutil -lint "${contents_dir}/Info.plist" >/dev/null
 codesign_app_bundle "${app_root}"
+if [[ "$locked_use_requested" == 1 ]]; then
+  scripts/verify-locked-use-bundle.sh "$app_root"
+fi
 
 echo "Built ${app_root} (${arch_mode}, ${configuration})"

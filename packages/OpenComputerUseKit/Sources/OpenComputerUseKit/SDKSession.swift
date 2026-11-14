@@ -139,7 +139,7 @@ public final class SDKSession: @unchecked Sendable {
                     response = self.error(id, "INVALID_ARGUMENT", "Expected empty parameters")
                 } else if method == "getCapabilities" {
                     let available = self.desktop?.capabilities() ?? [:]
-                    let capabilities = ["accessibility", "screenshot", "click", "performSecondaryAction", "scroll", "drag", "typeText", "pressKey", "setValue"].map { name in
+                    let capabilities = ["accessibility", "screenshot", "click", "performSecondaryAction", "scroll", "drag", "typeText", "pressKey", "setValue", "query", "selectText", "screenshotFormats", "virtualDisplay", "lockedUse", "backgroundKeyboard"].map { name in
                         ["name": name, "availability": available[name] ?? ["status": "unsupported", "reason": ["code": "UNSUPPORTED_CAPABILITY", "message": "Capability is not connected to SDK protocol"]]] as [String: Any]
                     }
                     response = self.result(id, ["platform": "darwin", "capabilities": capabilities])
@@ -218,12 +218,12 @@ public final class SDKSession: @unchecked Sendable {
         }
         guard first else { return }
         transport.stopReading()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + (desktop?.cleanupTimeout ?? 1)) {
             self.finish(SDKProtocolError("CLEANUP_FAILED: request or output did not settle"))
         }
         execution.async {
             do {
-                guard self.controlRequests.wait(timeout: .now() + 1) == .success else {
+                guard self.controlRequests.wait(timeout: .now() + (self.desktop?.cleanupTimeout ?? 1)) == .success else {
                     throw SDKProtocolError("Application cleanup did not settle")
                 }
                 try self.desktop?.close()

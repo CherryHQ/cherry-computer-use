@@ -12,6 +12,10 @@ type Point struct {
 }
 
 type Action struct {
+	KeyMethod        string   `json:"keyMethod,omitempty"`
+	Prefix           string   `json:"prefix,omitempty"`
+	Suffix           string   `json:"suffix,omitempty"`
+	Selection        string   `json:"selection,omitempty"`
 	Type             string   `json:"type"`
 	AppSessionID     string   `json:"appSessionId"`
 	SnapshotID       string   `json:"snapshotId"`
@@ -74,11 +78,17 @@ func decodeAction(params json.RawMessage) (Action, error) {
 			}
 		}
 	case "typeText":
+		allowed = append(allowed, "keyMethod")
 		required = []string{"text"}
 		valid = a.Text != ""
 	case "pressKey":
+		allowed = append(allowed, "keyMethod")
 		required = []string{"key"}
 		valid = a.Key != ""
+	case "selectText":
+		required = []string{"elementId", "text"}
+		allowed = append(allowed, "prefix", "suffix", "selection")
+		valid = a.ElementID != "" && a.Text != "" && slices.Contains([]string{"", "text", "cursor_before", "cursor_after"}, a.Selection)
 	case "setValue":
 		required = []string{"elementId", "value"}
 		valid = a.ElementID != ""
@@ -96,6 +106,7 @@ func decodeAction(params json.RawMessage) (Action, error) {
 			valid = false
 		}
 	}
+	valid = valid && slices.Contains([]string{"", "auto", "skyKey"}, a.KeyMethod)
 	if !valid {
 		return a, Error("INVALID_ARGUMENT", "Invalid action parameters")
 	}

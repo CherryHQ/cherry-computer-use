@@ -37,8 +37,12 @@ public final class SDKTransport: @unchecked Sendable {
     public func stop() { state.withLock { stopped = true } }
     public func stopReading() { state.withLock { readingStopped = true } }
 
-    public func read() throws -> SDKMessage? {
+    public func read(timeout: TimeInterval? = nil) throws -> SDKMessage? {
+        let deadline = timeout.map { ProcessInfo.processInfo.systemUptime + $0 }
         while !state.withLock({ stopped || readingStopped }) {
+            if let deadline, ProcessInfo.processInfo.systemUptime >= deadline {
+                throw SDKProtocolError("Protocol read timed out")
+            }
             if bodyLength == nil {
                 if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
                     guard end.upperBound - buffer.startIndex <= 8192,

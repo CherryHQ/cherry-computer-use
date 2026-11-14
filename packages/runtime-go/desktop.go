@@ -79,9 +79,18 @@ type Element struct {
 }
 
 type Tree struct {
+	Reason    *Reason   `json:"reason,omitempty"`
 	Status    string    `json:"status"`
 	Elements  []Element `json:"elements"`
 	Truncated []string  `json:"truncated"`
+}
+
+func (t Tree) MarshalJSON() ([]byte, error) {
+	if t.Status == "unavailable" {
+		return json.Marshal(map[string]any{"status": t.Status, "reason": t.Reason})
+	}
+	type tree Tree
+	return json.Marshal(tree(t))
 }
 
 type Image struct {
@@ -131,13 +140,23 @@ type Snapshot struct {
 	InputChannel InputChannel `json:"inputChannel"`
 }
 
+type CaptureOptions struct {
+	Format       string   `json:"format,omitempty"`
+	MaxDimension int      `json:"maxDimension,omitempty"`
+	JPEGQuality  *float64 `json:"jpegQuality,omitempty"`
+}
+
 type ObserveOptions struct {
-	IncludeScreenshot *bool  `json:"includeScreenshot,omitempty"`
-	AppSessionID      string `json:"appSessionId"`
-	Activation        string `json:"activation"`
-	MaxTreeNodes      int    `json:"maxTreeNodes"`
-	MaxTreeDepth      int    `json:"maxTreeDepth"`
-	TextLimit         any    `json:"textLimit"`
+	IncludeAX         *bool           `json:"includeAX,omitempty"`
+	Screenshot        *CaptureOptions `json:"screenshot,omitempty"`
+	WindowID          string          `json:"windowId,omitempty"`
+	WindowPlacement   string          `json:"windowPlacement,omitempty"`
+	IncludeScreenshot *bool           `json:"includeScreenshot,omitempty"`
+	AppSessionID      string          `json:"appSessionId"`
+	Activation        string          `json:"activation"`
+	MaxTreeNodes      int             `json:"maxTreeNodes"`
+	MaxTreeDepth      int             `json:"maxTreeDepth"`
+	TextLimit         any             `json:"textLimit"`
 }
 
 func (o ObserveOptions) LimitText(value string, tree *Tree) string {
@@ -242,6 +261,20 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		return nil, Error("CANCELLED", "Request cancelled before execution")
 	}
 	switch method {
+	case "configureTask":
+		var options struct {
+			LockedUse      bool `json:"lockedUse"`
+			VirtualDisplay bool `json:"virtualDisplay"`
+		}
+		if decodeObject(params, &options) != nil {
+			return nil, Error("INVALID_ARGUMENT", "Invalid task options")
+		}
+		if options.LockedUse || options.VirtualDisplay {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "Locked Use and virtual displays are only supported on macOS")
+		}
+		return map[string]any{"status": "configured"}, nil
+	case "query":
+		return nil, Error("UNSUPPORTED_CAPABILITY", "Direct control lookup is only supported on macOS")
 	case "getAppIcon":
 		var input struct {
 			Identity string `json:"identity"`
@@ -340,6 +373,12 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 			options.MaxTreeNodes < 1 || options.MaxTreeDepth < 1 || !validTextLimit(options.TextLimit) {
 			return nil, Error("INVALID_ARGUMENT", "Invalid observation parameters")
 		}
+		if options.IncludeAX != nil && !*options.IncludeAX && options.IncludeScreenshot != nil && !*options.IncludeScreenshot {
+			return nil, Error("INVALID_ARGUMENT", "At least one observation channel must be requested")
+		}
+		if options.WindowID != "" || (options.WindowPlacement != "" && options.WindowPlacement != "keep") || options.Screenshot != nil {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "Window selection, placement and screenshot configuration are only supported on macOS")
+		}
 		options.MaxTreeNodes = min(options.MaxTreeNodes, 10000)
 		options.MaxTreeDepth = min(options.MaxTreeDepth, 128)
 		session, ctx, finish, err := d.beginAppRequest(ctx, options.AppSessionID)
@@ -352,6 +391,9 @@ func (d *Desktop) Call(ctx context.Context, method string, params json.RawMessag
 		action, err := decodeAction(params)
 		if err != nil {
 			return nil, err
+		}
+		if action.Type == "selectText" || action.KeyMethod == "skyKey" {
+			return nil, Error("UNSUPPORTED_CAPABILITY", "This action is only supported on macOS")
 		}
 		engine, fullActions := d.driver.(ActionDriver)
 		if !fullActions && (action.Type != "click" || action.ElementID == "" || action.Button != "left" || action.Count != 1) {

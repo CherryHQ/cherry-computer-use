@@ -307,10 +307,26 @@ final class FixtureAppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDele
         case ("set_value", "fixture-input"):
             inputField.stringValue = command.value ?? ""
             updateExportedState()
+        case ("select_text", "fixture-input"):
+            window.makeFirstResponder(inputField)
+            if let editor = inputField.currentEditor() {
+                let mode = command.selection.flatMap(TextSelectionMode.init(rawValue:)) ?? .text
+                if let target = try? TextSelectionResolver.resolve(
+                    value: inputField.stringValue,
+                    text: command.value ?? "",
+                    prefix: command.prefix,
+                    suffix: command.suffix,
+                    selection: mode
+                ) {
+                    editor.selectedRange = NSRange(location: target.location, length: target.length)
+                }
+            }
+            updateExportedState()
         case ("click", "fixture-increment"):
             handleIncrement()
         case ("click", "fixture-input"):
             window.makeFirstResponder(inputField)
+            inputField.currentEditor()?.selectedRange = NSRange(location: inputField.stringValue.utf16.count, length: 0)
             updateExportedState()
         case ("click", "fixture-key-capture"):
             window.makeFirstResponder(keyCaptureView)
@@ -339,7 +355,14 @@ final class FixtureAppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDele
             dragLabel.stringValue = "Last drag: from (\(startX), \(startY)) to (\(endX), \(endY))"
             updateExportedState()
         case ("type_text", "fixture-input"):
-            inputField.stringValue += command.value ?? ""
+            if let editor = inputField.currentEditor() {
+                let range = editor.selectedRange
+                let value = inputField.stringValue as NSString
+                if range.location != NSNotFound, NSMaxRange(range) <= value.length {
+                    inputField.stringValue = value.replacingCharacters(in: range, with: command.value ?? "")
+                    editor.selectedRange = NSRange(location: range.location + (command.value ?? "").utf16.count, length: 0)
+                }
+            } else { inputField.stringValue += command.value ?? "" }
             window.makeFirstResponder(inputField)
             updateExportedState()
         case ("press_key", "fixture-key-capture"):
@@ -350,6 +373,20 @@ final class FixtureAppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDele
         default:
             break
         }
+    }
+
+    private var selectedTextInInputField: String? {
+        guard let editor = inputField.currentEditor(), editor.selectedRange.length > 0 else {
+            return nil
+        }
+
+        let value = inputField.stringValue as NSString
+        let range = editor.selectedRange
+        guard range.location >= 0, NSMaxRange(range) <= value.length else {
+            return nil
+        }
+
+        return value.substring(with: range)
     }
 
     private func updateExportedState() {
@@ -377,7 +414,10 @@ final class FixtureAppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDele
             isActive: NSApp.isActive,
             isKeyWindow: window.isKeyWindow,
             activationLossCount: activationLossCount,
-            keyWindowLossCount: keyWindowLossCount
+            keyWindowLossCount: keyWindowLossCount,
+            selectedText: selectedTextInInputField,
+            selectedRangeLocation: inputField.currentEditor()?.selectedRange.location,
+            selectedRangeLength: inputField.currentEditor()?.selectedRange.length
         )
 
         try? FixtureBridge.writeState(state)

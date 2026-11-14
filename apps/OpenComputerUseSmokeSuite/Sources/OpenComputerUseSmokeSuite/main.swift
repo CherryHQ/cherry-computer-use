@@ -196,8 +196,8 @@ enum OpenComputerUseSmokeSuite {
         try client.initialize()
 
         let tools = try client.listTools()
-        guard tools.count == 9 else {
-            throw SmokeError.message("Expected 9 tools, got \(tools.count)")
+        guard tools.count == 11 else {
+            throw SmokeError.message("Expected 11 tools, got \(tools.count)")
         }
 
         print("1. list_apps")
@@ -257,6 +257,15 @@ enum OpenComputerUseSmokeSuite {
             "text": "-typed",
         ])
         try expect(state.contains("set-value-ok-typed"), "type_text should append literal text to the focused text field")
+
+        print("7b. select_text and replace selection")
+        index = parseElementIndex(state)
+        _ = try client.callTool("select_text", arguments: [
+            "app": appName, "element_index": index["fixture-input"]!.index,
+            "text": "typed", "prefix": "set-value-ok-",
+        ])
+        state = try client.callTool("type_text", arguments: ["app": appName, "text": "selected"])
+        try expect(state.contains("set-value-ok-selected"), "select_text should select only the requested text for replacement")
 
         print("8. press_key")
         index = parseElementIndex(state)

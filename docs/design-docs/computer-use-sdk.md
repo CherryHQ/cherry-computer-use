@@ -317,3 +317,7 @@ if (result.observation.status === 'available') {
 这是共用脚本执行器需要补齐的能力，实施前应围绕该 owner 落宿主侧改动，避免在 computer-use 包内另写一个重复执行器。当前 Worker 注释明确说明它不是安全沙箱；仅换成 `node:vm` 也不能形成安全边界，[Node 官方文档](https://nodejs.org/api/vm.html#vm-executing-javascript)明确说明这一限制。允许执行何种代码及提供何种进程/系统隔离由 Agent 宿主负责，SDK 通过注入对象限制 API 面不等于限制了任意 Node 代码权限。
 
 现有源码只能证明上述 Pi / AI SDK 路径，不代表所有 harness 已具备持久 REPL 或图片返回支持；每条实际接入路径分别验收。
+
+## 2026-11 桌面能力扩展
+
+协议仍为 v2，新增可选 `configureTask`、有归属的 `query` / `selectText`、按需观察和实际图像 MIME。macOS 虚拟屏与 Locked Use 由任务私有 agent 管理，停止应用只释放该应用资源，关闭任务确认全部资源清理；实现、调用示例和验收限制见[新增桌面能力](upstream-desktop-capabilities.md)。

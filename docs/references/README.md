@@ -13,6 +13,9 @@
 
 ## 当前目录
 
+- [2026-11-09 上游同步评估](upstream-reconciliation-20261109.md)：上游新增能力、必要修复、Cherry 适配取舍与未纳入范围。
+- [2026-11-13 上游能力接入复评](upstream-feature-adoption-20261113.md)：新增功能的 SDK 接入点、已具备的等效能力、虚拟屏/锁屏验证缺口与建议交付顺序。
+
 - `codex-computer-use-reverse-engineering/`
   - 官方 `Codex Computer Use.app` / `SkyComputerUseClient` 的持续逆向分析资料；大体积一次性分析产物默认在本地 `research/` 下重新生成，不提交进仓库。
 - `codex-network-capture.md`

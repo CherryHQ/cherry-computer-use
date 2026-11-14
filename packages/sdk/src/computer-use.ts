@@ -41,7 +41,8 @@ function decodeSnapshot(snapshot: Wire.Snapshot): Snapshot {
 export async function connectClient(
   connection: RuntimeConnection,
   sessionId: string,
-  options: CallOptions = {}
+  options: CallOptions = {},
+  taskOptions?: Wire.TaskOptions
 ): Promise<ComputerUseClient> {
   try {
     const result = await connection.request(
@@ -59,6 +60,10 @@ export async function connectClient(
         'PROTOCOL_MISMATCH',
         'Runtime does not support this private SDK session'
       )
+    }
+    if (taskOptions !== undefined) {
+      input(taskOptions, validators.validateTaskOptions)
+      await connection.request('configureTask', taskOptions, validators.validateTaskOptionsResult, options)
     }
   } catch (cause) {
     try {
@@ -134,6 +139,12 @@ export async function connectClient(
         (value) => value.appSessionId === params.appSessionId
       )
     },
+    query: async (params, options) => {
+      input(params, validators.validateQueryInput)
+      const result = await connection.request('query', params, validators.validateQueryResult, options, 'possible',
+        (value) => value.snapshot.appSessionId === params.appSessionId)
+      return { ...result, snapshot: decodeSnapshot(result.snapshot) }
+    },
     getAppState: async (params, options) => {
       input(params, validators.validateObserveInput)
       return decodeSnapshot(
@@ -142,7 +153,7 @@ export async function connectClient(
           { activation: 'never', ...params },
           validators.validateSnapshot,
           options,
-          params.activation === 'allow' ? 'possible' : 'none',
+          taskOptions?.lockedUse || params.activation === 'allow' || (params.windowPlacement && params.windowPlacement !== 'keep') ? 'possible' : 'none',
           (value) => value.appSessionId === params.appSessionId
         )
       )
@@ -192,13 +203,15 @@ export const ComputerUse = {
     callOptions: CallOptions = {}
   ): Promise<ComputerUseClient> {
     checkOptions(callOptions)
+    if (options.taskOptions !== undefined) input(options.taskOptions, validators.validateTaskOptions)
     const executable = await resolveRuntimePath(options.runtimePath)
     checkOptions(callOptions)
     const sessionId = randomUUID()
     const connection = new RuntimeConnection(
       launchRuntime(executable, sessionId),
-      sessionId
+      sessionId,
+      options.taskOptions?.lockedUse || options.taskOptions?.virtualDisplay ? 15_000 : 2_000
     )
-    return connectClient(connection, sessionId, callOptions)
+    return connectClient(connection, sessionId, callOptions, options.taskOptions)
   }
 }

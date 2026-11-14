@@ -108,6 +108,17 @@ rpc.onRequest('stopAppSession', () => {
   if (mode === 'stop-failure') return error('CLEANUP_FAILED', 'possible')
   return { appSessionId: mode === 'wrong-app-stop' ? 'foreign' : 'control', status: 'stopped', cleanup: 'complete' }
 })
+rpc.onRequest('configureTask', (input) => {
+  if (input.lockedUse || input.virtualDisplay) return error('UNSUPPORTED_CAPABILITY')
+  return { status: 'configured' }
+})
+rpc.onRequest('query', (input) => {
+  if (controlStatus !== 'active') return error('APP_SESSION_STOPPED')
+  generation++
+  const state = snapshot()
+  state.screenshot = { status: 'unavailable', reason: { code: 'CAPTURE_NOT_REQUESTED', message: 'Screenshot was not requested' } }
+  return { snapshot: state, truncated: false, stopReason: 'complete', visitedNodes: 2 }
+})
 rpc.onRequest('getAppState', (input) => {
   if (controlStatus !== 'active') return error('APP_SESSION_STOPPED')
   if (input.activation !== 'never') return error('INVALID_ARGUMENT')
@@ -147,6 +158,8 @@ rpc.onRequest('getAppState', (input) => {
     })
   }
   const state = snapshot()
+  if (input.includeAX === false) state.tree = { status: 'unavailable', reason: { code: 'OBSERVATION_NOT_REQUESTED', message: 'Accessibility tree was not requested' } }
+  if (input.screenshot?.format === 'jpeg') state.screenshot.image = { ...state.screenshot.image, mimeType: 'image/jpeg', dataBase64: Buffer.from([255, 216, 255, 217]).toString('base64') }
   if (input.includeScreenshot === false) state.screenshot = { status: 'unavailable', reason: { code: 'CAPTURE_NOT_REQUESTED', message: 'Screenshot was not requested' } }
   return state
 })

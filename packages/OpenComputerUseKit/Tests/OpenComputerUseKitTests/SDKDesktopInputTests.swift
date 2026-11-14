@@ -40,9 +40,9 @@ final class SDKDesktopInputTests: XCTestCase {
                 app: RunningAppDescriptor(name: "Test", bundleIdentifier: nil, pid: getpid(), runningApplication: .current),
                 windowTitle: nil, windowBounds: CGRect(x: 300, y: 150, width: 200, height: 120),
                 targetWindowID: nil, targetWindowLayer: nil,
-                screenshotPNGData: try XCTUnwrap(image.representation(using: .png, properties: [:])),
+                screenshotData: try XCTUnwrap(image.representation(using: .png, properties: [:])),
                 mode: .accessibility, treeLines: [], focusedSummary: nil, focusedElement: nil,
-                selectedText: nil, elements: [:]
+                selectedText: nil, windowElement: nil, elements: [:]
             )
             // Both element centers and screenshot clicks reach the hit tester in window points.
             let screenshotPoint = CGPoint(x: imageSize.width / 4, y: imageSize.height / 2)

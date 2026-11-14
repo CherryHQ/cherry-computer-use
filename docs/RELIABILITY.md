@@ -6,6 +6,8 @@
 - 单元测试：`swift test`
 - 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`
 - macOS SkyLight 实机回归：`OPEN_COMPUTER_USE_RUN_SKY_CLICK_LIVE_TEST=1 swift test --filter SkyClickLiveTests`
+- macOS 后台窗口、原生保存弹窗与强杀恢复：`OPEN_COMPUTER_USE_RUN_UPSTREAM_LIVE_TESTS=1 OPEN_COMPUTER_USE_VISUAL_CURSOR=0 swift test --filter UpstreamNativeInputTests`；另加 `OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1` 验证临时虚拟屏停放和恢复。
+- HID 覆盖探针：构建后运行 `.build/debug/OCUGuardian --input-monitor-probe 5`，需 Input Monitoring；只输出类别覆盖对应的设备数、活动次数与健康状态，不执行锁屏或解锁。
 - Linux runtime：`(cd apps/OpenComputerUseLinux && go test ./...)`、`./scripts/build-open-computer-use-linux.sh --arch arm64`
 - 本地诊断：
   - `open-computer-use doctor`
@@ -33,6 +35,7 @@
 
 - 增加结构化日志和失败原因分类。
 - 继续补充 screenshot capture / AX traversal 的失败上下文和普通 app 回归样本。
+- 恢复子进程通过管道 EOF 覆盖拥有者 SIGKILL；恢复者同时退出、系统重启、无响应应用和显示器热插拔仍有边界，不宣称任意崩溃都能还原窗口。
 - 增加普通 app 回归样本，而不是只覆盖 fixture。
 
 CI/CD 流程结构和 release 自动化的默认方案，统一写在 `docs/CICD.md`。

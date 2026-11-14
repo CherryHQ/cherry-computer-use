@@ -221,7 +221,7 @@ final class SDKSessionTests: XCTestCase {
             let response = try h.receive()
             XCTAssertEqual(response["id"] as? String, id)
             let capabilities = (response["result"] as? [String: Any])?["capabilities"] as? [[String: Any]]
-            XCTAssertEqual(capabilities?.count, 9)
+            XCTAssertEqual(capabilities?.count, 15)
         }
         try h.finish()
     }

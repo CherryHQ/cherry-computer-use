@@ -301,7 +301,7 @@ func TestRenderSnapshotKeepsTreeContract(t *testing.T) {
 			{Path: []int{1, 1}, Parent: 0, Depth: 1, Role: "spin button", AccessibleID: "level", Value: &value, Extents: &desktop.Rect{X: 110.5, Y: 62.5, Width: 80, Height: 20}},
 		},
 	}
-	snapshot := renderSnapshot(observation, snapshotOptions{defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth})
+	snapshot := renderSnapshot(observation, snapshotOptions{textLimit: defaultTextLimit, maxTreeNodes: defaultMaxTreeNodes, maxTreeDepth: defaultMaxTreeDepth})
 	want := []string{
 		"\t0 frame Fixture Frame: {x: 0, y: 0, width: 400, height: 300}",
 		"\t\t1 text Notes Value: line one\\nline two Secondary Actions: activate",
@@ -328,7 +328,7 @@ func TestCLIRefusesAmbiguousOrUnsupportedSemanticActionsBeforeDispatch(t *testin
 			{Parent: 0, Depth: 1, Role: "button", Name: "Go", Actions: []desktop.Action{{Index: 0, Name: "click"}, {Index: 1, Name: "menu", Description: "Click"}}},
 			{Parent: 0, Depth: 1, Role: "label", Name: "Static"},
 		},
-	}, snapshotOptions{defaultTextLimit, defaultMaxTreeNodes, defaultMaxTreeDepth})
+	}, snapshotOptions{textLimit: defaultTextLimit, maxTreeNodes: defaultMaxTreeNodes, maxTreeDepth: defaultMaxTreeDepth})
 	svc.rememberSnapshot("fixture", snapshot)
 
 	for name, check := range map[string]struct {

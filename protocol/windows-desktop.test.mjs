@@ -51,6 +51,9 @@ test('Windows SDK engine handles Chinese targets and all seven actions', {
   await state(elements => elements.some(element => element.name === 'Editor' && (element.value ?? '') === ''))
   await act({ type: 'typeText', text: '中文 😀追加' })
   await state(elements => elements.some(element => element.name === 'Editor' && element.value === '中文 😀追加'))
+  // Establish the receiving control explicitly; preceding UIA actions can change focus.
+  await act({ type: 'click', elementId: named('Focus editor').id })
+  await state(elements => elements.some(element => element.name === 'Events: clicks=0 wheels=0 keys=0 drags=0'))
   await act({ type: 'pressKey', key: 'Return' })
   await state(elements => elements.some(element => element.name === 'Events: clicks=0 wheels=0 keys=1 drags=0'))
   await act({ type: 'scroll', direction: 'down', pages: 1 })

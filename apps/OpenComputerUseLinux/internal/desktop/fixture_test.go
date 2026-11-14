@@ -89,6 +89,17 @@ func TestRealDesktopSemanticActions(t *testing.T) {
 	if initial.Window.Title != title {
 		t.Fatalf("main window = %q", initial.Window.Title)
 	}
+	password := find(initial, "Password field")
+	if !password.IsPassword() || password.Text != "" || password.Value != nil {
+		t.Fatal("password value leaked into observation")
+	}
+	if value, ok := engine.Selection(ctx, password, -1); ok || value != "" {
+		t.Fatal("password selection leaked into observation")
+	}
+	withoutAX, err := engine.Observe(ctx, app, TreeOptions{WithoutAX: true})
+	if err != nil || len(withoutAX.Nodes) != 0 || withoutAX.Window.Title != initial.Window.Title {
+		t.Fatalf("screenshot-only metadata: %+v %v", withoutAX, err)
+	}
 	button := find(initial, "Count: 0")
 	click, ok := ClickAction(button.Actions)
 	if !ok {

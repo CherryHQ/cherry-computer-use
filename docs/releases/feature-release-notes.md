@@ -4,7 +4,12 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-14（未发布） | Windows SDK 启动 | 恢复因按需观察脚本语法错误而失败的 SDK worker 启动。 | 修复省略控件树响应的括号，补齐三个内嵌脚本解析及 SDK 采集模式回归；CI 同时覆盖 Windows PowerShell 和 pwsh。 |
+| 2026-11-13（未发布） | 桌面输入读回与坐标 | 减少 Chromium 选区已生效却报失败，以及 Windows 多屏坐标错位、滚动方向错误和经典子控件漏点。 | macOS 对一次选区写入有时限等待读回；Windows 统一物理 DPI、修复滚轮屏幕坐标与方向、按目标窗口内实际子控件投递点击并复核几何，现有宿主应用指针路径按整个虚拟桌面归一化。Windows 混合 DPI 仍待实机验收。 |
+| 2026-11-13（未发布） | 后台任务恢复 | 停止任务或任务进程异常退出后恢复窗口，避免留下虚拟屏；后台观察不会带出另一文档的选区。 | 独立恢复进程与显示器进程、明确窗口及保存弹窗绑定、观察失败回滚、提前登记取消、HID 启动/权限撤销保护；虚拟屏在外侧角落排列并确认移除。完整锁屏和 Karabiner 接管仍须单独验收。 |
+| 2026-11-13（未发布） | 更少干扰的桌面操作 | Agent 可直接查找控件、精确选中文字，按需获取树或截图，并在 macOS 显式选择后台窗口、虚拟屏与锁屏保护。 | macOS 新增 query/select_text、PNG/JPEG/WebP 配置、后台键盘、可选虚拟屏和 Locked Use；SDK 保留应用会话归属及确认清理，三端优化控件预算和密码字段保护。Locked Use 签名安装、完整锁屏循环与多物理显示器仍须实机验收，默认关闭。 |
 | 2026-11-10 | 客户端应用图标查询 | 客户端可按需显示应用图标，无需在工具结果中重复传输图标。 | SDK 新增独立只读 `getAppIcon({ identity })`，三端返回 64×64 PNG。Windows 支持开始菜单的 Shell 条目、未列出的打包应用和 Settings 等托管窗口。缺少 EXE 图标资源时可读取快捷方式或 Windows UI 资源。Linux 通过 GTK 3/GdkPixbuf 解析 desktop entry 的 PNG、SVG 与主题图标。缺失图标或图像库时返回 `unavailable`。 |
+| 2026-11-09 | 上游可靠性修复 | 避免空白处点击误触其他按钮、输入到旧焦点或忽略选区，以及写值未生效却报告成功。 | 选择性移植 macOS 点击范围、CLI/MCP 实时焦点与选区输入、异常坐标保护、请求临时对象释放、相对调用文件路径；macOS/Windows 写值读回，Windows CLI 目标窗口截图、Windows/Linux CLI 字面空白保留。保持 Cherry SDK/CDP、Linux Go 后端及发布身份。 |
 | 2026-11-09 | Chromium / Electron 页面输入（CDP，Windows / Linux / macOS） | Edge、Chrome 和 Electron 应用在启动时带过远程调试开关的情况下，Agent 可以直接把文字和按键投递进页面：`+ * =` 等符号、中文与 emoji 都能原样写入，且不需要把窗口切到前台。 | `packages/runtime-go/webcdp` 新增跨平台 CDP 通道：从命令行或 `DevToolsActivePort` 发现端点、按窗口标题选页面 target、`Input.insertText`（写后回读校验）与 `Input.dispatchKeyEvent`（命名键/修饰键）；WebSocket 用标准库实现，无新增依赖。Windows/Linux driver 与 macOS 的 Swift session 在 `typeText`/`pressKey` 上优先尝试，失败回退原路径；`OPEN_COMPUTER_USE_DISABLE_CDP=1` 可关闭。 |
 
 ## 2026-11

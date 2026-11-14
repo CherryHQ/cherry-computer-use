@@ -11,8 +11,6 @@ import {
 } from './generated/validators.cjs'
 import type { CallOptions, ClosedEvent } from './types.js'
 
-const CLEANUP_TIMEOUT_MS = 2_000
-
 export function checkOptions(options: CallOptions): number {
   const timeout = options.timeoutMs ?? 30_000
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2_147_483_647) {
@@ -67,7 +65,8 @@ export class RuntimeConnection {
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
-    private readonly sessionId: string
+    private readonly sessionId: string,
+    private readonly cleanupTimeoutMs = 2_000
   ) {
     child.stderr.resume()
     this.exited = new Promise((resolve) => {
@@ -165,7 +164,7 @@ export class RuntimeConnection {
               cleanup: 'unconfirmed'
             })
           ),
-        CLEANUP_TIMEOUT_MS
+        this.cleanupTimeoutMs
       )
     }
     const abort = () => cancel('CANCELLED')
@@ -298,14 +297,14 @@ export class RuntimeConnection {
       }
       await bounded(
         Promise.all([...this.pending].map((request) => request.done)),
-        CLEANUP_TIMEOUT_MS
+        this.cleanupTimeoutMs
       )
       if (this.failure) throw this.failure
       const result = await bounded(
         this.sendRequest(randomUUID(), 'shutdown', {
           sessionId: this.sessionId
         }),
-        CLEANUP_TIMEOUT_MS
+        this.cleanupTimeoutMs
       )
       if (
         !validateShutdownResult(result) ||
@@ -317,7 +316,7 @@ export class RuntimeConnection {
         )
       }
       this.acknowledged = true
-      const exitCode = await bounded(this.exited, CLEANUP_TIMEOUT_MS)
+      const exitCode = await bounded(this.exited, this.cleanupTimeoutMs)
       if (exitCode !== 0) {
         throw new ComputerUseError(
           'RUNTIME_EXITED',
@@ -334,7 +333,7 @@ export class RuntimeConnection {
       this.disposeTransport()
       this.child.kill('SIGKILL')
       try {
-        await bounded(this.exited, CLEANUP_TIMEOUT_MS)
+        await bounded(this.exited, this.cleanupTimeoutMs)
       } catch {
         error = new ComputerUseError(
           'CLEANUP_FAILED',

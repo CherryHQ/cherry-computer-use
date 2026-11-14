@@ -26,6 +26,7 @@ enum OpenComputerUseMain {
     private static func run() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
 
+        if try BackgroundWindowRecoveryRuntime.run(arguments: arguments) { return }
         if try MacOSSDKRuntime.run(arguments: arguments) { return }
 
         if MacOSAppAgentProxy.isAgentInvocation(arguments: arguments) {
@@ -40,6 +41,8 @@ enum OpenComputerUseMain {
         }
 
         switch command {
+        case .lockedUseManagement:
+            _ = try LockedUseSettings.handle(arguments: arguments)
         case .mcp:
             let service = ComputerUseService()
             let server = StdioMCPServer(service: service)
@@ -50,18 +53,24 @@ enum OpenComputerUseMain {
             } else {
                 try server.run()
             }
-        case .doctor:
+        case let .doctor(json):
             let permissions = PermissionDiagnostics.current()
-            print(permissions.summary)
-            if !permissions.missingPermissions.isEmpty {
+            print(try json ? permissions.jsonText() : permissions.summary)
+            if !json {
+                print(LockedUseDiagnostics.current().summary)
+            }
+            if !json && !permissions.missingPermissions.isEmpty {
                 PermissionOnboardingApp.launch()
             }
+        case let .lockedUseStatus(json):
+            let diagnostics = LockedUseDiagnostics.current()
+            print(try json ? diagnostics.jsonText() : diagnostics.summary)
         case .listApps:
             let service = ComputerUseService()
             print(service.listApps().primaryText ?? "")
-        case let .snapshot(app, textLimit, treeLimits):
+        case let .snapshot(app, textLimit, treeLimits, observation):
             let service = ComputerUseService()
-            print(try service.getAppState(app: app, textLimit: textLimit, treeLimits: treeLimits).primaryText ?? "")
+            print(try service.getAppState(app: app, textLimit: textLimit, treeLimits: treeLimits, observation: observation).textContent)
         case let .call(invocation):
             if VisualCursorSupport.isEnabled {
                 _ = NSApplication.shared.setActivationPolicy(.accessory)

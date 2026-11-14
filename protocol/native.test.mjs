@@ -110,7 +110,7 @@ async function expectAgentExit(sessionId) {
 test('public SDK starts two isolated native sessions and closes them independently', { timeout: 30000 }, async t => {
   const first = await ComputerUse.start({ runtimePath })
   t.after(() => first.close().catch(() => {}))
-  const second = await ComputerUse.start({ runtimePath })
+  const second = await ComputerUse.start({ runtimePath, taskOptions: { lockedUse: false, virtualDisplay: false } })
   t.after(() => second.close().catch(() => {}))
   const capabilities = await first.getCapabilities()
   assert.equal(capabilities.platform, process.platform)
@@ -118,7 +118,11 @@ test('public SDK starts two isolated native sessions and closes them independent
   await assert.rejects(first.openAppSession({ appId: 'foreign' }), error => error.code === 'TARGET_UNAVAILABLE')
   await assert.rejects(first.stopAppSession({ appSessionId: 'foreign' }), error => error.code === 'APP_SESSION_NOT_FOUND')
   assert.deepEqual(await first.listAppSessions(), [])
-  assert.equal(capabilities.capabilities.length, 9)
+  assert.deepEqual(capabilities.capabilities.map(item => item.name).sort(), [
+    'accessibility', 'screenshot', 'click', 'performSecondaryAction', 'scroll', 'drag',
+    'typeText', 'pressKey', 'setValue', 'query', 'selectText', 'screenshotFormats',
+    'virtualDisplay', 'lockedUse', 'backgroundKeyboard'
+  ].sort())
   // Linux global input (scroll, drag, pressKey) follows the session type; a declared type wins.
   const linux = process.platform === 'linux'
   const session = process.env.XDG_SESSION_TYPE
@@ -127,7 +131,10 @@ test('public SDK starts two isolated native sessions and closes them independent
   const x11Status = process.env.DISPLAY ? 'available' : 'unavailable'
   const expected = name => !wayland ? [x11Status] : name === 'drag' ? ['unsupported'] : ['available', 'unavailable', 'unsupported']
   const globalOnly = linux ? ['scroll', 'drag', 'pressKey'] : []
-  assert.ok(capabilities.capabilities.every(item => globalOnly.includes(item.name)
+  const macOnly = ['query', 'selectText', 'screenshotFormats', 'virtualDisplay', 'lockedUse', 'backgroundKeyboard']
+  assert.ok(capabilities.capabilities.every(item => process.platform !== 'darwin' && macOnly.includes(item.name)
+    ? item.availability.status === 'unsupported'
+    : globalOnly.includes(item.name)
     ? expected(item.name).includes(item.availability.status)
     : (linux && item.name === 'screenshot') || item.availability.status !== 'unsupported'), JSON.stringify(capabilities))
   await assert.rejects(first.act({ type: 'click', appSessionId: 'missing', snapshotId: 'not-a-snapshot', x: 0, y: 0 }), error =>

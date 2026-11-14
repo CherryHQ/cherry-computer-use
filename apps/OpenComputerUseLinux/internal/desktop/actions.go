@@ -111,6 +111,12 @@ func (e *Engine) SetValue(ctx context.Context, window Window, node Node, value s
 	if err := e.dispatch(ctx, current.Ref, "org.a11y.atspi.EditableText.SetTextContents", &applied, value); err != nil {
 		return err
 	}
+	if current.IsPassword() {
+		if !applied {
+			return uncertain("Password write was not confirmed")
+		}
+		return nil
+	}
 	actual, length := e.readText(ctx, current.Ref, -1)
 	if !applied || actual != value {
 		return uncertain("Text did not update as requested; it now reads %d characters", length)
@@ -197,8 +203,11 @@ func (e *Engine) TypeText(ctx context.Context, window Window, text string) error
 		return err
 	}
 	characters := int32(utf8.RuneCountInString(text))
+	if !inserted {
+		return uncertain("Text insertion was not confirmed")
+	}
 	var actual string
-	if e.call(ctx, node.Ref, "Text.GetText", position, position+characters).Store(&actual) != nil || actual != text {
+	if !node.IsPassword() && (e.call(ctx, node.Ref, "Text.GetText", position, position+characters).Store(&actual) != nil || actual != text) {
 		return uncertain("Typed text could not be confirmed in the focused field")
 	}
 	var moved bool
