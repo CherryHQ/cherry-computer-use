@@ -1,5 +1,21 @@
 # @cherrystudio/computer-use
 
+## 0.2.0
+
+### Minor Changes
+
+- [#37](https://github.com/CherryHQ/cherry-computer-use/pull/37) [`d45df82`](https://github.com/CherryHQ/cherry-computer-use/commit/d45df82d9e14341038a74c5ab849b7ca366d44c0) Thanks [@DeJeune](https://github.com/DeJeune)! - Add selective observations across platforms and macOS targeted queries, text selection, configurable PNG/JPEG/WebP capture, background keyboard input, opt-in virtual displays and Locked Use task protection. Keep app-scoped snapshot ownership, explicit cleanup and Cherry's existing CDP, Linux and release integrations. Improve bounded tree rendering, password redaction and Windows input target validation.
+
+### Patch Changes
+
+- [#37](https://github.com/CherryHQ/cherry-computer-use/pull/37) [`d45df82`](https://github.com/CherryHQ/cherry-computer-use/commit/d45df82d9e14341038a74c5ab849b7ca366d44c0) Thanks [@DeJeune](https://github.com/DeJeune)! - Wait for asynchronous macOS text-selection readback without repeating input. Correct Windows per-monitor DPI coordinates, wheel direction and screen coordinates, classic child-control click routing, and virtual-desktop pointer normalization while preserving Cherry's existing hosted-app input paths.
+
+  Fix Windows SDK bridge startup by correcting the omitted-accessibility-tree response syntax.
+
+- [#37](https://github.com/CherryHQ/cherry-computer-use/pull/37) [`d45df82`](https://github.com/CherryHQ/cherry-computer-use/commit/d45df82d9e14341038a74c5ab849b7ca366d44c0) Thanks [@DeJeune](https://github.com/DeJeune)! - Restore macOS background windows through a private recovery process after abrupt task exit, roll back failed observations, and cancel requests during task-protection setup. Preserve virtual display arrangements, resolve inactive save panels, and stop Locked Use preparation when hardware monitoring becomes unavailable.
+
+- [#37](https://github.com/CherryHQ/cherry-computer-use/pull/37) [`d45df82`](https://github.com/CherryHQ/cherry-computer-use/commit/d45df82d9e14341038a74c5ab849b7ca366d44c0) Thanks [@DeJeune](https://github.com/DeJeune)! - Backport upstream desktop reliability fixes: constrain macOS click candidates to the intended target, validate snapshot geometry, verify macOS and Windows setValue results, and preserve literal Windows/Linux set_value payloads. Keep Cherry's SDK sessions, CDP input and release identity.
+
 ## 0.1.11
 
 ### Patch Changes
